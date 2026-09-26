@@ -1,6 +1,6 @@
 # TOOLS_MANIFEST — 도구 릴리스 목록 (코드 프로젝트 진본)
 
-**manifest 판: v38 · 릴리스 v2.18 · 2026-09-26**
+**manifest 판: v39 · 릴리스 v2.19 · 2026-09-26**
 
 > **이 파일이 진본 판정 기준이다.** 파일명은 고정(`TOOLS_MANIFEST.md`), 판은 이 줄에만 있다.
 > 세트는 전부 삭제 → 전부 재업로드이므로 파일명에 판이 있을 이유가 없고, 파일명 판이 "어느 manifest 가 최신인가"
@@ -13,14 +13,14 @@
 | `claim_graph.py` | v15.8.1 | `dc3ac0780b61` | `test_claim_graph.py` 34/34 | 65974 |
 | `test_claim_graph.py` | v15.8.1 동반 | `bcfe1c1e42d6` | — | 29770 |
 | `CLAIM_GRAPH.md` | v15.8.1 | `ca0bd5652f32` | — | 22160 |
-| `deck_toolkit.py` | v16.23 | `3806458d8fb5` | `test_toolkit.py` 169/169 (deck 135 + 공용 34, SKIP 0) | 278797 |
-| `test_toolkit.py` | v16.23 동반 | `e01154831325` | — | 111289 |
-| `DECK_SPEC.md` | v16.23 | `623b710d8b1a` | — | 97490 |
+| `deck_toolkit.py` | v16.24 | `f09b3b497531` | `test_toolkit.py` 169/169 (deck 135 + 공용 34, SKIP 0) | 278797 |
+| `test_toolkit.py` | v16.24 동반 | `15c15486c38c` | — | 111289 |
+| `DECK_SPEC.md` | v16.24 | `6cbaa44bb8ee` | — | 98048 |
 | `verify_toolkit.py` | v1.3.4 | `e703af6d5418` | `test_verify_toolkit.py` 41/41 | 35925 |
 | `test_verify_toolkit.py` | v1.3.4 동반 | `aba65de39d87` | — | 20669 |
-| `handoff.py` | v1.1.1 | `651155810001` | `test_handoff.py` 13/13 | 23984 |
-| `test_handoff.py` | v1.1.1 동반 | `158fa13253c9` | — | 13070 |
-| `HANDOFF_FORMAT.md` | v1.1.1 | `0d806320abb9` | — | 6644 |
+| `handoff.py` | v1.2 | `209e750f9094` | `test_handoff.py` 15/15 | 42164 |
+| `test_handoff.py` | v1.2 동반 | `af9140fe25e9` | — | 18611 |
+| `HANDOFF_FORMAT.md` | v1.2 | `de0dc1b86126` | — | 7500 |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — | 17531 |
 | `CODE_PROJECT_README.md` · `HISTORY.md` · `release.py` | 코드 프로젝트 전용 | (배포하지 않음 — 판·해시는 RELEASE §3 코드 표) | — | — |
 
@@ -75,5 +75,5 @@ GitHub 에서 읽는다(넘김 문서를 쓰는 쪽). 발표에서 claim_graph 3
 **코드 수정** — 코드 프로젝트에서만. 다른 프로젝트는 `{YYMMDD}_도구회신_{주제}_v{M}.md` 로 보낸다. 덱 전용 스크립트
 (`build_*.py`)는 발표 프로젝트가 직접 쓰되 툴킷 함수를 고치거나 새 툴킷 함수를 만들면 회신으로 보낸다.
 
-<!-- prev-release: v2.17 · CLAIM_GRAPH.md=54641dae9902;CODE_PROJECT_README.md=0f2f45890804;DECK_SPEC.md=d30257e3a5c7;GITHUB_README.md=60aa56dc93ea;HANDOFF_FORMAT.md=b7ae9c4d6043;HISTORY.md=d8014880a95e;PRIVATE_TERMS.txt=4285e1f439fb;REVIEW_PROTOCOL.md=7f6e413d4d48;claim_graph.py=07f372d3ee2b;deck_toolkit.py=10bd522ad6b8;handoff.py=d86e4a07f64d;release.py=7ad307268638;test_claim_graph.py=e3e905e90df3;test_handoff.py=d80aba1b8799;test_toolkit.py=f49bddc6e08d;test_verify_toolkit.py=ffd443ae7943;verify_toolkit.py=6683437604f9 -->
-<!-- release-hashes: v2.18 · CLAIM_GRAPH.md=ca0bd5652f32;CODE_PROJECT_README.md=1a446a99c379;DECK_SPEC.md=623b710d8b1a;GITHUB_README.md=60aa56dc93ea;HANDOFF_FORMAT.md=0d806320abb9;HISTORY.md=1be7c964eb89;PRIVATE_TERMS.txt=4285e1f439fb;REVIEW_PROTOCOL.md=7f6e413d4d48;claim_graph.py=dc3ac0780b61;deck_toolkit.py=3806458d8fb5;handoff.py=651155810001;release.py=8ce7a3ea9b82;test_claim_graph.py=bcfe1c1e42d6;test_handoff.py=158fa13253c9;test_toolkit.py=e01154831325;test_verify_toolkit.py=aba65de39d87;verify_toolkit.py=e703af6d5418 -->
+<!-- prev-release: v2.18 · CLAIM_GRAPH.md=ca0bd5652f32;CODE_PROJECT_README.md=1a446a99c379;DECK_SPEC.md=623b710d8b1a;GITHUB_README.md=60aa56dc93ea;HANDOFF_FORMAT.md=0d806320abb9;HISTORY.md=1be7c964eb89;PRIVATE_TERMS.txt=4285e1f439fb;REVIEW_PROTOCOL.md=7f6e413d4d48;claim_graph.py=dc3ac0780b61;deck_toolkit.py=3806458d8fb5;handoff.py=651155810001;release.py=8ce7a3ea9b82;test_claim_graph.py=bcfe1c1e42d6;test_handoff.py=158fa13253c9;test_toolkit.py=e01154831325;test_verify_toolkit.py=aba65de39d87;verify_toolkit.py=e703af6d5418 -->
+<!-- release-hashes: v2.19 · CLAIM_GRAPH.md=ca0bd5652f32;CODE_PROJECT_README.md=369b99ea8f0f;DECK_SPEC.md=6cbaa44bb8ee;GITHUB_README.md=60aa56dc93ea;HANDOFF_FORMAT.md=de0dc1b86126;HISTORY.md=1be7c964eb89;PRIVATE_TERMS.txt=4285e1f439fb;REVIEW_PROTOCOL.md=7f6e413d4d48;claim_graph.py=dc3ac0780b61;deck_toolkit.py=f09b3b497531;handoff.py=209e750f9094;release.py=8ce7a3ea9b82;test_claim_graph.py=bcfe1c1e42d6;test_handoff.py=af9140fe25e9;test_toolkit.py=15c15486c38c;test_verify_toolkit.py=aba65de39d87;verify_toolkit.py=e703af6d5418 -->

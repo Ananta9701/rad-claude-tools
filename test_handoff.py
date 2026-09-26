@@ -14,7 +14,7 @@ sys.path.insert(0, HERE)
 import handoff as H          # noqa: E402
 import deck_toolkit as T     # noqa: E402
 
-EXPECT_VERSION = '1.1.1'
+EXPECT_VERSION = '1.2'
 TMP = tempfile.mkdtemp(prefix='th_')
 
 
@@ -197,6 +197,80 @@ def t_v11_memo_request_and_base_sha():
     real = hashlib.sha256(open(base, 'rb').read()).hexdigest()[:16]
     buf = io.StringIO(); e, _ = H.check(H.parse(head_sha.replace('0000000000000000', real)), D, stream=buf)
     assert e == 0, buf.getvalue()
+
+def _body_paras(D, sn):
+    import html as _h
+    x = open(D._slide(sn), encoding='utf8').read()
+    m = re.search(r'<p:sp>(?:(?!</p:sp>).)*?<p:ph\b(?![^>]*type="(?:title|ctrTitle)")[^>]*/?>.*?</p:sp>', x, re.S)
+    if not m:
+        return []
+    return [_h.unescape(''.join(re.findall(r'<a:t>([^<]*)</a:t>', p))) for p in re.findall(r'<a:p>.*?</a:p>', m.group(0), re.S)]
+
+def t_v12_apply_end_to_end():
+    base0 = _fixture_deck()
+    D0 = T.Deck.open(base0, os.path.join(TMP, 'ap00'))
+    F0 = [s for s, _, _ in D0.order() if s]
+    k = 7
+    D0.set_body(F0[k - 1], T.Body().line('Alpha item 22-01').line('Beta item 23-02').line('Gamma item 24-03'))
+    D0.set_notes(F0[1], ['원작자 메모 한 줄 CT 비교'])
+    D0.protect_memo(F0[1])                                   # 화면 2 에 원작자 메모 — 적용 뒤에도 그대로여야
+    base = os.path.join(TMP, 'base_ap.pptx'); D0.save(base)
+    D = T.Deck.open(base, os.path.join(TMP, 'ap0'))
+    F = [s for s, _, _ in D.order() if s]; n = len(F)
+    title = lambda k: H._title_text(D, F[k - 1]) or '(제목 없음)'
+    bp = [t for t in _body_paras(D, F[k - 1]) if t.strip()]
+    fix_old = bp[0].split()[0]
+    md = doc(
+        '### 화면 2 — %s\n작업: 없음\n대본:\n새 대본 한 줄.\n참고: 없음\n\n' % title(2) +
+        '### 화면 3 — %s\n작업: 배경 단색 #D2F6F6 · 숨김\n대본: 변경 없음\n참고: 변경 없음\n\n' % title(3) +
+        '### 화면 5 — %s\n작업: 앞에 복제(정답 표시 제거) — 해설 상자 없음\n복제본(문제) 대본:\n먼저 골라 보세요.\n대본: 변경 없음\n참고:\n- [메모 수정 요청] 원작자 메모 A → B\n\n' % title(5) +
+        '### 화면 6 — %s\n작업: 삭제\n대본: (삭제 화면)\n\n' % title(6) +
+        '### 화면 %d — %s\n작업: 없음 (문단 교체 1곳 · 문단 추가 1곳)\n문단 교체 — `%s` 줄:\n본문:\nL1 **교체된 줄** 25-01\n문단 추가 — 본문 맨 끝:\n본문:\nL2 * 각주\n대본: 변경 없음\n참고:\n- [검증] 교과서\n\n' % (k, title(k), bp[1]) +
+        '### 새 슬라이드 — 교육목표 (1/1)\n작업: 새 슬라이드(교육목표 형식, 화면 %d과 같은 틀) → 화면 %d 앞 · 배경 단색 #D2F6F6\n제목: 교육목표 (1/1)\n본문:\nL0 **1) 영상 해부학**\nL1 가) 정상 모양을 이해한다(B).\n대본:\n교육목표입니다.\n참고: 없음\n\n' % (k, k) +
+        '## 본문 수정\n\n| 화면 | 원문 | 수정문 | 근거 |\n|---|---|---|---|\n| %d | `%s` | `%sX` | 시험 |\n' % (k, fix_old, fix_old), n)
+    d = H.parse(md)
+    D.src_path = base
+    e, _ = H.check(d, D, stream=io.StringIO())
+    assert e == 0, d['problems']
+    out = os.path.join(TMP, 'applied.pptx')
+    rep = H.apply(d, base, out, workdir=os.path.join(TMP, 'apw'))
+    assert rep['valid'] and not rep['memo_bad'], rep
+    assert rep['screens'] == n + 1 + 1 - 1, rep['screens']
+    R = T.Deck.open(out, os.path.join(TMP, 'apr'))
+    ro = [s for s, _, _ in R.order() if s]
+    # 새 슬라이드: 화면 k 바로 앞, 제목·본문·배경·노트
+    new_sn = rep['new'][0][1]
+    assert ro.index(new_sn) + 1 == ro.index(F[k - 1])
+    assert H._title_text(R, new_sn) == '교육목표 (1/1)'
+    assert [t for t in _body_paras(R, new_sn) if t.strip()] == ['1) 영상 해부학', '가) 정상 모양을 이해한다(B).']
+    assert 'D2F6F6' in open(R._slide(new_sn), encoding='utf8').read() and R.notes_sections(new_sn)[0] == ['교육목표입니다.']
+    # 화면 k: 본문 수정·교체·추가
+    kb = [t for t in _body_paras(R, F[k - 1]) if t.strip()]
+    assert kb[0].startswith(fix_old + 'X') and '교체된 줄 25-01' in kb and kb[-1] == '* 각주', kb
+    assert R.notes_sections(F[k - 1])[1] == ['- [검증] 교과서']
+    # 화면 3: 배경·숨김 / 화면 2: 노트 / 화면 6 삭제 / 화면 5 앞 복제
+    assert 'D2F6F6' in open(R._slide(F[2]), encoding='utf8').read() and R.is_hidden(F[2])
+    assert R.notes_sections(F[1])[0] == ['새 대본 한 줄.'] and R.notes_sections(F[1])[1] == []
+    assert R.notes_sections(F[1])[2] == ['원작자 메모 한 줄 CT 비교'], R.notes_sections(F[1])   # 메모 보존
+    assert F[5] not in ro and rep['deleted'] == [6]
+    dup = rep['dup'][0][1]
+    assert ro.index(dup) + 1 == ro.index(F[4]) and R.notes_sections(dup)[0] == ['먼저 골라 보세요.']
+    assert rep['memo_req'] and rep['memo_req'][0][0] == 5
+    buf = io.StringIO(); H.report(rep, buf)
+    assert 'sha256' in buf.getvalue() and '메모 수정 요청' in buf.getvalue()
+    # compare: 같은 파일은 0, 기준과 결과는 다르다
+    assert H.compare(out, out, io.StringIO(), os.path.join(TMP, 'cmp1')) == 0
+    buf = io.StringIO(); assert H.compare(base, out, buf, os.path.join(TMP, 'cmp2')) > 0 and '화면 수가 다르다' in buf.getvalue()
+
+def t_v12_apply_refuses_on_check_errors():
+    base = _fixture_deck()
+    D = T.Deck.open(base, os.path.join(TMP, 'ap1'))
+    n = len([s for s, _, _ in D.order() if s])
+    md = os.path.join(TMP, 'bad.md')
+    open(md, 'w', encoding='utf8').write(doc('### 화면 1 — 전혀 다른 제목 QQQ\n작업: 없음\n대본:\nx\n참고: 없음\n', n))
+    r = subprocess.run([sys.executable, os.path.join(HERE, 'handoff.py'), 'apply', md, '--deck', base, '-o', os.path.join(TMP, 'x.pptx')],
+                       capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    assert r.returncode == 1 and '적용하지 않았다' in r.stdout and not os.path.exists(os.path.join(TMP, 'x.pptx')), r.stdout[-500:]
 
 def t_cli():
     base = _fixture_deck()

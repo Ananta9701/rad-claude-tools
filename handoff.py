@@ -8,14 +8,15 @@
     python3 handoff.py check 넘김.md --deck 기준.pptx          # + 기준 덱 대조(화면 수·제목·문단 키·본문 수정)
     python3 handoff.py check 넘김.md --deck 기준.pptx --sha 1a2b3c4d5e6f7a8b   # 넘김 문서 sha256 앞 16자도 대조
 
-적용(2단계)·검증 보고서(3단계)는 다음 판.
+    python3 handoff.py apply 넘김.md --deck 기준.pptx -o 결과.pptx [--sha 16자] [--import 덱이름=경로 …] [--report 보고.md]
+                                                             # 2단계(v1.2): check 오류 0 일 때만 적용 + 적용 보고서
 """
 import hashlib
 import os
 import re
 import sys
 
-__version__ = '1.1.1'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
+__version__ = '1.2'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
 
 KEYS = ('작업:', '대본:', '참고:', '본문:', '제목:', '복제본(문제) 대본:')
 PARA_OP = re.compile(r'^문단 (교체|추가|삭제)\b')
@@ -152,6 +153,9 @@ def parse(text):
         if pending_para:
             prob('오류', pending_para['ln'], '문단 %s 뒤에 "본문:" 과 L 줄이 없다' % pending_para['kind'])
         if cur is not None:
+            for op in cur['para']:
+                if op['kind'] == '교체' and len(op.get('lines') or []) != 1 and op is not pending_para:
+                    prob('오류', op['ln'], '문단 교체는 L 줄 하나 — 여러 줄이면 교체 하나 + 문단 추가로')
             if cur['ops'] is None:
                 prob('오류', cur['ln'], '"작업:" 줄이 없다')
             if cur['script'] is None and not any(o[0] == '삭제' for o in (cur['ops'] or [])):
@@ -436,13 +440,339 @@ def _para_count(deck, sn, key):
     return n
 
 
+# ----------------------------------------------------------------------------
+# 2단계 — 적용 (v1.2)
+# ----------------------------------------------------------------------------
+
+def _resolve_key(deck, sn, key):
+    """넘김의 문단 키(… 줄임 허용) → 그 문단의 실제 글(도구 함수에 넘길 정확한 키). 정확히 한 문단이어야."""
+    import html as _h
+    x = open(deck._slide(sn), encoding='utf8').read()
+    k = re.sub(r'\s+', ' ', key.replace('⇥', ' ')).strip()
+    pat = re.compile('.*?'.join(re.escape(part.strip()) for part in k.split('…')))
+    hits = []
+    for p in re.findall(r'<a:p>.*?</a:p>', x, re.S):
+        raw = _h.unescape(''.join(re.findall(r'<a:t>([^<]*)</a:t>', p)))
+        if pat.search(re.sub(r'\s+', ' ', raw).strip()):
+            hits.append(raw)
+    if len(hits) != 1:
+        raise ValueError('문단 키 `%s` — %d번 찾음' % (key[:40], len(hits)))
+    return hits[0]
+
+
+def _set_title_text(deck, sn, text):
+    """제목 placeholder 의 글만 바꾼다 — 첫 문단의 pPr·첫 run 서식을 그대로 쓰고 나머지 문단은 뺀다."""
+    p = deck._slide(sn); x = open(p, encoding='utf8').read()
+    m = re.search(r'<p:sp>(?:(?!</p:sp>).)*?<p:ph\b[^>]*type="(?:title|ctrTitle)".*?</p:sp>', x, re.S)
+    if not m:
+        raise ValueError('제목 placeholder 없음: slide%d' % sn)
+    sp = m.group(0)
+    tb = re.search(r'(<p:txBody>.*?)(<a:p>.*</a:p>)(\s*</p:txBody>)', sp, re.S)
+    first = re.search(r'<a:p>.*?</a:p>', tb.group(2), re.S).group(0)
+    ppr = (re.search(r'<a:pPr\b[^>]*/>|<a:pPr\b[^>]*>.*?</a:pPr>', first, re.S) or [''])[0] if re.search(r'<a:pPr', first) else ''
+    rpr = re.search(r'<a:rPr\b[^>]*/>|<a:rPr\b[^>]*>.*?</a:rPr>', first, re.S)
+    endp = re.search(r'<a:endParaRPr\b[^>]*/>|<a:endParaRPr\b[^>]*>.*?</a:endParaRPr>', first, re.S)
+    import html as _h
+    para = '<a:p>%s<a:r>%s<a:t>%s</a:t></a:r>%s</a:p>' % (ppr, rpr.group(0) if rpr else '<a:rPr lang="ko-KR"/>',
+                                                         _h.escape(text, quote=False), endp.group(0) if endp else '')
+    new_sp = sp[:tb.start(2)] + para + sp[tb.end(2):]
+    open(p, 'w', encoding='utf8').write(x[:m.start()] + new_sp + x[m.end():])
+
+
+def _delete_box(deck, sn, words):
+    """복제본에서 해설 상자 — 글이 words 로 시작(또는 포함)하는 도형 하나를 이름으로 지운다."""
+    import html as _h
+    x = open(deck._slide(sn), encoding='utf8').read()
+    cands = []
+    for m in re.finditer(r'<p:sp>(?:(?!<p:sp>).)*?</p:sp>', x, re.S):
+        if '<p:ph ' in m.group(0) and 'type="title"' in m.group(0):
+            continue
+        t = re.sub(r'\s+', ' ', _h.unescape(''.join(re.findall(r'<a:t>([^<]*)</a:t>', m.group(0))))).strip()
+        w = re.sub(r'\s+', ' ', words.rstrip('…').strip())
+        if w and w in t:
+            nm = re.search(r'<p:cNvPr\b[^>]*\bname="([^"]*)"', m.group(0))
+            cands.append(_h.unescape(nm.group(1)) if nm else None)
+    if len(cands) != 1 or not cands[0]:
+        raise ValueError('해설 상자 "%s" — 후보 %d개' % (words[:30], len(cands)))
+    return deck.delete_shape(sn, cands[0], must_contain=re.sub(r'\s+', ' ', words.rstrip('…').strip()).split(' ')[0])
+
+
+def _pos_after(deck, text, F, last_new):
+    """'화면 M 앞' / '화면 M 뒤' / '바로 앞 새 슬라이드 뒤' / 'T1 뒤' → after(파일 번호)."""
+    if '바로 앞 새 슬라이드 뒤' in text or re.search(r'\bT\d+ 뒤', text):
+        if last_new is None:
+            raise ValueError('"%s" — 앞 새 슬라이드가 없다' % text)
+        return last_new
+    m = re.search(r'화면 (\d+) (앞|뒤)', text)
+    if not m:
+        raise ValueError('자리를 읽을 수 없다: "%s"' % text)
+    n = int(m.group(1))
+    if m.group(2) == '뒤':
+        return F[n - 1]
+    order = [s for s, _, _ in deck.order() if s]
+    i = order.index(F[n - 1])
+    if i == 0:
+        raise ValueError('화면 1 앞에는 넣을 수 없다(표지)')
+    return order[i - 1]
+
+
+def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=None):
+    """check 오류 0 인 넘김을 기준 덱에 적용해 out_path 에 저장. 반환: 보고 dict. 순서는 check 의 '적용 순서'.
+    원작자 메모 수정 요청은 적용하지 않고 보고서에 남긴다(요청서 3-4 — 사용자 허락 뒤 settext(notes=True, zone='memo'))."""
+    import tempfile, shutil
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import deck_toolkit as T
+    imports = imports or {}
+    wd = workdir or tempfile.mkdtemp(prefix='ho_')
+    D = T.Deck.open(base_path, os.path.join(wd, 'd'))
+    F = [s for s, _, _ in D.order() if s]           # 기준 화면 → 파일 번호(넣고 빼도 변하지 않는다)
+    rep = {'warn': [], 'done': [], 'memo_req': [], 'new': [], 'dup': [], 'deleted': []}
+    W = rep['warn'].append; DONE = rep['done'].append
+    # 1. 본문 수정
+    for fx in doc['fixes']:
+        sn = F[fx['screen'] - 1]
+        r = D.settext(sn, fx['old'], fx['new'])
+        if not r['ok']:
+            D.settext(sn, fx['old'], fx['new'], whole=True, strict=True)
+            W('본문 수정 화면 %d `%s` — 조각 전체로 적용' % (fx['screen'], fx['old'][:30]))
+    if doc['fixes']:
+        DONE('본문 수정 %d' % len(doc['fixes']))
+    # 2. 문단 교체·삭제·추가
+    npara = 0
+    for no, sc in sorted(doc['screens'].items()):
+        sn = F[no - 1]
+        for op in sc['para']:
+            if op['kind'] == '교체':
+                key = _resolve_key(D, sn, op['keys'][0])
+                line = op['lines'][0]
+                x, a, b = D._find_para(sn, key)
+                merged = T._merge_format(D._para_notation(x[a:b]), line)
+                if merged != line:
+                    W('화면 %d 문단 교체 — 넘김 줄에 빠진 서식(탭·앞 공백·굵게)을 원래 문단에서 살림: `%s`' % (no, line[:50]))
+                D.replace_paragraph_like(sn, key, line, keep_format=True)
+            elif op['kind'] == '삭제':
+                for k in op['keys']:
+                    D.delete_paragraph(sn, _resolve_key(D, sn, k))
+            elif op['kind'] == '추가':
+                after = _resolve_key(D, sn, op['after']) if op.get('after') else None
+                for line in op['lines']:
+                    D.insert_paragraph_like(sn, line, after_key=after)
+            npara += 1
+    if npara:
+        DONE('문단 작업 %d' % npara)
+    # 3. 배경·숨김
+    for no, sc in sorted(doc['screens'].items()):
+        for name, args in sc['ops'] or []:
+            if name == '배경':
+                D.set_background(F[no - 1], rgb=args[0].upper())
+            elif name == '숨김':
+                D.set_hidden(F[no - 1], True)
+            elif name == '숨김 해제':
+                D.set_hidden(F[no - 1], False)
+            elif name in ('메모 복사',):
+                W('화면 %d 메모 복사 — 자동 적용 안 함(copy_note_paragraphs 로 손으로)' % no)
+            elif name == '재게시':
+                raise ValueError('화면 %d 재게시 — 2단계에서 지원하지 않는다' % no)
+    # 복제·새 슬라이드의 원천: 본문 수정·문단 작업이 끝난 덱(D10)
+    mid = os.path.join(wd, 'mid.pptx'); D.save(mid)
+    S = T.Deck.open(mid, os.path.join(wd, 's'))
+    SF = [s for s, _, _ in S.order() if s]
+    # 4. 새 슬라이드 · 가져옴
+    last_new = None
+    for nw in doc['new']:
+        ops = dict((n, a) for n, a in (nw['ops'] or []))
+        if '새 슬라이드' in ops:
+            tpl, where = int(ops['새 슬라이드'][0]), ops['새 슬라이드'][1]
+            src, src_sn = S, SF[tpl - 1]
+        elif '가져옴' in ops:
+            name, k, where = ops['가져옴']
+            if name not in imports:
+                raise ValueError('가져옴 "%s" — --import "%s=경로" 가 필요하다' % (name, name))
+            src = T.Deck.open(imports[name], os.path.join(wd, 'imp_%d' % len(rep['new'])))
+            src_sn = [s for s, _, _ in src.order() if s][int(k) - 1]
+        else:
+            raise ValueError('새 슬라이드 "%s" — 틀(새 슬라이드(…화면 N…) 또는 가져옴)이 없다' % (nw['title'] or nw['title_h']))
+        after = _pos_after(D, where, F, last_new)
+        s = D.import_slide(src, src_sn, after=after, pictures=False)
+        _set_title_text(D, s, nw['title'])
+        D.set_body_like(s, nw['body'])
+        if '배경' in ops:
+            D.set_background(s, rgb=ops['배경'][0].upper())
+        D.set_notes(s, nw['script'] if isinstance(nw['script'], list) else [], nw['tips'] if isinstance(nw['tips'], list) else None)
+        rep['new'].append((nw['title'], s)); last_new = s
+    if rep['new']:
+        DONE('새 슬라이드 %d' % len(rep['new']))
+    # 5. 앞에 복제(정답 표시 제거)
+    for no, sc in sorted(doc['screens'].items()):
+        if not any(n == '앞에 복제' for n, _ in (sc['ops'] or [])):
+            continue
+        order = [s for s, _, _ in D.order() if s]
+        i = order.index(F[no - 1])
+        s = D.import_slide(S, SF[no - 1], after=order[i - 1] if i else F[no - 1], pictures=True, copy_notes=True)
+        if i == 0:
+            D.move_slide(s, after_pos=0)
+        k = D.strip_color(s, 'FF0000')
+        for box in sc['boxes'] or []:
+            _delete_box(D, s, box)
+        D.set_notes(s, sc['dup_script'] or [], None)
+        rep['dup'].append((no, s, k, len(sc['boxes'] or [])))
+    if rep['dup']:
+        DONE('앞에 복제 %d' % len(rep['dup']))
+    # 6. 이동
+    for no, sc in sorted(doc['screens'].items()):
+        for name, args in sc['ops'] or []:
+            if name == '이동':
+                D.move_slide(F[no - 1], after=F[int(args[0]) - 1])
+                DONE('이동 화면 %d → 화면 %s 뒤' % (no, args[0]))
+    # 7. 원작자 메모 수정 요청 — 적용하지 않고 남긴다
+    for no, sc in sorted(doc['screens'].items()):
+        for t in (sc['tips'] if isinstance(sc['tips'], list) else []):
+            if '[메모 수정 요청]' in t:
+                rep['memo_req'].append((no, t.strip()))
+    # 8. 노트
+    nn = 0
+    for no, sc in sorted(doc['screens'].items()):
+        if any(n == '삭제' for n, _ in (sc['ops'] or [])):
+            continue
+        if not (isinstance(sc['script'], list) or isinstance(sc['tips'], list) or sc['tips'] == 'NONE'):
+            continue
+        sn = F[no - 1]
+        cur_s, cur_t, _ = D.notes_sections(sn)
+        if isinstance(sc['script'], list) and cur_s and not cur_t and not D.notes_sections(sn)[2] and \
+                not any(T._is_memo_sep(l) or T._is_cutoff_line(l) for l in D.notes(sn)):
+            W('화면 %d — 기존 노트에 표지가 없어 대본으로 보고 바꿨다(원작자 메모였다면 사라졌다 — 기준 덱을 restore-memo·normalize-notes 했는지)' % no)
+        script = sc['script'] if isinstance(sc['script'], list) else cur_s
+        tips = sc['tips'] if isinstance(sc['tips'], list) else (None if sc['tips'] == 'NONE' else (cur_t or None))
+        D.set_notes(sn, script, tips); nn += 1
+    if nn:
+        DONE('노트 %d화면' % nn)
+    # 9. 삭제
+    for no, sc in sorted(doc['screens'].items()):
+        if any(n == '삭제' for n, _ in (sc['ops'] or [])):
+            D.remove_slide(F[no - 1]); rep['deleted'].append(no)
+    if rep['deleted']:
+        D.purge_orphans(); DONE('삭제 %d' % len(rep['deleted']))
+    D.save(out_path)
+    # 보고: 매핑·메모 보존·검증
+    R = T.Deck.open(out_path, os.path.join(wd, 'r'))
+    ro = [s for s, _, _ in R.order() if s]
+    B = T.Deck.open(base_path, os.path.join(wd, 'b'))
+    mapping, memo_ok, memo_bad = {}, 0, []
+    for no, sn in enumerate(F, 1):
+        if sn in ro:
+            mapping[no] = ro.index(sn) + 1
+            if B.notes_sections(sn)[2] == R.notes_sections(sn)[2]:
+                memo_ok += 1
+            else:
+                memo_bad.append(no)
+    rep.update({'mapping': mapping, 'memo_ok': memo_ok, 'memo_bad': memo_bad, 'screens': len(ro),
+                'valid': bool(T.validate(out_path, base_path)),
+                'sha': hashlib.sha256(open(out_path, 'rb').read()).hexdigest()[:16]})
+    return rep
+
+
+def report(rep, stream=sys.stdout):
+    w = lambda s='': print(s, file=stream)
+    w('## 넘김 적용 보고 (handoff.py v%s)' % __version__); w()
+    w('| 항목 | 값 |'); w('|---|---|')
+    w('| 결과 | %d화면 · validate %s · **sha256 앞 16자 `%s`** (적용 회신에 적는다) |' % (rep['screens'], '통과' if rep['valid'] else '**실패**', rep['sha']))
+    w('| 한 일 | %s |' % (' · '.join(rep['done']) or '없음'))
+    w('| 원작자 메모 | 기준 화면 %d곳 그대로%s |' % (rep['memo_ok'], (' · **달라진 화면 %s**' % rep['memo_bad']) if rep['memo_bad'] else ''))
+    if rep['dup']:
+        w('| 앞에 복제 | %s |' % ', '.join('화면 %d → slide%d(빨강 %d 제거, 해설 상자 %d 삭제)' % d for d in rep['dup']))
+    if rep['deleted']:
+        w('| 삭제 | 기준 화면 %s |' % rep['deleted'])
+    if rep['memo_req']:
+        w(); w('**원작자 메모 수정 요청 — 적용하지 않았다(사용자 허락 뒤 `settext(..., notes=True, zone=\'memo\')`)**'); w()
+        for no, t in rep['memo_req']:
+            w('- 기준 화면 %d: %s' % (no, t))
+    if rep['warn']:
+        w(); w('**경고**'); w()
+        for t in rep['warn']:
+            w('- %s' % t)
+    # 매핑은 같은 차이가 이어지는 구간으로 줄여 적는다: '3–13 → +1, 14–260 → +2'
+    segs, cur = [], None
+    for b, r in sorted(rep['mapping'].items()):
+        off = r - b
+        if cur and cur[2] == off and b == cur[1] + 1:
+            cur[1] = b
+        else:
+            cur = [b, b, off]; segs.append(cur)
+    txt = ', '.join(('%d' % s if s == e else '%d–%d' % (s, e)) + ' → %+d' % o for s, e, o in segs if o) or '없음'
+    w(); w('**매핑 (기준 화면 → 결과 화면, 밀린 칸 수)**: %s' % txt)
+
+
+def _screen_texts(deck, sn):
+    import html as _h
+    x = open(deck._slide(sn), encoding='utf8').read()
+    paras = [_h.unescape(''.join(re.findall(r'<a:t>([^<]*)</a:t>', p))) for p in re.findall(r'<a:p>.*?</a:p>', x, re.S)]
+    bg = re.search(r'<p:bg>.*?</p:bg>', x, re.S)
+    return {'title': _title_text(deck, sn), 'text': [t for t in paras if t.strip()], 'notes': deck.notes_sections(sn),
+            'hidden': deck.is_hidden(sn), 'bg': re.sub(r'\s+', '', bg.group(0)) if bg else ''}
+
+
+def compare(a_path, b_path, stream=sys.stdout, workdir=None):
+    """두 덱을 화면 순서대로 비교 — 제목·슬라이드 글·노트(대본·참고·메모)·숨김·배경. 도구 적용본과 손 적용본 대조용.
+    반환: 다른 화면 수. (서식·위치는 보지 않는다 — 글과 구조만)"""
+    import tempfile
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import deck_toolkit as T
+    wd = workdir or tempfile.mkdtemp(prefix='hc_')
+    A, B = T.Deck.open(a_path, os.path.join(wd, 'a')), T.Deck.open(b_path, os.path.join(wd, 'b'))
+    ao, bo = [s for s, _, _ in A.order() if s], [s for s, _, _ in B.order() if s]
+    w = lambda s='': print(s, file=stream)
+    w('## 덱 비교 (handoff.py v%s) — `%s` ↔ `%s`' % (__version__, os.path.basename(a_path), os.path.basename(b_path))); w()
+    if len(ao) != len(bo):
+        w('- **화면 수가 다르다: %d ↔ %d** — 앞에서부터 짝지어 본다' % (len(ao), len(bo)))
+    diff = 0
+    names = [('title', '제목'), ('text', '슬라이드 글'), ('hidden', '숨김'), ('bg', '배경')]
+    for i, (sa, sb) in enumerate(zip(ao, bo), 1):
+        ta, tb = _screen_texts(A, sa), _screen_texts(B, sb)
+        what = [lab for k, lab in names if ta[k] != tb[k]]
+        for j, lab in enumerate(('대본', '참고', '메모')):
+            if ta['notes'][j] != tb['notes'][j]:
+                what.append(lab)
+        if what:
+            diff += 1
+            if diff <= 30:
+                w('- 화면 %d: %s' % (i, ', '.join(what)))
+    w(); w('**다른 화면 %d / %d**' % (diff, min(len(ao), len(bo))) + ('' if len(ao) == len(bo) else ' (화면 수 다름)'))
+    return diff + abs(len(ao) - len(bo))
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd', required=True)
     c = sub.add_parser('check', help='문법 검사 + (--deck) 기준 덱 대조 미리보기')
     c.add_argument('md'); c.add_argument('--deck', default=None); c.add_argument('--sha', default=None, help='보낸 쪽이 적은 넘김 문서 sha256 앞 16자')
+    ap_ = sub.add_parser('apply', help='check 오류 0 일 때만 적용 + 보고서 (v1.2)')
+    ap_.add_argument('md'); ap_.add_argument('--deck', required=True); ap_.add_argument('-o', '--out', required=True)
+    ap_.add_argument('--sha', default=None); ap_.add_argument('--import', dest='imports', action='append', default=[], help='덱이름=경로 (가져옴)')
+    ap_.add_argument('--report', default=None, help='보고서 md 도 파일로')
+    cp = sub.add_parser('compare', help='두 덱을 화면별로 비교(글·노트·숨김·배경) — 도구 적용본과 손 적용본 대조 (v1.2)')
+    cp.add_argument('a'); cp.add_argument('b')
     a = ap.parse_args()
+    if a.cmd == 'compare':
+        sys.exit(1 if compare(a.a, a.b) else 0)
+    if a.cmd == 'apply':
+        b = open(a.md, 'rb').read()
+        doc = parse(b.decode('utf8'))
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import deck_toolkit as T
+        D = T.Deck.open(a.deck); D.src_path = a.deck
+        e, _ = check(doc, D, b, a.sha)
+        if e:
+            print('\n**적용하지 않았다 — 위 오류를 넘긴 쪽에 돌려보낸다**')
+            sys.exit(1)
+        imports = dict(x.split('=', 1) for x in a.imports)
+        rep = apply(doc, a.deck, a.out, imports)
+        print()
+        report(rep)
+        if a.report:
+            import io as _io
+            buf = _io.StringIO(); report(rep, buf); open(a.report, 'w', encoding='utf8').write(buf.getvalue())
+        sys.exit(0 if rep['valid'] and not rep['memo_bad'] else 1)
     b = open(a.md, 'rb').read()
     doc = parse(b.decode('utf8'))
     D = None
