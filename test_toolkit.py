@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.24'
+EXPECT_VERSION = '16.25'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -1602,6 +1602,21 @@ def t_v1619_da_after_vowel():
     assert not [q for q in T.check_note_substitution(d) if 'slide8' in q]
     d.set_notes(8, ['Wirsung관 확장'])                              # 한글 명사가 붙은 오염은 계속 잡는다
     assert [q for q in T.check_note_substitution(d) if 'slide8' in q]
+
+def t_v1625_merge_lead_and_insert_tab_template():
+    assert T._merge_format('L2 ⇥   US: a', 'L2 ⇥  US: b') == 'L2 ⇥   US: b'          # D9: 원래 공백 수
+    assert T._merge_format('L1     Extra 22-01', 'L1 Extra 22-02') == 'L1     Extra 22-02'
+    assert T._merge_format('L1 **A 22-11** x', 'L1 A 22-11 y', skip_bold=lambda s: bool(re.search(r'\d\d-\d\d', s))) == 'L1 A 22-11 y'
+    e = T.Deck.open(SRC, wd('i3'))
+    p, x, a, b = e._body_span(7)
+    body = ('<a:p><a:pPr lvl="1"/><a:r><a:rPr lang="en-US" sz="1600" b="1"/><a:t>Item A</a:t></a:r></a:p>'
+            '<a:p><a:pPr lvl="1"/><a:r><a:rPr lang="en-US" sz="1600"><a:highlight><a:srgbClr val="FFFF00"/></a:highlight></a:rPr><a:t>\tExam 24-14</a:t></a:r></a:p>'
+            '<a:p><a:pPr lvl="1"/><a:r><a:rPr lang="en-US" sz="1200" i="1"/><a:t>* note</a:t></a:r></a:p>')
+    open(p, 'w', encoding='utf8').write(x[:a] + body + x[b:])
+    e.insert_paragraph_like(7, 'L1 ⇥ Exam 25-01', after_key='* note')     # 앞 문단은 각주지만 틀은 탭 문단
+    y = open(p, encoding='utf8').read()
+    new = [q for q in re.findall(r'<a:p>.*?</a:p>', y, re.S) if 'Exam 25-01' in q][0]
+    assert 'highlight' in new and 'i="1"' not in new, new
 
 def t_title_box_not_placeholder():
     base, _ = _title_decks()

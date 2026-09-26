@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.24'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.25'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -237,16 +237,28 @@ def _notation_of_paras(paras, keep_empty=False):
     return out
 
 
-def _merge_format(cur, new):
-    """새 표기 줄에 원래 문단(cur, 표기)의 앞 탭·탭 뒤 공백·굵은 조각을 되살린다. 수준은 new 를 따른다 (v16.17, 발표 apply_HBP_v2 merge_format)."""
+def _merge_format(cur, new, skip_bold=None):
+    """새 표기 줄에 원래 문단(cur, 표기)의 앞 탭·탭 뒤 공백·굵은 조각을 되살린다. 수준은 new 를 따른다 (v16.17, 발표 apply_HBP_v2 merge_format).
+    v16.25 (발표 3-3·사용자 09-27): 줄 앞 탭·공백의 **수**도 원래 문단을 따른다(구분 공백 규칙 전 넘김이 한 칸 모자라던 D9).
+    skip_bold(글) 이 참인 굵은 조각은 되살리지 않는다(기출 번호는 연도 규칙으로 — handoff)."""
     lv, body = new[:3], new[3:]
     cbody = cur[3:]
     if cbody.startswith('⇥') and not body.startswith('⇥'):
         lead = re.match(r'⇥ (\s*)', cbody)
         spaces = lead.group(1) if lead else ''
         body = '⇥ ' + (spaces if not body.startswith(spaces) else '') + body
+    elif cbody.startswith('⇥') and body.startswith('⇥'):
+        a, b = re.match(r'⇥ ?(\s*)', cbody).group(1), re.match(r'⇥ ?(\s*)', body).group(1)
+        if a != b:
+            body = '⇥ ' + a + body[len(re.match(r'⇥ ?\s*', body).group(0)):]
+    else:
+        a, b = re.match(r'(\s*)', cbody).group(1), re.match(r'(\s*)', body).group(1)
+        if a != b and cbody.strip():
+            body = a + body.lstrip()
     for seg in re.findall(r'\*\*(.+?)\*\*', cur):
         if '**%s**' % seg in body:
+            continue
+        if skip_bold and skip_bold(seg):
             continue
         i = body.find(seg)
         if i >= 0 and '{r:' not in body[max(0, i - 3):i] and '**' not in body[max(0, i - 2):i]:
@@ -1264,7 +1276,13 @@ class Deck:
         else:
             lv = lambda q: int((re.search(r'<a:pPr\b[^>]*\blvl="(\d)"', q) or [0, 0])[1])
             order = list(range(at, -1, -1)) + list(range(at + 1, len(paras)))
-            same = [paras[k][2] for k in order if lv(paras[k][2]) == lvl and text(paras[k][2]).strip()]
+            # v16.25 (발표 3-5): 탭으로 시작하는 줄(출제줄)은 탭 문단을, 아닌 줄은 탭 아닌 문단을 틀로 — 앞 문단을 그대로 쓰다
+            # 출제줄의 강조가 빠지고 각주에 강조가 붙었다(LGI v2 화면 3)
+            want_tab = parse_body_notation([line])[0]['tab']
+            is_tab = lambda q: text(q).startswith('\t')
+            same = [paras[k][2] for k in order if text(paras[k][2]).strip() and is_tab(paras[k][2]) == want_tab and lv(paras[k][2]) == lvl]
+            same = same or [paras[k][2] for k in order if text(paras[k][2]).strip() and is_tab(paras[k][2]) == want_tab]
+            same = same or [paras[k][2] for k in order if lv(paras[k][2]) == lvl and text(paras[k][2]).strip()]
             tpl = same[0] if same else paras[at][2]
         new = _para_like(tpl, line)
         pos = paras[at][1] if paras else a

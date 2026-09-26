@@ -14,7 +14,7 @@ sys.path.insert(0, HERE)
 import handoff as H          # noqa: E402
 import deck_toolkit as T     # noqa: E402
 
-EXPECT_VERSION = '1.2'
+EXPECT_VERSION = '1.3'
 TMP = tempfile.mkdtemp(prefix='th_')
 
 
@@ -247,7 +247,7 @@ def t_v12_apply_end_to_end():
     # 화면 k: 본문 수정·교체·추가
     kb = [t for t in _body_paras(R, F[k - 1]) if t.strip()]
     assert kb[0].startswith(fix_old + 'X') and '교체된 줄 25-01' in kb and kb[-1] == '* 각주', kb
-    assert R.notes_sections(F[k - 1])[1] == ['- [검증] 교과서']
+    assert R.notes_sections(F[k - 1])[1] == ['· [검증] 교과서']          # 결정 1: 글머리 ·
     # 화면 3: 배경·숨김 / 화면 2: 노트 / 화면 6 삭제 / 화면 5 앞 복제
     assert 'D2F6F6' in open(R._slide(F[2]), encoding='utf8').read() and R.is_hidden(F[2])
     assert R.notes_sections(F[1])[0] == ['새 대본 한 줄.'] and R.notes_sections(F[1])[1] == []
@@ -271,6 +271,33 @@ def t_v12_apply_refuses_on_check_errors():
     r = subprocess.run([sys.executable, os.path.join(HERE, 'handoff.py'), 'apply', md, '--deck', base, '-o', os.path.join(TMP, 'x.pptx')],
                        capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
     assert r.returncode == 1 and '적용하지 않았다' in r.stdout and not os.path.exists(os.path.join(TMP, 'x.pptx')), r.stdout[-500:]
+
+def t_v13_fixes_from_real_test():
+    # 3-1: 떠 있는 '본문:' 은 오류
+    d = H.parse(doc('### 화면 2 — x\n작업: 없음 (문단 추가 2곳 — 본문 맨 끝)\n본문:\nL1 **기타**\n대본: 변경 없음\n참고: 없음\n'))
+    assert any('딸리지 않았다' in p[2] for p in errs(d)), d['problems']
+    # 3-4: '- 없음' 한 줄은 없음
+    d = H.parse(doc('### 화면 2 — x\n작업: 없음\n대본: 변경 없음\n참고:\n- 없음\n'))
+    assert d['screens'][2]['tips'] == 'NONE' and not d['problems']
+    # 결정 2: 연도 규칙
+    assert H._range_years('2026_전평_4_흉부1__2023-2025__x.pptx') == {'23', '24', '25'}
+    assert H._apply_year_rule('L1 AEP [짤]22-11, 24-02, {r:25-01}', {'23', '24', '25'}, (True, True)) == 'L1 AEP [짤]22-11, **{r:24-02}**, {r:25-01}'
+    assert H._apply_year_rule('L1 x 24-02', {'23', '24', '25'}, (False, True)) == 'L1 x {r:24-02}'
+    # 3-2: 본문 수정이 문단 키를 바꿔도 문단 추가가 같은 문단을 찾는다
+    base0 = _fixture_deck()
+    D0 = T.Deck.open(base0, os.path.join(TMP, 'v13a')); F0 = [s for s, _, _ in D0.order() if s]
+    D0.set_body(F0[6], T.Body().line('Chest AP 23-23, 19-30').line('Other 11-11'))
+    base = os.path.join(TMP, 'v13_2023-2025_base.pptx'); D0.save(base)
+    D = T.Deck.open(base, os.path.join(TMP, 'v13b')); D.src_path = base
+    n = len(F0); t7 = H._title_text(D, F0[6])
+    md = doc('### 화면 7 — %s\n작업: 없음\n문단 추가 — `Chest AP 23-23, 19-30` 줄 바로 뒤:\n본문:\nL1 Added 24-01\n대본: 변경 없음\n참고: 없음\n\n'
+             '## 본문 수정\n\n| 화면 | 원문 | 수정문 | 근거 |\n|---|---|---|---|\n| 7 | `23-23` | `[짤]23-23` | t |\n' % t7, n)
+    d = H.parse(md); assert H.check(d, D, stream=io.StringIO())[0] == 0
+    rep = H.apply(d, base, os.path.join(TMP, 'v13o.pptx'))
+    R = T.Deck.open(os.path.join(TMP, 'v13o.pptx'), os.path.join(TMP, 'v13r'))
+    body = [t for t in _body_paras(R, F0[6]) if t.strip()]
+    assert body[:3] == ['Chest AP [짤]23-23, 19-30', 'Added 24-01', 'Other 11-11'], body
+    assert not os.path.exists(os.path.join(os.path.dirname(rep.get('_wd', '/nonexistent')), 'x'))
 
 def t_cli():
     base = _fixture_deck()
