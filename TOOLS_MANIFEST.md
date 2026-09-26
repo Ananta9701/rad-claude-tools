@@ -1,6 +1,6 @@
 # TOOLS_MANIFEST — 도구 릴리스 목록 (코드 프로젝트 진본)
 
-**manifest 판: v35 · 릴리스 v2.15 · 2026-09-26**
+**manifest 판: v36 · 릴리스 v2.16 · 2026-09-26**
 
 > **이 파일이 진본 판정 기준이다.** 파일명은 고정(`TOOLS_MANIFEST.md`), 판은 이 줄에만 있다.
 > 세트는 전부 삭제 → 전부 재업로드이므로 파일명에 판이 있을 이유가 없고, 파일명 판이 "어느 manifest 가 최신인가"
@@ -13,11 +13,14 @@
 | `claim_graph.py` | v15.7 | `be1559a3ace8` | `test_claim_graph.py` 34/34 | 65366 |
 | `test_claim_graph.py` | v15.7 동반 | `6946b6a49119` | — | 29032 |
 | `CLAIM_GRAPH.md` | v15.7 | `836652b84421` | — | 22073 |
-| `deck_toolkit.py` | v16.20 | `58d415b5f386` | `test_toolkit.py` 169/169 (deck 135 + 공용 34, SKIP 0) | 278858 |
-| `test_toolkit.py` | v16.20 동반 | `37733a678996` | — | 111071 |
-| `DECK_SPEC.md` | v16.20 | `2ff161dce2a9` | — | 95029 |
+| `deck_toolkit.py` | v16.21 | `f6314d3068bd` | `test_toolkit.py` 169/169 (deck 135 + 공용 34, SKIP 0) | 278858 |
+| `test_toolkit.py` | v16.21 동반 | `7f0e7684556e` | — | 111071 |
+| `DECK_SPEC.md` | v16.21 | `22ec2cd7906e` | — | 96241 |
 | `verify_toolkit.py` | v1.3.3 | `6683437604f9` | `test_verify_toolkit.py` 41/41 | 35925 |
 | `test_verify_toolkit.py` | v1.3.3 동반 | `ffd443ae7943` | — | 20655 |
+| `handoff.py` | v1.0 | `ac46b281ca9d` | `test_handoff.py` 12/12 | 23006 |
+| `test_handoff.py` | v1.0 동반 | `598d9fb30a95` | — | 11731 |
+| `HANDOFF_FORMAT.md` | v1.0 | `9df63e3200f7` | — | 6032 |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — | 17531 |
 | `CODE_PROJECT_README.md` · `HISTORY.md` · `release.py` | 코드 프로젝트 전용 | (배포하지 않음 — 판·해시는 RELEASE §3 코드 표) | — | — |
 
@@ -31,16 +34,18 @@
 | claim_graph.py · test_claim_graph.py · CLAIM_GRAPH.md | ○ | ○ | ○ | 진본 |
 | deck_toolkit.py · test_toolkit.py · DECK_SPEC.md | × | ○ | × | 진본 |
 | verify_toolkit.py · test_verify_toolkit.py | ○ | × | × | 진본 |
+| handoff.py · test_handoff.py · HANDOFF_FORMAT.md | × | ○ | × | 진본 |
 | REVIEW_PROTOCOL.md | × | × | ○ | 진본 |
 | TOOLS_MANIFEST.md (이 파일) · RELEASE.md (최신 릴리스) | ○ | ○ | ○ | 진본 |
 | CODE_PROJECT_README.md · HISTORY.md · release.py · GITHUB_README.md · PRIVATE_TERMS.txt | × | × | × | 진본 |
-| **받는 파일 수** | **7** | **8** | **6** | 16 |
+| **받는 파일 수** | **7** | **11** | **6** | 19 |
 
-**GitHub 공개 세트** (v2.15~): 저자·발표·리뷰어 세트의 합(11개) + `GITHUB_README.md` 를 `README.md` 로. 코드 전용 파일(HISTORY·README·
+**GitHub 공개 세트** (v2.15~): 저자·발표·리뷰어 세트의 합(v2.16: 14개) + `GITHUB_README.md` 를 `README.md` 로. 코드 전용 파일(HISTORY·README·
 release.py·PRIVATE_TERMS)은 올리지 않는다. release.py 가 `PRIVATE_TERMS.txt`(사람·기관 이름, 연구 주제어)와 나이/성별·이메일 모양을
 찾아 하나라도 있으면 빌드를 멈춘다. 저장소: `github.com/Ananta9701/rad-claude-tools`(공개 — 프로필 비공개와 무관하게 누구나 볼 수 있다).
 
-의존 방향: `deck_toolkit.py` → `claim_graph.py`(import). 발표에서 claim_graph 3종을 빼면 deck_toolkit 이 안 돈다.
+의존 방향: `deck_toolkit.py` → `claim_graph.py`(import), `handoff.py` → `deck_toolkit.py`(기준 덱 대조 때). `HANDOFF_FORMAT.md` 는 영상의학도
+GitHub 에서 읽는다(넘김 문서를 쓰는 쪽). 발표에서 claim_graph 3종을 빼면 deck_toolkit 이 안 돈다.
 `remap-refs` 의 입력 refmap 은 `verify_toolkit renumber` 가 만든다(저자에만 둘 다 있음).
 
 ## 3. 절차
@@ -68,5 +73,5 @@ release.py·PRIVATE_TERMS)은 올리지 않는다. release.py 가 `PRIVATE_TERMS
 **코드 수정** — 코드 프로젝트에서만. 다른 프로젝트는 `{YYMMDD}_도구회신_{주제}_v{M}.md` 로 보낸다. 덱 전용 스크립트
 (`build_*.py`)는 발표 프로젝트가 직접 쓰되 툴킷 함수를 고치거나 새 툴킷 함수를 만들면 회신으로 보낸다.
 
-<!-- prev-release: v2.14 · CLAIM_GRAPH.md=4f289c33ed15;CODE_PROJECT_README.md=75c775ed70e1;DECK_SPEC.md=1a5a44e825ff;HISTORY.md=c25c14c3f365;REVIEW_PROTOCOL.md=9e304591b240;claim_graph.py=5e9fc56f91a4;deck_toolkit.py=bfd778aa37d4;release.py=ead0e79022b0;test_claim_graph.py=46e7e20ae414;test_toolkit.py=7f0977d38043;test_verify_toolkit.py=2e5fcfbfcef3;verify_toolkit.py=031d9c8811ba -->
-<!-- release-hashes: v2.15 · CLAIM_GRAPH.md=836652b84421;CODE_PROJECT_README.md=0f2f45890804;DECK_SPEC.md=2ff161dce2a9;GITHUB_README.md=c8f5dfa53ca1;HISTORY.md=d3d83a97996a;PRIVATE_TERMS.txt=4285e1f439fb;REVIEW_PROTOCOL.md=7f6e413d4d48;claim_graph.py=be1559a3ace8;deck_toolkit.py=58d415b5f386;release.py=f2e41ea81fed;test_claim_graph.py=6946b6a49119;test_toolkit.py=37733a678996;test_verify_toolkit.py=ffd443ae7943;verify_toolkit.py=6683437604f9 -->
+<!-- prev-release: v2.15 · CLAIM_GRAPH.md=836652b84421;CODE_PROJECT_README.md=0f2f45890804;DECK_SPEC.md=2ff161dce2a9;GITHUB_README.md=c8f5dfa53ca1;HISTORY.md=d3d83a97996a;PRIVATE_TERMS.txt=4285e1f439fb;REVIEW_PROTOCOL.md=7f6e413d4d48;claim_graph.py=be1559a3ace8;deck_toolkit.py=58d415b5f386;release.py=f2e41ea81fed;test_claim_graph.py=6946b6a49119;test_toolkit.py=37733a678996;test_verify_toolkit.py=ffd443ae7943;verify_toolkit.py=6683437604f9 -->
+<!-- release-hashes: v2.16 · CLAIM_GRAPH.md=836652b84421;CODE_PROJECT_README.md=0f2f45890804;DECK_SPEC.md=22ec2cd7906e;GITHUB_README.md=2e2886c5a453;HANDOFF_FORMAT.md=9df63e3200f7;HISTORY.md=5aacc49d52f2;PRIVATE_TERMS.txt=4285e1f439fb;REVIEW_PROTOCOL.md=7f6e413d4d48;claim_graph.py=be1559a3ace8;deck_toolkit.py=f6314d3068bd;handoff.py=ac46b281ca9d;release.py=7ad307268638;test_claim_graph.py=6946b6a49119;test_handoff.py=598d9fb30a95;test_toolkit.py=7f0e7684556e;test_verify_toolkit.py=ffd443ae7943;verify_toolkit.py=6683437604f9 -->

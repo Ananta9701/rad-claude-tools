@@ -25,7 +25,11 @@ python3 /tmp/rct/claim_graph.py selfcheck --dir /tmp/rct --role 발표 --tests -
 | claim_graph.py · test_claim_graph.py · CLAIM_GRAPH.md | ○ | ○ | ○ |
 | deck_toolkit.py · test_toolkit.py · DECK_SPEC.md | | ○ | |
 | verify_toolkit.py · test_verify_toolkit.py | ○ | | |
+| handoff.py · test_handoff.py · HANDOFF_FORMAT.md | | ○ | |
 | REVIEW_PROTOCOL.md | | | ○ |
 | TOOLS_MANIFEST.md · RELEASE.md | ○ | ○ | ○ |
 
 판·해시의 기준은 `TOOLS_MANIFEST.md`, 이번 판에서 바뀐 것은 `RELEASE.md`.
+
+**영상의학(넘김 문서를 쓰는 쪽)**: 넘김 문서 문법은 `HANDOFF_FORMAT.md` —
+`https://raw.githubusercontent.com/Ananta9701/rad-claude-tools/main/HANDOFF_FORMAT.md`.
