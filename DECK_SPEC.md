@@ -1,4 +1,4 @@
-# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.21)
+# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.22)
 
 영상의학과 발표자 — quiz / case review / journal review 공용
 
@@ -120,7 +120,8 @@ audit → lint → overflow --headroom 0.15 → align → sync → crosscheck --
 프로젝트가 만들고(`전평덱_작업규약` 이 그쪽 진본), **덱 파일 조작**은 발표 프로젝트가 이 툴킷으로 한다. 영상의학 프로젝트는
 pptx 를 읽을 수는 있지만 쓰지 않는다 — 자체 python-pptx 코드가 원작자 메모 서식 75화면·치환 오염 16곳을 만든 뒤의 결정.
 
-**넘김 문서의 문법은 `HANDOFF_FORMAT.md` 가 진본**(v2.16~, 영상의학도 GitHub 에서 읽는다). 적용 전에 반드시
+**넘김 문서의 문법은 `HANDOFF_FORMAT.md` 가 진본**(v2.16~, 영상의학도 GitHub 에서 읽는다). **발표는 적용 회신마다 결과 pptx 의
+sha256 앞 16자를 적는다** — 영상의학이 다음 넘김 머리 `기준 sha256` 에 옮겨, 노트만 다른 판에 잘못 적용하는 것을 막는다(v2.17). 적용 전에 반드시
 `python3 /tmp/rct/handoff.py check 넘김.md --deck 기준.pptx --sha {보낸 쪽이 적은 sha256 앞 16자}` — 오류가 하나라도 있으면
 적용하지 않고 영상의학에 돌려보낸다(문법 오류, 기준 판 불일치 = 화면 수·화면 제목 대조, 없는 문단 키, 본문 수정 원문 없음).
 적용(`apply-handoff` 2단계)과 검증 보고서(3단계)는 다음 판. 아래는 요약이다.
@@ -661,8 +662,10 @@ LGI 5곳)은 글자 모양이 정상이라 lint 가 못 잡는다 — 목록 검
 Cowork 가 사용자 Mac 의 Google Drive 동기화 폴더에서 한다 — 바이트 그대로 읽고 쓰며 pptx 를 사용자가 옮기지 않는다(시험 4항목 통과,
 전달 규약 v2 §6). Cowork 작업은 새 작업마다 폴더를 다시 연결한다.
 
-**세션 시작 — 도구는 GitHub 에서 받는다** (v2.15~): `README.md`(저장소 `github.com/Ananta9701/rad-claude-tools`)의 한 줄 명령으로
-`/tmp/rct` 에 받아 `selfcheck --role 발표 --tests --compare /mnt/project`. 프로젝트 파일의 도구는 예비로만 둔다.
+**세션 시작 — 도구는 GitHub 에서 받는다** (v2.15~): `README.md`(저장소 `github.com/Ananta9701/rad-claude-tools`)의 한 줄 명령 —
+v2.17 부터 `git clone --depth 1` 로 `/tmp/rct` 에 받아 `selfcheck --role 발표 --tests --compare /mnt/project`(Cowork 에서는 `--compare`
+빼고). 받은 커밋 해시가 selfcheck 표에 남는다. 프로젝트 파일의 도구는 예비로만 둔다. Drive 동기화 폴더 등에 툴킷 사본을 두지 않는다 —
+낡은 사본이 두 계통을 만든다(09-08 사고, 09-26 `Cowork 시험` 폴더의 v34 사본 삭제).
 
 파일을 받으면 **바로 만들지 않고** 아래를 먼저 제시한다.
 
@@ -1157,6 +1160,7 @@ v13 에서 `claim_graph.py` 로 분리해 발표·저자·리뷰어 세 프로�
   다르면 원천 슬라이드 배경을 뺀다(`keep_bg=True` 로 유지). `diff --match-text`·`restore-memo --match-text` 는 글에 그림 해시를 더해
   짝짓고, 후보가 여럿이거나 글·그림이 없으면 '모호' 로 두고 짝짓지 않는다. `diff --memo-only` 는 기존 메모 표지가 없는 화면을 세지
   않는다. `Deck.open` 의 기본 풀기 자리는 임시 폴더(읽기 전용 폴더의 파일도 연다)
+- **v16.22 (문서만, v2.17)**: 세션 시작 한 줄을 `git clone` 으로, 툴킷 사본을 두지 않는다, 적용 회신에 결과 sha256.
 - **v16.21 (문서만, v2.16)**: §0-B 넘김 문법은 `HANDOFF_FORMAT.md` 가 진본, 적용 전 `handoff.py check`. §8 대화창·Cowork 역할.
   v16.20(v2.15): 공개 전 개인정보·연구 내용 정리(동작 불변)
 - **v16.19 (발표 복부2 v2 회신)**: 치환 흔적 (b) 에서 서술격 '다' 는 영어 끝 글자가 모음 글자이거나 글자로 읽는 대문자 약어일 때

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """handoff.py 테스트 — python3 test_handoff.py (pytest 불필요)."""
+import hashlib
 import io
 import os
 import re
@@ -13,7 +14,7 @@ sys.path.insert(0, HERE)
 import handoff as H          # noqa: E402
 import deck_toolkit as T     # noqa: E402
 
-EXPECT_VERSION = '1.0'
+EXPECT_VERSION = '1.1'
 TMP = tempfile.mkdtemp(prefix='th_')
 
 
@@ -179,6 +180,23 @@ def t_ellipsis_key():
     assert H._para_count(D, sn, 'Thyroid nodule: K-TIRADS 24-01, …, 18-14') == 1
     assert H._para_count(D, sn, 'Thyroid nodule: K-TIRADS 99-01, …, 18-14') == 0
 
+
+def t_v11_memo_request_and_base_sha():
+    base = _fixture_deck()
+    D = T.Deck.open(base, os.path.join(TMP, 'd4')); D.src_path = base
+    order = [s for s, _, _ in D.order() if s]
+    t1 = H._title_text(D, order[0]) or '(제목 없음)'
+    body = '### 화면 1 — %s\n작업: 없음\n대본: 변경 없음\n참고:\n- [메모 수정 요청] 원작자 메모 A → B\n' % t1
+    buf = io.StringIO(); e, _ = H.check(H.parse(doc(body, len(order))), D, stream=buf)
+    assert e == 0 and '메모 수정 요청 1' in buf.getvalue() and '원작자 메모 수정' in buf.getvalue() and '기준 sha256 이 머리에 없다' in buf.getvalue(), buf.getvalue()
+    # 기준 sha256 이 있고 다르면 오류(노트만 다른 판도 잡는다)
+    head_sha = doc(body, len(order)).replace('— 화면 번호는 v1 기준\n', '— 화면 번호는 v1 기준\n> 기준 sha256: `0000000000000000`\n', 1)
+    d = H.parse(head_sha); assert d['base_sha'] == '0000000000000000'
+    buf = io.StringIO(); e, _ = H.check(d, D, stream=buf)
+    assert e and '고쳐 저장했는지' in buf.getvalue(), buf.getvalue()
+    real = hashlib.sha256(open(base, 'rb').read()).hexdigest()[:16]
+    buf = io.StringIO(); e, _ = H.check(H.parse(head_sha.replace('0000000000000000', real)), D, stream=buf)
+    assert e == 0, buf.getvalue()
 
 def t_cli():
     base = _fixture_deck()

@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v15.7
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v15.8
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -116,7 +116,7 @@ pptx 는 `deck_toolkit.py <명령> deck.pptx --claims ...`, docx/md 는 `claim_g
 | `extract doc -o draft.json` | 새 문서, 관계도 없음 | 수치·인용·방향어·대조어 문장을 후보로. status=proposed, origin=extract |
 | `mapgraph --claims` | 관계도를 쓰거나 고친 직후 | 없는 id, 순환(anchor), superseded 잔여 자리, 검토 순서 |
 | `scaffold --claims` | 문서를 쓰기 전 | 자리 순으로 "여기에 실릴 주장" 목록 — 이 순서로 쓴다 |
-| `selfcheck [--dir /mnt/project] [--tests]` | **세션 시작** | 세트 3단계 확인(manifest 판·파일별 판·해시) + 테스트 + 프로젝트 파일 분류 (a)(b)(c). 출력 표를 도구회신 §1 에 그대로 붙인다(v15.6). `②′` 행은 세트 해시를 RELEASE §3 표와도 대조한다(v15.6.1). 세 프로젝트 모두 이 파일이 있어서 여기에 둔다. **GitHub 에서 받은 전체 세트는 `--role 발표|저자|리뷰어` 로**(v15.7) — 추정하지 않고 그 역할의 파일만 보며, 안 쓰는 도구는 삭제 후보로 올리지 않는다. `--compare /mnt/project` 는 예비로 둔 프로젝트 파일과 판·해시를 대조한다 |
+| `selfcheck [--dir /mnt/project] [--tests]` | **세션 시작** | 세트 3단계 확인(manifest 판·파일별 판·해시) + 테스트 + 프로젝트 파일 분류 (a)(b)(c). 출력 표를 도구회신 §1 에 그대로 붙인다(v15.6). `②′` 행은 세트 해시를 RELEASE §3 표와도 대조한다(v15.6.1). 세 프로젝트 모두 이 파일이 있어서 여기에 둔다. **GitHub 에서 받은 전체 세트는 `--role 발표|저자|리뷰어` 로**(v15.7) — 추정하지 않고 그 역할의 파일만 보며, 안 쓰는 도구는 삭제 후보로 올리지 않는다. `--compare /mnt/project` 는 예비로 둔 프로젝트 파일과 판·해시를 대조한다. `git clone` 으로 받은 폴더면 받은 커밋 해시를 표에 적는다(v15.8) |
 | `impact --claims <id> [--sites]` | 주장을 뒤집기로 결정 | 다시 볼 하류 주장과 자리. `--sites` 면 [필수] 자리만 한 줄에 하나(v15.5, 목록 대조용) |
 | `mapcheck doc --claims [--nums] [--nums-sep "|"]` | 자리를 다 고친 뒤 | keys/forbidden 대조 + 그래프 검사. `--nums` 면 evidence 수치가 자리에 있는지도. `--nums-sep` 은 evidence 에서 그 구분자 **앞쪽만** 검사(v15.5) — "원고 값 | 재현 값" 용법용, 구분자는 사용자가 선언한다 (교정용, 심사 형식 지적의 대부분이 이 유형) |
 | `mapfreeze doc --claims -o` | 검증을 **실제로** 마친 뒤 | 해시 기록 = "확인했다" 선언 |

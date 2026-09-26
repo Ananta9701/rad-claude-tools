@@ -42,7 +42,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '15.7'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '15.8'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 
 EDGE_TYPES = ('premise', 'support', 'context', 'caveat')
 EDGE_DEFAULT_WEIGHT = {'premise': 1.0, 'support': 0.7, 'context': 0.3, 'caveat': 0.5}
@@ -1106,6 +1106,14 @@ def selfcheck(folder, run_tests=False, stream=sys.stdout, role=None, compare=Non
     if not s1:
         problems.append('1단계: manifest 판 v%s ≠ RELEASE 첫 줄 v%s' % (mver, rv))
     lines.append('| ① manifest 판 | v%s / RELEASE v%s | %s |' % (mver, rv, '○' if s1 else '✗'))
+    # v15.8: git clone 으로 받은 세트면 커밋 해시 — 받은 판을 회신에서 확정한다(tarball 은 판 식별자가 없다)
+    if os.path.isdir(os.path.join(folder, '.git')):
+        try:
+            head = subprocess.run(['git', '-C', folder, 'log', '-1', '--format=%H %cd', '--date=format:%Y-%m-%d %H:%M'],
+                                  capture_output=True, text=True, timeout=20).stdout.strip()
+        except Exception:
+            head = ''
+        lines.append('| 받은 커밋 | `%s` | %s |' % (head[:12] + head[40:] if head else '(읽지 못함)', '○' if head else '—'))
     # 2·3단계
     for f in sorted(need & set(rows)):
         p = os.path.join(folder, f)

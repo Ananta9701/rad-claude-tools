@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '15.7'
+EXPECT_VERSION = '15.8'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -327,7 +327,7 @@ def t_mapgraph_keys_forbidden_overlap():
     assert any('keys 와 forbidden 에 같은 표현' in p for p in probs), probs
 
 def t_selfcheck():
-    import hashlib, shutil, tempfile
+    import hashlib, shutil, tempfile, subprocess
     d = tempfile.mkdtemp()
     src = os.path.dirname(os.path.abspath(CGm.__file__))
     for f in ('claim_graph.py', 'test_claim_graph.py'):
@@ -364,6 +364,13 @@ def t_selfcheck():
     buf = io.StringIO(); CGm.selfcheck(d, stream=buf, role='저자', compare=d2)
     assert '예비 폴더' in buf.getvalue() and '없는 파일 2' in buf.getvalue() and '다름' in buf.getvalue(), buf.getvalue()
     os.remove(os.path.join(d, 'deck_toolkit.py'))
+    # v15.8: git 저장소 폴더면 받은 커밋을 적고, .git 은 세트 밖 파일로 잡지 않는다
+    r0 = subprocess.run(['git', 'init', '-q', d], capture_output=True)
+    if r0.returncode == 0:
+        subprocess.run(['git', '-C', d, '-c', 'user.email=t@t', '-c', 'user.name=t', 'add', '-A'], capture_output=True)
+        subprocess.run(['git', '-C', d, '-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'x'], capture_output=True)
+        buf = io.StringIO(); r = CGm.selfcheck(d, stream=buf, role='저자')
+        assert '받은 커밋' in buf.getvalue() and '.git' not in r['other'], buf.getvalue()
     # ②′: manifest 를 바꿔치기하면(자기 기준으로는 ○) RELEASE 대조가 잡는다
     open(os.path.join(d, 'TOOLS_MANIFEST.md'), 'a', encoding='utf8').write('\n<!-- tampered -->\n')
     r = CGm.selfcheck(d, stream=io.StringIO()); assert any('②′ TOOLS_MANIFEST.md' in p for p in r['problems']), r['problems']

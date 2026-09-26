@@ -15,7 +15,7 @@ import os
 import re
 import sys
 
-__version__ = '1.0'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
+__version__ = '1.1'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
 
 KEYS = ('작업:', '대본:', '참고:', '본문:', '제목:', '복제본(문제) 대본:')
 PARA_OP = re.compile(r'^문단 (교체|추가|삭제)\b')
@@ -334,7 +334,8 @@ def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout):
         if doc['screens_n'] and n != doc['screens_n']:
             probs.append(('오류', 0, '기준 덱 화면 수 %d ≠ 넘김 머리 %d화면 — 기준 판이 다르다' % (n, doc['screens_n'])))
         if doc['base_sha'] and deck_path_sha(deck) and deck_path_sha(deck) != doc['base_sha']:
-            probs.append(('오류', 0, '기준 덱 sha256 이 넘김 머리와 다르다'))
+            probs.append(('오류', 0, '기준 덱 sha256 %s ≠ 넘김 머리의 기준 sha256 %s — 기준 판과 파일이 다르다. 다른 판이거나, '
+                          '사용자가 고쳐 저장했는지 확인(열어 저장만 해도 바뀐다)' % (deck_path_sha(deck), doc['base_sha'])))
         bad_titles = []
         for no, sc in sorted(doc['screens'].items()):
             if no < 1 or no > n:
@@ -379,6 +380,9 @@ def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout):
         names = [o[0] for o in (sc['ops'] or []) if o[0] not in ('없음', '문단 작업', '본문 N문단')]
         if sc['para']:
             names.append('문단 ' + '·'.join(sorted({p['kind'] for p in sc['para']})) + ' %d' % len(sc['para']))
+        memo_req = [t for t in (sc['tips'] if isinstance(sc['tips'], list) else []) if '[메모 수정 요청]' in t]
+        if memo_req:   # v1.1 (발표 실물점검): 원작자 메모 수정은 기본 멈춤(요청서 3-4) — 미리보기에 드러낸다
+            names.append('메모 수정 요청 %d' % len(memo_req))
         if names:
             plan.append((no, sc['title_h'][:40], ', '.join(names), sc['boxes']))
         for nm in names:
@@ -403,7 +407,11 @@ def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout):
     if doc['new']:
         w(); w('**새 슬라이드 %d장**: %s' % (len(doc['new']), ' / '.join(n['title'] or n['title_h'] for n in doc['new'])))
     w(); w('적용 순서(2단계): 본문 수정 → 문단 교체·추가·삭제 → 배경·숨김 → 새 슬라이드·가져옴 → 앞에 복제(정답 표시 제거·해설 상자) → '
-           '이동·삭제 → 노트(대본·참고, 기존 메모 보존) → 매핑표·검증 보고서')
+           '이동·삭제 → **원작자 메모 수정**(요청이 있고 사용자가 허락한 것만 — 노트를 쓰기 전에, D8) → 노트(대본·참고, 기존 메모 보존) → '
+           '매핑표·검증 보고서')
+    if doc['base_sha'] is None:
+        w('기준 sha256 이 머리에 없다 — 노트만 다른 판(예: 한 판 앞 덱)은 화면 수·제목·문단 키로 구별되지 않는다. '
+          '발표 적용 회신의 결과 sha256 을 다음 넘김 머리 `기준 sha256` 에 적으면 잡힌다')
     return len(errs), len(warns)
 
 
