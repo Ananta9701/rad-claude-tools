@@ -16,7 +16,7 @@ import os
 import re
 import sys
 
-__version__ = '1.3'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
+__version__ = '1.4'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
 
 KEYS = ('작업:', '대본:', '참고:', '본문:', '제목:', '복제본(문제) 대본:')
 PARA_OP = re.compile(r'^문단 (교체|추가|삭제)\b')
@@ -42,6 +42,7 @@ OPS = [
     ('본문 수정', re.compile(r'^본문 수정$')),
     ('문단 작업', re.compile(r'^문단 (?:교체|추가|삭제)(?: \d+곳)?$')),
     ('본문 N문단', re.compile(r'^본문 \d+문단$')),
+    ('레이아웃', re.compile(r'^레이아웃 = 화면 (\d+) ?(?:과|와) 같게$')),   # v1.4 (발표 N3): 새 슬라이드·가져옴의 레이아웃을 넘김이 정한다
     ('제목·본문 전체 교체', re.compile(r'^제목·본문 전체 교체$')),
 ]
 
@@ -595,6 +596,19 @@ def _key_index(deck, sn, key):
     return hits[0]
 
 
+def _body_levels(deck, sn):
+    """본문 placeholder 의 (수준, 탭 여부) 집합."""
+    try:
+        _, d, a, e = deck._body_span(sn)
+    except Exception:
+        return set()
+    out = set()
+    for p in re.findall(r'<a:p>.*?</a:p>', d[a:e], re.S):
+        if _ptext(p).strip():
+            out.add((int((re.search(r'<a:pPr\b[^>]*\blvl="(\d)"', p) or [0, 0])[1]), _ptext(p).startswith('\t')))
+    return out
+
+
 def _tips_bullets(tips):
     """결정 1(사용자 09-27): 참고 줄 글머리 '- ' → '· '."""
     return [('· ' + t[2:]) if t.startswith('- ') else t for t in tips]
@@ -716,16 +730,34 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
             raise ValueError('새 슬라이드 "%s" — 틀(새 슬라이드(…화면 N…) 또는 가져옴)이 없다' % (nw['title'] or nw['title_h']))
         after = _pos_after(D, where, F, last_new)
         lay = None
-        if '배경' in ops:   # v1.3 (발표 3-6): 같은 배경(교육목표 #D2F6F6 등) 슬라이드가 이미 있으면 그 레이아웃으로 — D4 재발 방지
+        if '레이아웃' in ops:
+            lay = D.layout_of(F[int(ops['레이아웃'][0]) - 1])
+        elif '배경' in ops:   # v1.3 (발표 3-6): 같은 배경(교육목표 #D2F6F6 등) 슬라이드가 이미 있으면 그 레이아웃으로 — D4 재발 방지
             from collections import Counter
             same_bg = Counter(D.layout_of(x) for x in D.slide_numbers()
                               if re.search(r'<p:bg>.*?%s.*?</p:bg>' % ops['배경'][0], open(D._slide(x), encoding='utf8').read(), re.S | re.I))
             lay = same_bg.most_common(1)[0][0] if same_bg else None
         s = D.import_slide(src, src_sn, after=after, pictures=False, layout=lay)
         if lay:
-            DONE('새 슬라이드 레이아웃 %s(같은 배경 슬라이드를 따름)' % lay) if not any('레이아웃' in d for d in rep['done']) else None
+            DONE('새 슬라이드 레이아웃 %s(%s)' % (lay, '넘김 지정' if '레이아웃' in ops else '같은 배경 슬라이드를 따름')) if not any('레이아웃' in d for d in rep['done']) else None
+        elif '가져옴' in ops:   # v1.4 (발표 N3): 첫 가져옴은 근거 없이 마스터를 고르게 된다 — 알리고 넘김이 정하게
+            W('"%s" 을 다른 덱에서 가져와 레이아웃 %s 에 붙였다 — 같은 배경 슬라이드가 없어 도구가 골랐다. 원하는 레이아웃이 있으면 넘김 작업에 '
+              '"레이아웃 = 화면 N 과 같게"' % (nw['title'], D.layout_of(s)))
+        # v1.4 (발표 N1): 본문 틀 — 틀 슬라이드에 없는 수준(예: L2)이 있으면 같은 레이아웃·같은 배경의 다른 슬라이드 중 모든 수준을 가진 것을
+        need = {(q['lvl'], q['tab']) for q in T.parse_body_notation(nw['body'])}
+        tsrc = (D, s)
+        if not need <= _body_levels(D, s):
+            bgc = ops['배경'][0] if '배경' in ops else None
+            cands = [x for x in D.slide_numbers() if x != s and D.layout_of(x) == D.layout_of(s) and
+                     (not bgc or re.search(r'<p:bg>.*?%s.*?</p:bg>' % bgc, open(D._slide(x), encoding='utf8').read(), re.S | re.I))]
+            full = [x for x in cands if need <= _body_levels(D, x)]
+            if full:
+                tsrc = (D, full[0])
+            else:
+                miss = sorted(need - _body_levels(D, s))
+                W('새 슬라이드 "%s" — 틀에 없는 수준 %s 은 가장 가까운 수준의 서식을 썼다(같은 틀 묶음에도 없음) — 들여쓰기·글자 크기를 확인' % (nw['title'], ', '.join('L%d%s' % (l, '탭' if t else '') for l, t in miss)))
         _set_title_text(D, s, nw['title'])
-        D.set_body_like(s, nw['body'])
+        D.set_body_like(s, nw['body'], template=None if tsrc == (D, s) else tsrc)
         if '배경' in ops:
             D.set_background(s, rgb=ops['배경'][0].upper())
         D.set_notes(s, nw['script'] if isinstance(nw['script'], list) else [], _tips_bullets(nw['tips']) if isinstance(nw['tips'], list) else None)
@@ -748,12 +780,18 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
         rep['dup'].append((no, s, k, len(sc['boxes'] or [])))
     if rep['dup']:
         DONE('앞에 복제 %d' % len(rep['dup']))
-    # 6. 이동
+    # 6. 이동 — 같은 자리 뒤로 가는 화면들은 원래 순서를 지킨다(v1.4, 발표 N2: 하나씩 같은 자리에 넣어 거꾸로 됐다)
+    moves = {}
     for no, sc in sorted(doc['screens'].items()):
         for name, args in sc['ops'] or []:
             if name == '이동':
-                D.move_slide(F[no - 1], after=F[int(args[0]) - 1])
-                DONE('이동 화면 %d → 화면 %s 뒤' % (no, args[0]))
+                moves.setdefault(int(args[0]), []).append(no)
+    for tgt, nos in moves.items():
+        after = F[tgt - 1]
+        for no in sorted(nos):
+            D.move_slide(F[no - 1], after=after)
+            after = F[no - 1]
+        DONE('이동 화면 %s → 화면 %d 뒤' % (','.join(map(str, sorted(nos))), tgt))
     # 7. 원작자 메모 수정 요청 — 적용하지 않고 남긴다
     for no, sc in sorted(doc['screens'].items()):
         for t in (sc['tips'] if isinstance(sc['tips'], list) else []):

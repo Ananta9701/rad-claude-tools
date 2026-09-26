@@ -14,7 +14,7 @@ sys.path.insert(0, HERE)
 import handoff as H          # noqa: E402
 import deck_toolkit as T     # noqa: E402
 
-EXPECT_VERSION = '1.3'
+EXPECT_VERSION = '1.4'
 TMP = tempfile.mkdtemp(prefix='th_')
 
 
@@ -298,6 +298,38 @@ def t_v13_fixes_from_real_test():
     body = [t for t in _body_paras(R, F0[6]) if t.strip()]
     assert body[:3] == ['Chest AP [짤]23-23, 19-30', 'Added 24-01', 'Other 11-11'], body
     assert not os.path.exists(os.path.join(os.path.dirname(rep.get('_wd', '/nonexistent')), 'x'))
+
+def t_v14_moves_order_and_layout_op():
+    assert H.parse_ops('가져옴: LGI 덱 화면 2 → 화면 60 뒤 · 레이아웃 = 화면 61 과 같게')[0][-1] == ('레이아웃', ('61',))
+    base = _fixture_deck()
+    D = T.Deck.open(base, os.path.join(TMP, 'mv0')); D.src_path = base
+    F = [s for s, _, _ in D.order() if s]; n = len(F)
+    t = lambda k: H._title_text(D, F[k - 1])
+    md = doc(''.join('### 화면 %d — %s\n작업: 이동 → 화면 8 뒤\n대본: 변경 없음\n참고: 변경 없음\n\n' % (k, t(k)) for k in (2, 3, 4)), n)
+    d = H.parse(md); assert H.check(d, D, stream=io.StringIO())[0] == 0
+    out = os.path.join(TMP, 'mv.pptx'); H.apply(d, base, out)
+    R = T.Deck.open(out, os.path.join(TMP, 'mvr')); ro = [s for s, _, _ in R.order() if s]
+    i8 = ro.index(F[7])
+    assert ro[i8 + 1:i8 + 4] == [F[1], F[2], F[3]], (ro, F)          # 원래 순서 2·3·4
+
+def t_v14_new_slide_level_template():
+    base0 = _fixture_deck()
+    D0 = T.Deck.open(base0, os.path.join(TMP, 'lv0')); F0 = [s for s, _, _ in D0.order() if s]
+    D0.set_body(F0[5], T.Body().line('only L0'))                           # 틀(화면 6)에는 L0 뿐
+    p, x, a, b = D0._body_span(F0[6])                                      # 화면 7 에 L0·L2 — 같은 레이아웃
+    body = ('<a:p><a:r><a:rPr lang="en-US" sz="2000" b="1"/><a:t>Head</a:t></a:r></a:p>'
+            '<a:p><a:pPr marL="685800" lvl="2"/><a:r><a:rPr lang="en-US" sz="1600"/><a:t>Deep</a:t></a:r></a:p>')
+    open(p, 'w', encoding='utf8').write(x[:a] + body + x[b:])
+    base = os.path.join(TMP, 'lv_base.pptx'); D0.save(base)
+    D = T.Deck.open(base, os.path.join(TMP, 'lv1')); D.src_path = base
+    n = len(F0)
+    md = doc('### 새 슬라이드 — X (1/1)\n작업: 새 슬라이드(형식, 화면 6과 같은 틀) → 화면 9 앞\n제목: X\n본문:\nL0 **머리**\nL2 깊은 줄\n대본:\n가\n참고: 없음\n', n)
+    d = H.parse(md); assert H.check(d, D, stream=io.StringIO())[0] == 0
+    out = os.path.join(TMP, 'lv.pptx'); rep = H.apply(d, base, out)
+    R = T.Deck.open(out, os.path.join(TMP, 'lvr'))
+    xs = open(R._slide(rep['new'][0][1]), encoding='utf8').read()
+    deep = [q for q in re.findall(r'<a:p>.*?</a:p>', xs, re.S) if '깊은 줄' in q][0]
+    assert 'marL="685800"' in deep and 'sz="1600"' in deep, deep                # 화면 7 의 L2 서식
 
 def t_cli():
     base = _fixture_deck()
