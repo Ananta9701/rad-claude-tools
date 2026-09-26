@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.22'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.23'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -4665,9 +4665,9 @@ def check_note_substitution(deck):
             word, ko = m.group(1), m.group(2)
             if ko.startswith(_KO_PARTICLES):
                 continue
-            # v16.19 (발표 B1): 서술격 '다' 는 모음으로 끝나는 말 뒤에서 맞다(adenocarcinoma다), 받침 뒤면 '이다'(segment다 ×).
-            # 영어 끝 글자가 모음 글자이거나, 글자로 읽는 대문자 약어(MRI다·CT다)면 '다' 를 받아 준다. 발음과 완전히 같지는 않다
-            if ko.startswith('다') and (word[-1].lower() in 'aeiouy' or (word.isupper() and len(word) <= 5)):
+            # v16.23 (발표 B1 철회, 사용자 09-26): 영어 낱말 뒤 조사는 한국어로 읽은 소리를 기준으로 한다 — segment→세그먼트,
+            # point→포인트 는 모음으로 끝나 'segment다' 가 맞다. 철자로는 읽은 소리의 받침을 알 수 없으므로 '다'(서술격)는 잡지 않는다
+            if ko.startswith('다'):
                 continue
             hits.append(m.group(0))
         # (c) '영어 두 단어 붙음' 규칙은 v16.17 에서 뺐다 — 세 번의 회신에서 실제 영어 단어를 잘못 잡았고(intracranial·

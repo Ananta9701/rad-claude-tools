@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '15.8'
+EXPECT_VERSION = '15.8.1'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -471,7 +471,7 @@ def run():
     for st, n, msg in results:
         print('%-4s %-*s %s' % (st, w, n, msg))
     f = sum(1 for s, _, _ in results if s == 'FAIL')
-    print('\n통과 %d / 실패 %d  (전체 %d)' % (len(results) - f, f, len(results)))
+    print('\n통과 %d / 건너뜀 0 / 실패 %d  (전체 %d)' % (len(results) - f, f, len(results)))   # v15.8: 건너뜀 칸을 모든 테스트에 같은 모양으로(발표 요청)
     return f
 
 

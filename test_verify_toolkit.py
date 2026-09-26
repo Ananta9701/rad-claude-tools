@@ -23,7 +23,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '1.3.3'
+EXPECT_VERSION = '1.3.4'
 TMP = os.environ.get('VT_TMP', '/tmp/vt_test')
 shutil.rmtree(TMP, ignore_errors=True)
 os.makedirs(TMP, exist_ok=True)
@@ -470,5 +470,5 @@ if __name__ == '__main__':
             ok += 1; print(f'PASS {n:40s}')
         except Exception:
             fail += 1; print(f'FAIL {n:40s}'); traceback.print_exc()
-    print(f'\n통과 {ok} / 실패 {fail}  (전체 {ok + fail})')
+    print(f'\n통과 {ok} / 건너뜀 0 / 실패 {fail}  (전체 {ok + fail})')
     sys.exit(1 if fail else 0)

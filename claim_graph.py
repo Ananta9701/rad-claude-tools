@@ -42,7 +42,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '15.8'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '15.8.1'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 
 EDGE_TYPES = ('premise', 'support', 'context', 'caveat')
 EDGE_DEFAULT_WEIGHT = {'premise': 1.0, 'support': 0.7, 'context': 0.3, 'caveat': 0.5}

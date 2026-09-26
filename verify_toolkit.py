@@ -39,7 +39,7 @@ import zipfile
 import os
 import shutil
 
-__version__ = '1.3.3'   # TOOLS_MANIFEST 와 대조. 판이 오르면 test_verify_toolkit.EXPECT_VERSION 도 함께
+__version__ = '1.3.4'   # TOOLS_MANIFEST 와 대조. 판이 오르면 test_verify_toolkit.EXPECT_VERSION 도 함께
 
 # ══════════════════════════════════════════════════════════════
 # PAPER-SPECIFIC CONFIG — 논문·학술지가 바뀌면 여기만 수정

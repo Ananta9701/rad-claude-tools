@@ -14,7 +14,7 @@ sys.path.insert(0, HERE)
 import handoff as H          # noqa: E402
 import deck_toolkit as T     # noqa: E402
 
-EXPECT_VERSION = '1.1'
+EXPECT_VERSION = '1.1.1'
 TMP = tempfile.mkdtemp(prefix='th_')
 
 
@@ -222,5 +222,5 @@ if __name__ == '__main__':
             fn(); ok += 1; print('PASS %s' % name[2:])
         except Exception as e:
             fail += 1; print('FAIL %-40s %s: %s' % (name[2:], type(e).__name__, str(e)[:300]))
-    print('\n통과 %d / 실패 %d  (전체 %d)' % (ok, fail, ok + fail))
+    print('\n통과 %d / 건너뜀 0 / 실패 %d  (전체 %d)' % (ok, fail, ok + fail))
     sys.exit(1 if fail else 0)

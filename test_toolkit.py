@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.22'
+EXPECT_VERSION = '16.23'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -1598,9 +1598,10 @@ def t_v1619_da_after_vowel():
     d = T.Deck.open(SRC, wd('b1'), theme='cud')
     d.set_notes(7, ['정답은 adenocarcinoma다. 이 병변은 MRI다.'])
     assert not [q for q in T.check_note_substitution(d) if 'slide7' in q]
-    d.set_notes(8, ['이것은 segment다. 가장 중요한 point다.'])
-    hit = ' '.join(q for q in T.check_note_substitution(d) if 'slide8' in q)
-    assert 'segment다' in hit and 'point다' in hit, hit
+    d.set_notes(8, ['이것은 segment다. 가장 중요한 point다.'])   # v16.23: 읽은 소리 기준(세그먼트다·포인트다) — 잡지 않는다
+    assert not [q for q in T.check_note_substitution(d) if 'slide8' in q]
+    d.set_notes(8, ['Wirsung관 확장'])                              # 한글 명사가 붙은 오염은 계속 잡는다
+    assert [q for q in T.check_note_substitution(d) if 'slide8' in q]
 
 def t_title_box_not_placeholder():
     base, _ = _title_decks()
