@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.28'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.29'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -3162,7 +3162,7 @@ def _title_info(deck, slide_no):
         if mp and os.path.exists(mp):
             ls = re.search(r'<p:titleStyle>.*?<a:lvl1pPr\b.*?<a:lnSpc><a:spcPct val="(\d+)"', open(mp, encoding='utf8').read(), re.S)
     lnspc = int(ls.group(1)) / 100000.0 if ls else 1.0
-    return {'kind': kind, 'start': m.start(), 'end': m.end(), 'seg': seg, 'x': geo[0], 'y': geo[1], 'w': geo[2], 'h': geo[3],
+    return {'kind': kind, 'slide': slide_no, 'start': m.start(), 'end': m.end(), 'seg': seg, 'x': geo[0], 'y': geo[1], 'w': geo[2], 'h': geo[3],
             'inherit': not _GEO.search(seg), 'paras': [p for p in paras if p.strip()], 'sz': szs[0] if szs else None,
             'eff_sz': szs[0] if szs else _title_default_sz(deck, slide_no),
             'latin': latin.group(1) if latin else None, 'autofit': autofit, 'fill': fill.group(0) if fill else None,
@@ -3202,22 +3202,29 @@ def title_profile(deck, like=None, slides=None):
     if not infos:
         return None
     sz = _mode([i['sz'] for i in infos]); est = sz or _mode([i['eff_sz'] for i in infos])
-    hb, excluded = {}, 0
+    hb, excluded, contrib, exl = {}, 0, {}, []
+    ins_mode = _mode([(i['lIns'], i['rIns'], i['tIns'], i['bIns']) for i in infos])
     for i in infos:
         n = _title_lines(i, est)
         # v16.28 (발표 K8): 띠가 필요 높이(안쪽 여백 + 줄 높이 × 줄 수)보다 확연히 낮은 제목은 높이를 배우지 않는다 — PowerPoint 의
         # spAutoFit 에 기대는 제목(Google Slides 는 키우지 않는다)이나 도구가 만든 값이 다음 규격이 된 일(근골격 1줄 1.22" → 0.66")
-        if i['h'] < 0.9 * _title_need_h(i['tIns'], i['bIns'], n, est, i.get('lnspc', 1.0)):
-            excluded += 1
+        need = _title_need_h(i['tIns'], i['bIns'], n, est, i.get('lnspc', 1.0))
+        if i['h'] < 0.9 * need:
+            excluded += 1; exl.append((i['slide'], i['h'], need))
             continue
-        hb.setdefault(n, []).append(i['h'])
+        contrib.setdefault(n, []).append((i['slide'], i['h'], i['tIns'], i['bIns']))
+    # v16.29 (발표 K8-b): 높이와 안쪽 여백을 따로 최빈값으로 고르면 서로 다른 제목의 값이 섞인다(작은 여백 제목의 0.66" + 큰 여백
+    # 0.39"×2 = 담지 못하는 띠). 규격 여백과 같은 여백을 가진 제목의 높이만으로 — 없으면 그 줄 수의 모든 제목으로
+    for n, rows in contrib.items():
+        same = [h for _, h, t, b in rows if (t, b) == (ins_mode[2], ins_mode[3])]
+        hb[n] = same or [h for _, h, _, _ in rows]
     return {'x': _mode([i['x'] for i in infos]), 'y': _mode([i['y'] for i in infos]), 'w': _mode([i['w'] for i in infos]),
             'h_by_lines': {n: _mode(hs) for n, hs in hb.items()}, 'sz': sz, 'est_sz': est,
             'latin': _mode([i['latin'] for i in infos]), 'autofit': _mode([i['autofit'] for i in infos]),
             'fill': _mode([i['fill'] for i in infos]),
             'ins': _mode([(i['lIns'], i['rIns'], i['tIns'], i['bIns']) for i in infos]),
             'bodyPr': _mode([re.search(r'<a:bodyPr\b[^>]*?/?>', i['seg']).group(0) if re.search(r'<a:bodyPr\b', i['seg']) else '' for i in infos]),
-            'n': len(infos), 'layout': infos[0]['layout'], 'excluded': excluded}
+            'n': len(infos), 'layout': infos[0]['layout'], 'excluded': excluded, 'excluded_list': exl, 'contrib': contrib}
 
 
 def _title_need_h(t_ins, b_ins, lines, sz, lnspc=1.0):
@@ -3225,7 +3232,7 @@ def _title_need_h(t_ins, b_ins, lines, sz, lnspc=1.0):
     return int((t_ins or 0) + (b_ins or 0) + lines * (sz or 2800) / 100.0 * LINE_FACTOR * (lnspc or 1.0) * 12700)
 
 
-def raise_title_band(deck, slide_no, dry_run=False):
+def raise_title_band(deck, slide_no, dry_run=False, shrink_bottom=None):
     """v16.28 (발표 K8 선택 3): Google 안전 — 제목 자리 표시자 띠가 필요 높이보다 낮으면 위쪽 끝을 고정하고 필요 높이로 키운다.
     키운 띠가 아래 내용(본문·그림)과 겹치면 바꾸지 않고 알린다. 반환: 문자열 목록('[!]' = 바꾸지 않음)."""
     i = _title_info(deck, slide_no)
@@ -3235,15 +3242,35 @@ def raise_title_band(deck, slide_no, dry_run=False):
     need = _title_need_h(i['tIns'], i['bIns'], lines, i['eff_sz'], i.get('lnspc', 1.0))
     if i['h'] >= need - (i['bIns'] or 0):      # 글이 보이는 데는 위 여백 + 줄 높이면 된다(아래 여백은 먹혀도 보인다)
         return []
-    hit = [(n, y0) for n, y0, y1 in _shapes_below_title(deck, slide_no, i['start'], i['end']) if y0 < i['y'] + need - int(0.02 * EMU_IN) and y1 > i['y']]
+    below = [(n, y0) for n, y0, y1 in _shapes_below_title(deck, slide_no, i['start'], i['end']) if y1 > i['y']]
+    hit = [(n, y0) for n, y0 in below if y0 < i['y'] + need - int(0.02 * EMU_IN)]
+    new_b = None
     if hit:
-        return ['[!] 띠 %.2f" < 필요 %.2f" 인데 키우면 "%s" 와 겹친다 — 바꾸지 않음' % (i['h'] / EMU_IN, need / EMU_IN, hit[0][0])]
+        if shrink_bottom is None:
+            return ['[!] 띠 %.2f" < 필요 %.2f" 인데 키우면 "%s" 와 겹친다 — 바꾸지 않음(--shrink-bottom-inset 이면 아래 여백을 줄여 본다)'
+                    % (i['h'] / EMU_IN, need / EMU_IN, hit[0][0])]
+        # v16.29 (발표 K9, 사용자 결정): 위 여백은 그대로(글자 자리를 다른 화면과 같게), 아래 여백만 줄여 아래 내용 위까지
+        new_b = int(round(shrink_bottom * EMU_IN))
+        need = need - (i['bIns'] or 0) + new_b
+        top = min(y0 for _, y0 in hit)
+        if i['y'] + need > top:
+            return ['[!] 아래 여백을 %.2f" 로 줄여도 띠 %.2f" 가 "%s"(%.2f") 와 겹친다 — 바꾸지 않음'
+                    % (shrink_bottom, need / EMU_IN, hit[0][0], top / EMU_IN)]
     seg = re.sub(r'(<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy=")\d+(")', lambda m: m.group(1) + str(need) + m.group(2), i['seg'], 1)
+    if new_b is not None and seg != i['seg']:
+        bp = re.search(r'<a:bodyPr\b[^>]*?(/?)>', seg)
+        if bp:
+            tag = bp.group(0)
+            new_tag = re.sub(r'\sbIns="-?\d+"', '', tag)
+            new_tag = new_tag[:-2] + ' bIns="%d"/>' % new_b if new_tag.endswith('/>') else new_tag[:-1] + ' bIns="%d">' % new_b
+            seg = seg.replace(tag, new_tag, 1)
     if seg == i['seg']:
         return ['[!] 띠 위치를 상속받는 자리 표시자 — 바꾸지 않음(titles --like 로 규격을 먼저)']
     if not dry_run:
         p = deck._slide(slide_no); x = open(p, encoding='utf8').read()
         open(p, 'w', encoding='utf8').write(x[:i['start']] + seg + x[i['end']:])
+    if new_b is not None:
+        return ['띠 %.2f" → %.2f"(%d줄) · 아래 여백 %.2f" → %.2f"(위 여백 그대로)' % (i['h'] / EMU_IN, need / EMU_IN, lines, (i['bIns'] or 0) / EMU_IN, new_b / EMU_IN)]
     return ['띠 %.2f" → %.2f"(%d줄, 안쪽 여백 포함)' % (i['h'] / EMU_IN, need / EMU_IN, lines)]
 
 
@@ -4949,6 +4976,8 @@ def main():
     ex = sub.add_parser('handout'); ex.add_argument('pptx'); ex.add_argument('-o', required=True)
     tb = sub.add_parser('title-bands', help='제목 띠가 필요 높이보다 낮으면 키운다 — Google Slides 안전(v16.28, 발표 K8)')
     tb.add_argument('pptx'); tb.add_argument('-o', required=True); tb.add_argument('--screens', default=None); tb.add_argument('--dry-run', action='store_true')
+    tb.add_argument('--shrink-bottom-inset', nargs='?', const=0.1, type=float, default=None,
+                    help='겹쳐서 못 키울 때 아래 여백만 줄여(기본 0.1") 아래 내용 위까지(v16.29, 발표 K9)')
     pm = sub.add_parser('protect-memo', help='표지 없는 원작자 노트를 기존 메모 구역으로 감싼다(v16.27, 발표 P2)')
     pm.add_argument('pptx'); pm.add_argument('-o', required=True); pm.add_argument('--screens', default=None, help='화면 번호(예: 3,5-9). 없으면 전부')
     fc = sub.add_parser('fit-corner-boxes', help='가장자리에 붙은 글상자를 붙은 쪽 고정으로 글에 맞게 키운다(v16.27, 발표 K7)')
@@ -5096,7 +5125,7 @@ def main():
         for pos, sn in enumerate(order, 1):
             if pos not in want:
                 continue
-            for c in raise_title_band(dk, sn, dry_run=args.dry_run):
+            for c in raise_title_band(dk, sn, dry_run=args.dry_run, shrink_bottom=args.shrink_bottom_inset):
                 print('화면 %d: %s' % (pos, c))
                 if c.startswith('[!]'):
                     n_sk += 1
@@ -5157,6 +5186,19 @@ def main():
                 sys.exit('화면 %d 의 제목이 title placeholder 가 아니다 — 템플릿을 지킨 다른 화면을 --like 로' % args.like)
             print('규격(화면 %d 과 같은 레이아웃 제목 %d개): %s, 줄 수별 높이 %s' % (args.like, prof['n'],
                   '%dpt' % (prof['sz'] // 100) if prof['sz'] else '글자 크기 상속', {k: round(v / 914400, 2) for k, v in prof['h_by_lines'].items()}))
+            # v16.29 (발표 K8-b): 규격이 어디서 왔는지 — 줄 수별로 높이를 준 제목(화면·높이·위/아래 여백)과 뺀 제목
+            bd = Deck.open(args.base, tempfile_dir('tb2')) if args.base else dk
+            pos = {s: k for k, s in enumerate([s for s, _, _ in bd.order() if s], 1)}
+            E = 914400.0
+            print('  안쪽 여백 규격(위/아래): %.2f"/%.2f" · 뺀 제목(필요 높이의 90%% 미만) %d개%s' % (
+                prof['ins'][2] / E, prof['ins'][3] / E, prof['excluded'],
+                (': ' + ', '.join('화면 %s %.2f"<%.2f"' % (pos.get(sn, '?'), h / E, nd / E) for sn, h, nd in prof['excluded_list'][:10])) if prof['excluded_list'] else ''))
+            for n, rows in sorted(prof['contrib'].items()):
+                from collections import Counter as _C
+                dist = _C((round(h / E, 2), round(t / E, 2), round(b / E, 2)) for _, h, t, b in rows)
+                print('  %d줄 제목 %d개 — (높이, 위, 아래 여백) 분포: %s · 화면 %s' % (n, len(rows),
+                      ', '.join('%s×%d' % (k, v) for k, v in dist.most_common(4)),
+                      ', '.join(str(pos.get(sn, '?')) for sn, _, _, _ in rows[:15]) + (' …' if len(rows) > 15 else '')))
         scr = None
         if args.screens:
             scr = []

@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.28'
+EXPECT_VERSION = '16.29'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -1684,6 +1684,45 @@ def t_v1628_title_need_height():
     assert r and r[0].startswith('띠 0.66"'), r
     assert T.raise_title_band(B, order[0]) == []                                          # 1.22" 는 그대로
     B.save('/tmp/k8o.pptx'); assert T.validate('/tmp/k8o.pptx', path)
+
+
+def t_v1629_shrink_bottom_inset_and_joint_profile():
+    from pptx import Presentation
+    from pptx.util import Pt, Emu, Inches
+    from pptx.dml.color import RGBColor
+    def mk(path, specs, body_top=None):
+        prs = Presentation(); prs.slide_width, prs.slide_height = Inches(10), Inches(7.5)
+        for h, ins in specs:
+            sl = prs.slides.add_slide(prs.slide_layouts[5])
+            t = sl.shapes.title; t.left, t.top, t.width, t.height = Emu(0), Emu(0), Inches(10), Emu(h)
+            t.fill.solid(); t.fill.fore_color.rgb = RGBColor(0xD9, 0xD9, 0xD9)
+            t.text_frame.text = 'Q. short title'; t.text_frame.margin_top = t.text_frame.margin_bottom = Emu(ins)
+            for r in t.text_frame.paragraphs[0].runs:
+                r.font.size = Pt(28)
+            if body_top is not None:
+                b = sl.shapes.add_textbox(Inches(0.5), Inches(body_top), Inches(6), Inches(1)); b.name = 'Body'; b.text_frame.text = 'content'
+        prs.save(path); return path
+    # K9: 0.66" 띠, 여백 0.39"×2, 본문이 1.08" 에서 시작 — 그냥은 못 키우고, 아래 여백 0.1" 로 줄이면 들어간다
+    p = mk(os.path.join(TMP, 'k9.pptx'), [(605908, 360000)], body_top=1.08)
+    B = T.Deck.open(p, wd('k9')); sn = [x for x, _, _ in B.order() if x][0]
+    assert T.raise_title_band(B, sn)[0].startswith('[!]')
+    r = T.raise_title_band(B, sn, shrink_bottom=0.1)
+    assert r and '아래 여백 0.39" → 0.10"' in r[0], r
+    i = T._title_info(B, sn)
+    assert i['bIns'] == 91440 and i['tIns'] == 360000 and i['y'] + i['h'] <= int(1.08 * T.EMU_IN), i
+    p2 = mk(os.path.join(TMP, 'k9b.pptx'), [(605908, 360000)], body_top=0.8)
+    B2 = T.Deck.open(p2, wd('k9b')); sn2 = [x for x, _, _ in B2.order() if x][0]
+    assert T.raise_title_band(B2, sn2, shrink_bottom=0.1)[0].startswith('[!] 아래 여백을')      # 0.1" 로도 겹침 — 그대로
+    # K8-b: 높이와 여백을 같은 제목에서 — 여백 큰 제목(1.22") 셋 + 여백 작은 제목(0.66") 여섯이면 여백 규격은 작은 것, 높이도 그 제목들의 0.66"
+    p3 = mk(os.path.join(TMP, 'k8b.pptx'), [(1117331, 360000)] * 3 + [(605908, 45720)] * 6)
+    B3 = T.Deck.open(p3, wd('k8b')); prof = T.title_profile(B3, like=1)
+    assert prof['ins'][2] == 45720 and prof['h_by_lines'][1] == 605908 and prof['excluded'] == 0, prof
+    p4 = mk(os.path.join(TMP, 'k8c.pptx'), [(1117331, 360000)] * 6 + [(605908, 45720)] * 3)
+    prof4 = T.title_profile(T.Deck.open(p4, wd('k8c')), like=1)
+    assert prof4['ins'][2] == 360000 and prof4['h_by_lines'][1] == 1117331, prof4              # 섞지 않는다
+    r = subprocess.run([sys.executable, os.path.join(HERE, 'deck_toolkit.py'), 'titles', p4, '--like', '1'], capture_output=True, text=True,
+                       env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    assert '1줄 제목 9개' in r.stdout and '안쪽 여백 규격' in r.stdout, r.stdout[-600:]
 
 
 def t_v1619_da_after_vowel():
