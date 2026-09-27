@@ -16,7 +16,7 @@ import os
 import re
 import sys
 
-__version__ = '1.6'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
+__version__ = '1.7'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
 
 KEYS = ('작업:', '대본:', '참고:', '본문:', '제목:', '복제본(문제) 대본:')
 PARA_OP = re.compile(r'^문단 (교체|추가|삭제)\b')
@@ -475,7 +475,7 @@ def _normalize_zip(src, dst):
             zo.writestr(zinfo, zi.read(it.filename))
 
 
-VALIDATE_PY = '/mnt/skills/public/pptx/scripts/office/validate.py'   # deck_toolkit.validate 가 쓰는 것 — 없으면 건너뛴다
+VALIDATE_PY = os.environ.get('HANDOFF_VALIDATE_PY', '/mnt/skills/public/pptx/scripts/office/validate.py')   # 없으면 건너뛴다. 환경변수는 시험용(v2.26: Cowork VM 처럼 없는 환경)
 
 
 def _plain_note(lines):
@@ -886,7 +886,7 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
             D.set_background(s, rgb=ops['배경'][0].upper())
         # 노트 — v1.5 (발표 M3): 가져옴의 '메모 복사' 는 원천 노트를 결과 노트의 '기존 메모' 구역으로. 원천 노트가 표지 없는 노트(원작자
         # 노트 그대로)면 전체가 메모, 이미 3부 구조면 그 메모 구역만. 메모 복사가 없으면 원작자 노트는 들어오지 않는다(새 노트)
-        memo_n = 0
+        memo_n, want_memo = 0, []
         if imp:
             raw = src.notes(src_sn)
             sectioned = any(T._is_memo_sep(l) or T._is_cutoff_line(l) for l in raw)
@@ -899,8 +899,10 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
                 if not sectioned:
                     D.protect_memo(s)
                     memo_n = sum(1 for l in raw if l.strip())
+                    want_memo = [l for l in raw if l.strip()]
                 else:
                     memo_n = len(sm)
+                    want_memo = list(sm)
                     if not sm:
                         W('가져옴 "%s" — 메모 복사: 원천 노트에 기존 메모 구역이 없다(원천이 이미 대본 노트) — 복사한 메모 없음' % label)
             D.set_notes(s, script, tips or None)
@@ -909,6 +911,7 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
         rep['new'].append((label, s)); last_new = s
         if imp:
             rep['imports'].append((label, src_label, s, '그대로' if as_is else '틀', memo_n, sizes))
+            rep.setdefault('import_want', []).append((label, s, want_memo))
         # v1.5 (발표 M3-③): 새 슬라이드·가져옴에도 '앞에 복제' — 원천은 방금 만든 슬라이드, 메모는 같이 복제된다
         if any(n == '앞에 복제' for n, _ in (nw['ops'] or [])):
             order = [x for x, _, _ in D.order() if x]
@@ -918,6 +921,7 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
                 _delete_box(D, d2, box)
             D.set_notes(d2, _plain_note(nw['dup_script'] or []), None)
             rep['dup_new'].append((label, d2, k2, len(nw['boxes'] or [])))
+            rep.setdefault('import_want', []).append((label + ' (복제본)', d2, want_memo if imp else None))
     if rep['new']:
         DONE('새 슬라이드 %d%s' % (len(rep['new']), (' (가져옴 %d)' % len(rep['imports'])) if rep['imports'] else ''))
     # 5. 앞에 복제(정답 표시 제거)
@@ -995,6 +999,17 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
                 memo_ok += 1
             else:
                 memo_bad.append(no)
+    # v1.7 (발표 M3 덧붙임): 가져온 슬라이드·그 복제본의 메모 구역이 원천에서 기대한 그대로인지 결과 덱에서 대조
+    imp_ok, imp_bad = 0, []
+    for lb, sn, want in rep.get('import_want', []):
+        if want is None or sn not in ro:
+            continue
+        got = R.notes_sections(sn)[2]
+        if [l.strip() for l in got if l.strip()] == [l.strip() for l in want if l.strip()]:
+            imp_ok += 1
+        else:
+            imp_bad.append(lb)
+    rep['import_memo'] = (imp_ok, imp_bad)
     rep.update({'mapping': mapping, 'memo_ok': memo_ok, 'memo_bad': memo_bad, 'screens': len(ro),
                 'valid': (bool(T.validate(out_path, base_path)) if os.path.exists(VALIDATE_PY) else None),   # v1.6 (발표 K4): 없으면 '건너뜀'
                 'sha': hashlib.sha256(open(out_path, 'rb').read()).hexdigest()[:16], 'content': content_hash(out_path)})
@@ -1011,6 +1026,9 @@ def report(rep, stream=sys.stdout):
         rep['screens'], {True: '통과', False: '**실패**', None: '건너뜀(validate.py 없음 — 통과 아님)'}[rep['valid']], rep['sha'], rep.get('content', '—')))
     w('| 한 일 | %s |' % (' · '.join(rep['done']) or '없음'))
     w('| 원작자 메모 | 기준 화면 %d곳 그대로%s |' % (rep['memo_ok'], (' · **달라진 화면 %s**' % rep['memo_bad']) if rep['memo_bad'] else ''))
+    if rep.get('import_memo') and (rep['import_memo'][0] or rep['import_memo'][1]):
+        ok, bad = rep['import_memo']
+        w('| 가져옴 메모 대조 | 원천과 같음 %d%s |' % (ok, (' · **다름: %s**' % ', '.join(bad)) if bad else ''))
     if rep['dup']:
         w('| 앞에 복제 | %s |' % ', '.join('화면 %d → slide%d(빨강 %d 제거, 해설 상자 %d 삭제)' % d for d in rep['dup']))
     if rep.get('dup_new'):
@@ -1040,15 +1058,69 @@ def report(rep, stream=sys.stdout):
     w(); w('**매핑 (기준 화면 → 결과 화면, 밀린 칸 수)**: %s' % txt)
 
 
+def _lvl_defaults(deck, sn, ph_attrs, is_title):
+    """v1.7 (발표 N5): 자리 표시자의 단계별 기본값 {lvl: (sz, marL)} — 레이아웃의 같은 자리 표시자 lstStyle → 마스터 bodyStyle/titleStyle."""
+    import deck_toolkit as T
+    out = {}
+    srcs = []
+    lp = os.path.join(deck.dir, 'ppt/slideLayouts', deck.layout_of(sn))
+    key = (re.search(r'idx="(\d+)"', ph_attrs) or re.search(r'type="(\w+)"', ph_attrs))
+    if os.path.exists(lp) and key:
+        for m in re.finditer(r'<p:sp>(?:(?!</p:sp>).)*</p:sp>', open(lp, encoding='utf8').read(), re.S):
+            if re.search(r'<p:ph\b[^>]*%s="%s"' % ('idx' if key.re.pattern.startswith('idx') else 'type', key.group(1)), m.group(0)):
+                srcs.append(m.group(0)); break
+    mp = T._master_of(deck, sn)
+    if mp and os.path.exists(mp):
+        st = re.search(r'<p:%s>(.*?)</p:%s>' % (('titleStyle',) * 2 if is_title else ('bodyStyle',) * 2), open(mp, encoding='utf8').read(), re.S)
+        if st:
+            srcs.append(st.group(1))
+    for sx in srcs:
+        for m in re.finditer(r'<a:lvl(\d)pPr\b([^>]*)>(.*?)</a:lvl\1pPr>', sx, re.S):
+            lv = int(m.group(1)) - 1
+            sz = re.search(r'<a:defRPr\b[^>]*\bsz="(\d+)"', m.group(3))
+            ml = re.search(r'\bmarL="(-?\d+)"', m.group(2))
+            a, b = out.get(lv, (None, None))
+            out[lv] = (a if a is not None else (int(sz.group(1)) if sz else None), b if b is not None else (int(ml.group(1)) if ml else None))
+    return out
+
+
+def _fmt_canon(deck, sn, x):
+    """서식 비교용 — 문단마다 (수준, 실제 들여쓰기, 정렬, [(글, 실제 크기, 굵게, 기울임, 밑줄, 색)]). 명시값이 없으면 상속값."""
+    import html as _h
+    out = []
+    for m in re.finditer(r'<p:sp>(?:(?!</p:sp>).)*</p:sp>', x, re.S):
+        seg = m.group(0)
+        ph = re.search(r'<p:ph\b([^>]*)/?>', seg)
+        is_title = bool(ph and re.search(r'type="(?:title|ctrTitle)"', ph.group(1)))
+        dflt = _lvl_defaults(deck, sn, ph.group(1), is_title) if ph else {}
+        for p in re.findall(r'<a:p>.*?</a:p>', seg, re.S):
+            txt = _h.unescape(''.join(re.findall(r'<a:t>([^<]*)</a:t>', p)))
+            if not txt.strip():
+                continue
+            ppr = (re.search(r'<a:pPr\b[^>]*', p) or [''])[0]
+            lv = int((re.search(r'\blvl="(\d)"', ppr) or [0, 0])[1])
+            ml = re.search(r'\bmarL="(-?\d+)"', ppr)
+            d_sz, d_ml = dflt.get(lv, (None, None))
+            runs = []
+            for rm in re.finditer(r'<a:r>(.*?)</a:r>', p, re.S):
+                rp = (re.search(r'<a:rPr\b[^>]*/>|<a:rPr\b[^>]*>.*?</a:rPr>', rm.group(1), re.S) or [''])[0]
+                sz = re.search(r'\bsz="(\d+)"', rp)
+                col = re.search(r'<a:(?:srgbClr|schemeClr) val="(\w+)"', rp)
+                runs.append((_h.unescape(''.join(re.findall(r'<a:t>([^<]*)</a:t>', rm.group(1)))),
+                             int(sz.group(1)) if sz else d_sz, bool(re.search(r'\bb="1"', rp)), bool(re.search(r'\bi="1"', rp)),
+                             (re.search(r'\bu="(\w+)"', rp) or [None, None])[1] not in (None, 'none'), col.group(1).upper() if col else None))
+            out.append((lv, int(ml.group(1)) if ml else d_ml, (re.search(r'\balgn="(\w+)"', ppr) or [None, None])[1], runs))
+    return out
+
+
 def _screen_texts(deck, sn):
     import html as _h
     x = open(deck._slide(sn), encoding='utf8').read()
     paras = [_h.unescape(''.join(re.findall(r'<a:t>([^<]*)</a:t>', p))) for p in re.findall(r'<a:p>.*?</a:p>', x, re.S)]
     bg = re.search(r'<p:bg>.*?</p:bg>', x, re.S)
-    norm = lambda p: re.sub(r'\s(?:dirty|err|smtClean|noProof|lang|altLang)="[^"]*"', '', p)
     return {'title': _title_text(deck, sn), 'text': [t for t in paras if t.strip()], 'notes': deck.notes_sections(sn),
             'hidden': deck.is_hidden(sn), 'bg': re.sub(r'\s+', '', bg.group(0)) if bg else '',
-            'fmt': [norm(p) for p in re.findall(r'<a:p>.*?</a:p>', x, re.S) if _h.unescape(''.join(re.findall(r'<a:t>([^<]*)</a:t>', p))).strip()],
+            'fmt': _fmt_canon(deck, sn, x),     # v1.7 (발표 N5): 명시·상속 크기가 같으면 같은 서식
             'layout': _layout_name_of(deck, sn)}
 
 

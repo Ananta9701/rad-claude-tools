@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import textbook as TB          # noqa: E402
 
-EXPECT_VERSION = '0.4'
+EXPECT_VERSION = '0.5'
 TMP = tempfile.mkdtemp(prefix='ttb_')
 
 
@@ -394,7 +394,11 @@ def t_page_images():
     im.save(os.path.join(d, 'img book.pdf'), 'PDF'); _heads_book(os.path.join(d, 'other.pdf'))
     out = os.path.join(TMP, 'img_out')
     got = TB.page_images(d, 'img book', out, pdf_page=1, stream=io.StringIO())
-    assert len(got) == 1 and got[0].endswith('img_book_PDF1.png') and Image.open(got[0]).size == (300, 400), got
+    assert len(got) == 1 and got[0].endswith('img_book_PDF1.jpg') and Image.open(got[0]).size == (300, 400), got   # v0.5: 기본 JPEG
+    got = TB.page_images(d, 'img book', out, pdf_page=1, fmt='png', stream=io.StringIO())
+    assert got[0].endswith('img_book_PDF1.png'), got
+    tiny = Image.new('RGB', (1, 1)); tiny.save(os.path.join(d, 'tiny.pdf'), 'PDF')
+    buf = io.StringIO(); assert TB.page_images(d, 'tiny', out, pdf_page=1, stream=buf) == [] and '건너뛰었다' in buf.getvalue(), buf.getvalue()
     for bad in (dict(book='zzz', pdf_page=1), dict(book='img book', pdf_page=9)):
         try:
             TB.page_images(d, bad['book'], out, pdf_page=bad['pdf_page'], stream=io.StringIO()); assert False, bad
@@ -433,6 +437,14 @@ def t_v04_split_page_labels():
     c1 = open(os.path.join(out, '01_lab', '01_Chapter_1_Topic.md'), encoding='utf8').read()
     assert '[p.i · PDF 1] (겹침 — 앞)' in c1 and '[p.1 · PDF 2]' in c1 and '인쇄 1–6쪽' in c1, c1[:400]
     assert '| `01_Chapter_1_Topic.md` | 1 | Chapter 1 Topic | 1–6 | 2–7 | 6 |' in open(os.path.join(out, '01_lab', 'INDEX.md'), encoding='utf8').read()
+
+
+def t_v05_split_part_option():
+    d, pdir = _split_setup('pt')
+    out = os.path.join(TMP, 'pt_out')
+    TB.split(d, pdir, 'pl', out, part=2, stream=io.StringIO())
+    names = sorted(os.listdir(os.path.join(out, '01_h book')))
+    assert '01_Liver_1.md' in names and '01_Liver_3.md' in names and '02_Kidney_3.md' in names, names
 
 
 if __name__ == '__main__':

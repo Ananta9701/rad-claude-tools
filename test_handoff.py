@@ -14,8 +14,10 @@ sys.path.insert(0, HERE)
 import handoff as H          # noqa: E402
 import deck_toolkit as T     # noqa: E402
 
-EXPECT_VERSION = '1.6'
+EXPECT_VERSION = '1.7'
 TMP = tempfile.mkdtemp(prefix='th_')
+# v2.26: validate.py(pptx 스킬)가 없는 환경(Cowork VM)에서는 보고가 '건너뜀'(None) — v2.25 가 이 환경에서 테스트 3개 실패
+VALID = True if os.path.exists(H.VALIDATE_PY) else None
 
 
 def _manifest_version(fname):
@@ -234,7 +236,7 @@ def t_v12_apply_end_to_end():
     assert e == 0, d['problems']
     out = os.path.join(TMP, 'applied.pptx')
     rep = H.apply(d, base, out, workdir=os.path.join(TMP, 'apw'))
-    assert rep['valid'] and not rep['memo_bad'], rep
+    assert rep['valid'] is VALID and not rep['memo_bad'], rep
     assert rep['screens'] == n + 1 + 1 - 1, rep['screens']
     R = T.Deck.open(out, os.path.join(TMP, 'apr'))
     ro = [s for s, _, _ in R.order() if s]
@@ -374,7 +376,7 @@ def t_v15_merge_import_order_memo_layout():
     assert e == 0 and '그대로 · 메모 복사' in buf.getvalue(), (d['problems'], buf.getvalue()[-600:])
     out = os.path.join(TMP, 'merged.pptx')
     rep = H.apply(d, base, out, imports={'문제덱': srcp}, workdir=os.path.join(TMP, 'mgw'))
-    assert rep['valid'] and not rep['memo_bad'] and len(rep['imports']) == 3 and len(rep['dup_new']) == 1, rep
+    assert rep['valid'] is VALID and not rep['memo_bad'] and len(rep['imports']) == 3 and len(rep['dup_new']) == 1, rep
     R = T.Deck.open(out, os.path.join(TMP, 'mg_r')); ro = [x for x, _, _ in R.order() if x]
     s1, s2, s3 = [sn for _, sn in rep['new']]; d3 = rep['dup_new'][0][1]
     i5 = ro.index(F[4])
@@ -391,6 +393,7 @@ def t_v15_merge_import_order_memo_layout():
     assert any(k.startswith('본문') and '14pt' in k for k in rep['imports'][0][5]), rep['imports'][0]
     buf = io.StringIO(); H.report(rep, buf)
     assert '| 가져옴 | "가져온 문제 1" ← 문제덱 화면 2' in buf.getvalue() and '원작자 메모 1줄' in buf.getvalue(), buf.getvalue()
+    assert rep['import_memo'] == (4, []) and '가져옴 메모 대조 | 원천과 같음 4' in buf.getvalue(), rep['import_memo']   # v1.7: 셋 + 복제본
 
 
 # ── v1.6 (발표 Y1·R2·K1·K2·K4) ─────────────────────────────────────────
@@ -439,7 +442,7 @@ def t_v16_deterministic_sha_content_hash_and_validate_skip():
     finally:
         H.VALIDATE_PY = real
     assert r1['sha'] == r2['sha'] and r1['content'] == r2['content'], (r1['sha'], r2['sha'])  # K1
-    assert r2['valid'] is None and r1['valid'] is True                                        # K4
+    assert r2['valid'] is None and r1['valid'] is VALID                                        # K4
     buf = io.StringIO(); H.report(r2, buf); assert '건너뜀(validate.py 없음 — 통과 아님)' in buf.getvalue()
     # 같은 내용·다른 zip(시각) 사본 → 기준 sha256 에 내용 해시를 적으면 경고만
     import zipfile
@@ -454,6 +457,30 @@ def t_v16_deterministic_sha_content_hash_and_validate_skip():
     assert d2['base_sha'] == r1['content'], d2['base_sha']
     e, wn = H.check(d2, C, stream=io.StringIO())
     assert e == 0 and wn >= 1, d2['problems']
+
+
+def t_v17_compare_resolves_inherited_size():
+    base = _fixture_deck()
+    D = T.Deck.open(base, os.path.join(TMP, 'n5a')); F = [x for x, _, _ in D.order() if x]
+    sn = F[6]
+    p_, x_, a_, b_ = D._body_span(sn)
+    body = x_[a_:b_]
+    ph = re.search(r'<p:ph\b([^>]*)/?>', x_[:a_][x_[:a_].rfind('<p:sp>'):]).group(1)
+    dflt = H._lvl_defaults(D, sn, ph, False)
+    sz0 = dflt.get(0, (None, None))[0]
+    assert sz0, dflt
+    plain = '<a:p><a:r><a:rPr lang="en-US"/><a:t>Same line</a:t></a:r></a:p>'
+    open(p_, 'w', encoding='utf8').write(x_[:a_] + plain + x_[b_:]); A = os.path.join(TMP, 'n5_a.pptx'); D.save(A)
+    D2 = T.Deck.open(base, os.path.join(TMP, 'n5b')); p2, x2, a2, b2 = D2._body_span(sn)
+    open(p2, 'w', encoding='utf8').write(x2[:a2] + plain.replace('lang="en-US"', 'lang="en-US" sz="%d"' % sz0) + x2[b2:])
+    B = os.path.join(TMP, 'n5_b.pptx'); D2.save(B)
+    buf = io.StringIO(); H.compare(A, B, buf, os.path.join(TMP, 'n5c'))
+    assert '서식' not in buf.getvalue(), buf.getvalue()                          # 명시 크기 = 상속 크기 → 같은 서식
+    D3 = T.Deck.open(base, os.path.join(TMP, 'n5d')); p3, x3, a3, b3 = D3._body_span(sn)
+    open(p3, 'w', encoding='utf8').write(x3[:a3] + plain.replace('lang="en-US"', 'lang="en-US" b="1"') + x3[b3:])
+    C = os.path.join(TMP, 'n5_c.pptx'); D3.save(C)
+    buf = io.StringIO(); H.compare(A, C, buf, os.path.join(TMP, 'n5e'))
+    assert '서식' in buf.getvalue(), buf.getvalue()                              # 굵게는 여전히 다름
 
 
 def t_cli():

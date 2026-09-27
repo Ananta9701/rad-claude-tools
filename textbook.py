@@ -27,7 +27,7 @@ import time
 import unicodedata
 from collections import Counter
 
-__version__ = '0.4'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.5'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
 
 TOC_WORDS = re.compile(r'차\s*[례려레]|목\s*차|c\s*o\s*n\s*t\s*e\s*n\s*t\s*s', re.I)   # v0.2: OCR '차려'·'C O N T E N T S'
 NUM_LINE = re.compile(r'^\s*[-–—]?\s*(\d{1,4})\s*[-–—]?\s*$')
@@ -758,7 +758,7 @@ def split_book(pdf_path, plan_fp, book_dir, label, part=PART, overlap=OVERLAP):
     return len(units)
 
 
-def split(folder, plan_dir, plan_name, out, only=None, skip=(), recursive=False, budget=120, stream=sys.stdout):
+def split(folder, plan_dir, plan_name, out, only=None, skip=(), recursive=False, budget=120, part=PART, stream=sys.stdout):
     """plan 장 표(사용자가 장 수·제목을 확인한 것)로 책마다 `{out}/{번호}_{책}/` 에 장 md·INDEX, `{out}/INDEX.md` 에 책 목록.
     책마다 하위 프로세스, --budget 이어하기(plan 과 같다). 끝난 책(INDEX.md 가 온전한 책)은 건너뛴다."""
     t0 = time.time()
@@ -786,7 +786,7 @@ def split(folder, plan_dir, plan_name, out, only=None, skip=(), recursive=False,
                 left.append(b); continue
         print('[%02d] %s' % (k, b), file=stream, flush=True)
         t1 = time.time()
-        cp = subprocess.run([sys.executable, os.path.abspath(__file__), '_split_one', path, pf, bdir(k, b), short_name(b)],
+        cp = subprocess.run([sys.executable, os.path.abspath(__file__), '_split_one', path, pf, bdir(k, b), short_name(b), '--part', str(part)],
                             capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
         if cp.returncode != 0:
             print('  [오류] %s' % ('Killed(메모리 부족 추정)' if cp.returncode in (-9, 137) else ((cp.stderr or '').strip().splitlines() or [''])[-1][:200]),
@@ -832,8 +832,12 @@ def printed_to_pdf(index_md, printed):
     return None
 
 
-def page_images(folder, book, out, pdf_page=None, printed=None, split_dir=None, recursive=False, stream=sys.stdout):
-    """쪽 그림 뽑기 — 그 쪽에 든 이미지(스캔본이면 쪽 전체 그림)를 PNG 로. 반환: 쓴 파일 목록."""
+MIN_IMG = 32      # v0.5 (Cowork split 7-1): 이보다 작은 이미지(스캔 PDF 의 1×1 마스크 등)는 건너뛴다
+
+
+def page_images(folder, book, out, pdf_page=None, printed=None, split_dir=None, recursive=False, fmt='jpg', stream=sys.stdout):
+    """쪽 그림 뽑기 — 그 쪽에 든 이미지(스캔본이면 쪽 전체 그림)를 JPEG(기본, 품질 90) 또는 PNG 로. 반환: 쓴 파일 목록.
+    v0.5: 기본 JPEG — 스캔 쪽 PNG 가 한 장 14.8 MB 였다. 작은 이미지는 건너뛴다."""
     k, b = _book_pick(folder, book, recursive)
     if pdf_page is None and printed is not None:
         preflight(folder, [b])
@@ -855,18 +859,32 @@ def page_images(folder, book, out, pdf_page=None, printed=None, split_dir=None, 
         raise SystemExit('[멈춤] PDF %d쪽 없음(1–%d)' % (pdf_page, len(reader.pages)))
     os.makedirs(out, exist_ok=True)
     stem = '%s_%s' % (short_name(b).replace(' ', '_'), ('p%d' % printed) if printed else 'PDF%d' % pdf_page)
-    got = []
+    got, pics, small = [], [], 0
     try:
         imgs = list(reader.pages[pdf_page - 1].images)
     except Exception as e:
         raise SystemExit('[멈춤] 이미지를 읽지 못했다: %s: %s' % (type(e).__name__, str(e)[:120]))
     for i, im in enumerate(imgs, 1):
-        fp = os.path.join(out, '%s%s.png' % (stem, ('_%d' % i) if len(imgs) > 1 else ''))
         try:
-            im.image.save(fp)
+            pic = im.image
+        except Exception as e:
+            print('[참고] 이미지 %d 풀기 실패: %s' % (i, type(e).__name__), file=stream); continue
+        if min(pic.size) < MIN_IMG:
+            small += 1; continue
+        pics.append(pic)
+    ext = 'jpg' if fmt == 'jpg' else 'png'
+    for i, pic in enumerate(pics, 1):
+        fp = os.path.join(out, '%s%s.%s' % (stem, ('_%d' % i) if len(pics) > 1 else '', ext))
+        try:
+            if ext == 'jpg':
+                (pic if pic.mode in ('RGB', 'L') else pic.convert('RGB')).save(fp, 'JPEG', quality=90)
+            else:
+                pic.save(fp)
             got.append(fp)
         except Exception as e:
             print('[참고] 이미지 %d 저장 실패: %s' % (i, type(e).__name__), file=stream)
+    if small:
+        print('[참고] %d×%d 픽셀보다 작은 이미지 %d개는 건너뛰었다' % (MIN_IMG, MIN_IMG, small), file=stream)
     if not imgs:
         print('[참고] PDF %d쪽에 이미지가 없다(글·벡터 그림) — 원본을 그 쪽으로 열어 본다' % pdf_page, file=stream)
     for fp in got:
@@ -927,14 +945,15 @@ if __name__ == '__main__':
     sp.add_argument('folder'); sp.add_argument('--plan-dir', required=True); sp.add_argument('--plan-name', required=True)
     sp.add_argument('--out', required=True); sp.add_argument('--only', default=None); sp.add_argument('--skip', action='append', default=[])
     sp.add_argument('--recursive', action='store_true'); sp.add_argument('--budget', type=float, default=120)
+    sp.add_argument('--part', type=int, default=PART, help='장 파일 한 개의 쪽 수 한도(기본 30)')
     pg = sub.add_parser('page', help='쪽 그림 뽑기 → PNG')
     pg.add_argument('folder'); pg.add_argument('--book', required=True); pg.add_argument('--out', required=True)
     pg.add_argument('--pdf', type=int, default=None); pg.add_argument('--printed', type=int, default=None); pg.add_argument('--split', default=None)
-    pg.add_argument('--recursive', action='store_true')
+    pg.add_argument('--recursive', action='store_true'); pg.add_argument('--png', action='store_true', help='JPEG 대신 PNG')
     se = sub.add_parser('search', help='분할 md 에서 낱말 찾기(띄어쓰기 무시)')
     se.add_argument('split_dir'); se.add_argument('term'); se.add_argument('--book', default=None); se.add_argument('--max', type=int, default=40)
     so = sub.add_parser('_split_one', help=argparse.SUPPRESS)
-    so.add_argument('path'); so.add_argument('plan_md'); so.add_argument('book_dir'); so.add_argument('label')
+    so.add_argument('path'); so.add_argument('plan_md'); so.add_argument('book_dir'); so.add_argument('label'); so.add_argument('--part', type=int, default=PART)
     one = sub.add_parser('_plan_one', help=argparse.SUPPRESS)      # plan 이 책마다 부르는 하위 프로세스
     one.add_argument('path'); one.add_argument('md'); one.add_argument('k', type=int); one.add_argument('label'); one.add_argument('name')
     one.add_argument('--level', type=int, default=None)
@@ -945,11 +964,11 @@ if __name__ == '__main__':
         text = plan_md(a.k, a.label, plan_book(a.path, a.level), a.name)   # v0.4: 다 만든 뒤에 연다 — 전에는 먼저 비워 두고 55초 계산
         open(a.md, 'w', encoding='utf8').write(text)
     elif a.cmd == '_split_one':
-        split_book(a.path, a.plan_md, a.book_dir, a.label)
+        split_book(a.path, a.plan_md, a.book_dir, a.label, part=a.part)
     elif a.cmd == 'split':
-        split(a.folder, a.plan_dir, a.plan_name, a.out, a.only, a.skip, a.recursive, a.budget)
+        split(a.folder, a.plan_dir, a.plan_name, a.out, a.only, a.skip, a.recursive, a.budget, a.part)
     elif a.cmd == 'page':
-        page_images(a.folder, a.book, a.out, a.pdf, a.printed, a.split, a.recursive)
+        page_images(a.folder, a.book, a.out, a.pdf, a.printed, a.split, a.recursive, 'png' if a.png else 'jpg')
     elif a.cmd == 'search':
         search(a.split_dir, a.term, a.book, a.max)
     elif a.cmd == 'probe':
