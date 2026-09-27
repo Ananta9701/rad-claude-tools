@@ -14,7 +14,7 @@ sys.path.insert(0, HERE)
 import handoff as H          # noqa: E402
 import deck_toolkit as T     # noqa: E402
 
-EXPECT_VERSION = '1.8'
+EXPECT_VERSION = '1.9'
 TMP = tempfile.mkdtemp(prefix='th_')
 # v2.26: validate.py(pptx 스킬)가 없는 환경(Cowork VM)에서는 보고가 '건너뜀'(None) — v2.25 가 이 환경에서 테스트 3개 실패
 VALID = True if os.path.exists(H.VALIDATE_PY) else None
@@ -151,7 +151,7 @@ def t_check_against_deck():
         body += '문단 교체 — `%s` 줄:\n본문:\nL1 새 글\n' % key
     body += '대본:\n문장.\n참고: 없음\n'
     good = H.parse(doc(body, n))
-    buf = io.StringIO(); e, _ = H.check(good, D, stream=buf)
+    buf = io.StringIO(); e, _ = H.check(good, D, stream=buf, notes_mode='scripts')   # fixture 노트는 표지 없음 — v1.9 부터 기본 멈춤
     assert e == 0 and '적용 가능' in buf.getvalue(), buf.getvalue()
     # 화면 수가 다르면(다른 판) 오류
     buf = io.StringIO(); e, _ = H.check(H.parse(doc(body, n + 3)), D, stream=buf)
@@ -394,6 +394,7 @@ def t_v15_merge_import_order_memo_layout():
     buf = io.StringIO(); H.report(rep, buf)
     assert '| 가져옴 | "가져온 문제 1" ← 문제덱 화면 2' in buf.getvalue() and '원작자 메모 1줄' in buf.getvalue(), buf.getvalue()
     assert rep['import_memo'] == (4, []) and '가져옴 메모 대조 | 원천과 같음 4' in buf.getvalue(), rep['import_memo']   # v1.7: 셋 + 복제본
+    assert set(rep.get('import_over', {})) == {s1, s2, s3} and '넘침 [심각] 원천' in buf.getvalue(), rep.get('import_over')   # v1.9 (P4)
 
 
 # ── v1.6 (발표 Y1·R2·K1·K2·K4) ─────────────────────────────────────────
@@ -434,11 +435,11 @@ def t_v16_deterministic_sha_content_hash_and_validate_skip():
     md = doc('### 화면 2 — %s\n작업: 없음\n대본:\n한 줄.\n참고: 없음\n' % H._title_text(D, F[1]), n)
     d = H.parse(md)
     o1, o2 = os.path.join(TMP, 'k1_1.pptx'), os.path.join(TMP, 'k1_2.pptx')
-    r1 = H.apply(d, base, o1, workdir=os.path.join(TMP, 'k1w1'))
+    r1 = H.apply(d, base, o1, workdir=os.path.join(TMP, 'k1w1'), notes_mode='scripts')
     import time as _t; _t.sleep(2.1)                                                          # zip 시각이 들어가면 달라질 만큼
     real = H.VALIDATE_PY; H.VALIDATE_PY = '/nonexistent/validate.py'
     try:
-        r2 = H.apply(d, base, o2, workdir=os.path.join(TMP, 'k1w2'))
+        r2 = H.apply(d, base, o2, workdir=os.path.join(TMP, 'k1w2'), notes_mode='scripts')
     finally:
         H.VALIDATE_PY = real
     assert r1['sha'] == r2['sha'] and r1['content'] == r2['content'], (r1['sha'], r2['sha'])  # K1
@@ -494,16 +495,41 @@ def t_v18_base_origin_for_normalized_deck():
     d = H.parse(md); assert d['base_sha'] == sha0
     N = T.Deck.open(norm, os.path.join(TMP, 'bo1')); N.src_path = norm
     assert H.check(d, N, stream=io.StringIO())[0] >= 1                        # 정리본만으로는 기준 sha 가 다르다
-    buf = io.StringIO(); e, _ = H.check(d, N, stream=buf, base_origin=base)
+    buf = io.StringIO(); e, _ = H.check(d, N, stream=buf, base_origin=base, notes_mode='scripts')
     assert e == 0 and '기준 대조 | 기준 sha256 은 원본' in buf.getvalue(), buf.getvalue()
     other = _src_deck()
-    assert H.check(d, N, stream=io.StringIO(), base_origin=other)[0] >= 1      # 원본이 다른 판이면 오류
-    assert H.check(d, N, stream=io.StringIO(), base_origin='/nonexistent.pptx')[0] >= 1
+    assert H.check(d, N, stream=io.StringIO(), base_origin=other, notes_mode='scripts')[0] >= 1      # 원본이 다른 판이면 오류
+    assert H.check(d, N, stream=io.StringIO(), base_origin='/nonexistent.pptx', notes_mode='scripts')[0] >= 1
     out = os.path.join(TMP, 'bo_out.pptx')
     r = subprocess.run([sys.executable, os.path.join(HERE, 'handoff.py'), 'apply', os.path.join(TMP, 'bo.md'), '--deck', norm, '-o', out,
-                        '--base-origin', base], capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'),
+                        '--base-origin', base, '--notes-are-scripts'], capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'),
                        input=None) if open(os.path.join(TMP, 'bo.md'), 'w', encoding='utf8').write(md) else None
     assert r.returncode == 0 and os.path.exists(out), (r.stdout[-500:], r.stderr[-500:])
+
+
+def t_v19_raw_notes_stop_protect_scripts():
+    base = _fixture_deck()
+    D = T.Deck.open(base, os.path.join(TMP, 'p1a')); F = [x for x, _, _ in D.order() if x]; n = len(F)
+    assert not H._deck_has_structure(T, D) and H._raw_note(T, D, F[1])                    # fixture = 원작자 노트뿐인 덱
+    raw2 = [l for l in D.notes(F[1]) if l.strip()]
+    md = doc('### 화면 2 — %s\n작업: 없음\n대본:\n새 대본.\n참고: 없음\n' % H._title_text(D, F[1]), n)
+    d = H.parse(md); D.src_path = base
+    assert H.check(d, D, stream=io.StringIO())[0] == 1                                       # 기본 멈춤
+    try:
+        H.apply(d, base, os.path.join(TMP, 'p1_x.pptx')); assert False
+    except ValueError as e:
+        assert '--protect-memo' in str(e)
+    # --protect-memo: 원작자 노트가 메모 구역으로, 대본은 새 것 — 보고는 수로
+    out = os.path.join(TMP, 'p1_p.pptx'); rep = H.apply(d, base, out, workdir=os.path.join(TMP, 'p1w'), notes_mode='protect')
+    R = T.Deck.open(out, os.path.join(TMP, 'p1r'))
+    assert R.notes_sections(F[1])[0] == ['새 대본.'] and [l for l in R.notes_sections(F[1])[2] if l.strip()] == raw2, R.notes_sections(F[1])
+    assert not rep['memo_bad'] and rep['protected'][0] == rep['protected'][1] > 0 and rep['scripted_raw'] == 0, rep
+    buf = io.StringIO(); H.report(rep, buf)
+    assert '감싼 화면(--protect-memo)' in buf.getvalue() and '메모 구역이 있던 기준 화면 0곳' in buf.getvalue(), buf.getvalue()
+    # --notes-are-scripts: 덮고, 보고서에 덮은 화면 수
+    out2 = os.path.join(TMP, 'p1_s.pptx'); rep2 = H.apply(d, base, out2, workdir=os.path.join(TMP, 'p1w2'), notes_mode='scripts')
+    assert rep2['scripted_raw'] == 1 and any('--notes-are-scripts' in w for w in rep2['warn']), rep2
+    buf = io.StringIO(); H.report(rep2, buf); assert '표지 없는 노트를 대본으로 덮은 화면 1' in buf.getvalue()
 
 
 def t_cli():
@@ -514,6 +540,9 @@ def t_cli():
     md = os.path.join(TMP, 'h.md')
     open(md, 'w', encoding='utf8').write(doc('### 화면 1 — %s\n작업: 없음\n대본:\n문장.\n참고: 없음\n' % t1, len(order)))
     r = subprocess.run([sys.executable, os.path.join(HERE, 'handoff.py'), 'check', md, '--deck', base], capture_output=True, text=True,
+                       env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    assert r.returncode == 1 and '원작자 노트' in r.stdout, (r.stdout, r.stderr[-400:])            # v1.9: 원작자 노트뿐인 덱 — 기본 멈춤
+    r = subprocess.run([sys.executable, os.path.join(HERE, 'handoff.py'), 'check', md, '--deck', base, '--notes-are-scripts'], capture_output=True, text=True,
                        env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
     assert r.returncode == 0 and '적용 가능' in r.stdout, (r.stdout, r.stderr[-400:])
     open(md, 'w', encoding='utf8').write(doc('### 화면 1 — x\n대본:\n문장.\n', len(order)))

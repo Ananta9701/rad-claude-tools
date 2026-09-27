@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.26'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.27'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -1318,6 +1318,83 @@ class Deck:
         x, a, b = self._find_para(slide_no, key, shape)
         open(self._slide(slide_no), 'w', encoding='utf8').write(x[:b] + self.runs_xml(runs, **kw) + x[b:])
         return True
+
+    def fit_corner_boxes(self, slide_no, tol_in=0.02, pad=0.15, dry_run=False, font_path=None):
+        """v16.27 (발표 K7): 슬라이드 가장자리(위·아래·왼쪽·오른쪽, 허용 tol_in 인치)에 붙은 채우기·테두리 없는 글상자를, 붙은 가장자리를
+        고정한 채 반대쪽으로 글(추정 폭 × (1+pad), 줄 수 × 1.2 줄 높이 + 안쪽 여백)에 맞게 키운다. Google Slides 가 wrap="none"·spAutoFit
+        을 따르지 않아 구석 인용 상자가 두 줄로 꺾여 화면 밖으로 나간 일(근골격). 글·크기·색·정렬·wrap 은 그대로. 반대쪽으로 키울 자리가
+        없으면 건너뛰고, 키운 자리가 다른 글상자·그림과 겹치면 알린다(고치지 않는다).
+        반환: [{'name','text','old','new','what','overlap'}] — old/new 는 인치 (x, y, w, h)."""
+        p = self._slide(slide_no); x = open(p, encoding='utf8').read()
+        W, H = self.slide_size(); tol = tol_in * EMU_IN
+        fp = font_path or _theme_body_font_file(self, slide_no)
+        grp = [(m.start(), m.end()) for m in re.finditer(r'<p:grpSp>.*?</p:grpSp>', x, re.S)]
+        boxes = []
+        for m in re.finditer(r'<p:(sp|pic)>(?:(?!<p:\1>).)*?</p:\1>', x, re.S):
+            xf = re.search(r'<a:off x="(-?\d+)" y="(-?\d+)"\s*/>\s*<a:ext cx="(\d+)" cy="(\d+)"\s*/>', m.group(0))
+            if xf and not any(a <= m.start() < b for a, b in grp):
+                nm = re.search(r'<p:cNvPr\b[^>]*\bname="([^"]*)"', m.group(0))
+                boxes.append((m, xf, html.unescape(nm.group(1)) if nm else ''))
+        inch = lambda v: round(v / EMU_IN, 2)
+        out, edits = [], []
+        for m, xf, nm in boxes:
+            seg = m.group(0)
+            if m.group(1) != 'sp' or '<p:ph' in seg or '<p:txBody>' not in seg:
+                continue
+            sp = (re.search(r'<p:spPr\b.*?</p:spPr>|<p:spPr\s*/>', seg, re.S) or [''])[0]
+            if re.search(r'<a:(?:solidFill|gradFill|pattFill|blipFill)\b', re.sub(r'<a:ln\b.*?</a:ln>', '', sp, flags=re.S)):
+                continue
+            ln = re.search(r'<a:ln\b.*?</a:ln>', sp, re.S)
+            if ln and '<a:noFill/>' not in ln.group(0) and re.search(r'<a:(?:solidFill|gradFill|pattFill)\b', ln.group(0)):
+                continue
+            x0, y0, cx, cy = (int(v) for v in xf.groups())
+            right, bottom, left, top = x0 + cx >= W - tol, y0 + cy >= H - tol, x0 <= tol, y0 <= tol
+            if not (right or bottom or left or top):
+                continue
+            txt = html.unescape(''.join(_AT.findall(seg))).strip()
+            if not txt:
+                continue
+            bp = (re.search(r'<a:bodyPr\b[^>]*', seg) or [''])[0]
+            ins = {k: int((re.search(r'\b%s="(\d+)"' % k, bp) or [0, d])[1]) for k, d in (('lIns', 91440), ('rIns', 91440), ('tIns', 45720), ('bIns', 45720))}
+            lines, max_sz = [], 0
+            for pm in re.findall(r'<a:p>.*?</a:p>', seg, re.S):
+                for part in re.split(r'<a:br\b[^>]*/>', pm):
+                    w = 0.0
+                    for rm in re.finditer(r'<a:r>(.*?)</a:r>', part, re.S):
+                        t = html.unescape(''.join(re.findall(r'<a:t>([^<]*)</a:t>', rm.group(1))))
+                        sz = int((re.search(r'\bsz="(\d+)"', rm.group(1)) or [0, 1800])[1]) / 100.0
+                        max_sz = max(max_sz, sz)
+                        w += _text_width_pt(t, sz, fp)
+                    if w or part.strip():
+                        lines.append(w)
+            if not lines:
+                continue
+            need_w = int(max(lines) * 12700 * (1 + pad)) + ins['lIns'] + ins['rIns']
+            need_h = int(len(lines) * max_sz * 1.2 * 12700) + ins['tIns'] + ins['bIns']
+            ncx, ncy = max(cx, need_w), max(cy, need_h)
+            if (ncx, ncy) == (cx, cy):
+                continue
+            nx = x0 + cx - ncx if (right and not left) else x0
+            ny = y0 + cy - ncy if (bottom and not top) else y0
+            rec = {'name': nm, 'text': txt[:40], 'old': (inch(x0), inch(y0), inch(cx), inch(cy)), 'new': (inch(nx), inch(ny), inch(ncx), inch(ncy)), 'overlap': []}
+            if nx < 0 or ny < 0 or nx + ncx > W or ny + ncy > H:
+                rec.update(what='건너뜀: 반대쪽으로 키울 자리가 없다(슬라이드보다 커짐)', new=None); out.append(rec); continue
+            for m2, xf2, nm2 in boxes:
+                if m2 is m:
+                    continue
+                a, b, c, d = (int(v) for v in xf2.groups())
+                inter_new = nx < a + c and a < nx + ncx and ny < b + d and b < ny + ncy
+                inter_old = x0 < a + c and a < x0 + cx and y0 < b + d and b < y0 + cy
+                if inter_new and not inter_old:
+                    rec['overlap'].append(nm2)
+            rec['what'] = '바꿈'
+            edits.append((xf.start() + m.start(), xf.end() + m.start(), '<a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/>' % (nx, ny, ncx, ncy)))
+            out.append(rec)
+        if edits and not dry_run:
+            for a, b, sg in sorted(edits, reverse=True):
+                x = x[:a] + sg + x[b:]
+            open(p, 'w', encoding='utf8').write(x)
+        return out
 
     def widen_label(self, slide_no, name=None, pattern=None, min_width_in=2.0, dry_run=False):
         """v16.26 (발표 K6): 채우기·테두리 없는 글상자(자리 표시자·그룹 안 제외)의 폭을 min_width_in 인치까지 넓힌다.
@@ -3272,7 +3349,7 @@ def conform_title(deck, slide_no, prof, adopt_box=False, dry_run=False):
     return ch
 
 
-MIN_FIT_TITLE_PT = 16   # 띠 안에 넣으려 줄일 때의 하한. 더 줄여야 하면 [!] — 제목 글을 줄인다
+MIN_FIT_TITLE_PT = MIN_TITLE_PT   # v16.27 (발표 근골격): 띠 안에 넣으려 줄일 때의 하한 = lint 제목 최소 24pt(전에는 16 — 23pt 로 줄여 lint 와 부딪쳤다). 더 줄여야 하면 [!]
 FIT_WIDTH_MARGIN = 0.9  # 글자폭 추정 여유: 실물 렌더(굵은 한글 글꼴·대체 글꼴)에서 추정보다 한 줄 더 꺾였다(2026-09-24)
 
 
@@ -3691,6 +3768,35 @@ INSET_EMU = 91440           # 기본 좌우 여백 (0.1 inch)
 
 
 _FONT_CACHE = {}
+
+
+def _parse_screens(spec, n):
+    """'3,5-9' → {3,5,6,7,8,9} (1..n 안)."""
+    out = set()
+    for part in str(spec).split(','):
+        part = part.strip()
+        if '-' in part:
+            a, b = part.split('-', 1); out |= set(range(int(a), int(b) + 1))
+        elif part:
+            out.add(int(part))
+    return {k for k in out if 1 <= k <= n}
+
+
+def _text_width_pt(text, size_pt, font_path=None):
+    """v16.27: 한 줄 글의 폭(pt). 글꼴 파일이 있으면 PIL, 없으면 영문 0.5em·한글 1em 모델."""
+    if not text:
+        return 0.0
+    if font_path:
+        try:
+            from PIL import ImageFont
+            key = (font_path, int(size_pt * 10))
+            if key not in _FONT_CACHE:
+                _FONT_CACHE[key] = ImageFont.truetype(font_path, size=int(size_pt * 10))
+            return _FONT_CACHE[key].getlength(text) / 10.0
+        except Exception:
+            pass
+    ko = len(re.findall(r'[\uac00-\ud7a3]', text))
+    return (len(text) + ko) * 0.5 * size_pt
 
 
 def _est_lines_font(text, size_pt, width_emu, font_path):
@@ -4800,6 +4906,11 @@ def main():
     po.add_argument('--font', default=DEFAULT_FONT, choices=list(FONT_PROFILES))
     po.add_argument('--audience', choices=('internal', 'external'), default=None, help='내부 발표는 환자 정보 검사 생략, 외부는 [!] (v16.9)')
     ex = sub.add_parser('handout'); ex.add_argument('pptx'); ex.add_argument('-o', required=True)
+    pm = sub.add_parser('protect-memo', help='표지 없는 원작자 노트를 기존 메모 구역으로 감싼다(v16.27, 발표 P2)')
+    pm.add_argument('pptx'); pm.add_argument('-o', required=True); pm.add_argument('--screens', default=None, help='화면 번호(예: 3,5-9). 없으면 전부')
+    fc = sub.add_parser('fit-corner-boxes', help='가장자리에 붙은 글상자를 붙은 쪽 고정으로 글에 맞게 키운다(v16.27, 발표 K7)')
+    fc.add_argument('pptx'); fc.add_argument('-o', required=True); fc.add_argument('--pad', type=float, default=0.15)
+    fc.add_argument('--tol', type=float, default=0.02, help='가장자리에 붙었다고 볼 거리(인치)'); fc.add_argument('--dry-run', action='store_true')
     wl = sub.add_parser('widen-labels', help='채우기·테두리 없는 이름표 글상자의 폭을 넓힌다(정렬 쪽 모서리 고정, v16.26)')
     wl.add_argument('pptx'); wl.add_argument('-o', required=True); wl.add_argument('--pattern', required=True, help='글 전체가 맞을 정규식, 예: "\\(R\\d [^)]*\\)"')
     wl.add_argument('--min-width', type=float, default=2.0); wl.add_argument('--dry-run', action='store_true')
@@ -4935,6 +5046,35 @@ def main():
         validate(args.o, args.pptx)
     elif args.cmd == 'handout':
         print(export_notes(Deck.open(args.pptx), args.o))
+    elif args.cmd == 'protect-memo':
+        dk = Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]
+        want = _parse_screens(args.screens, len(order)) if args.screens else set(range(1, len(order) + 1))
+        done, has, empty = [], 0, 0
+        for pos, sn in enumerate(order, 1):
+            if pos not in want:
+                continue
+            if dk.protect_memo(sn):
+                done.append(pos)
+            elif any(t.strip() for t in dk.notes(sn)):
+                has += 1
+            else:
+                empty += 1
+        dk.save(args.o)
+        print('감싼 화면 %d · 이미 구조가 있거나 표지 있음 %d · 빈 노트 %d → %s' % (len(done), has, empty, args.o))
+        if done:
+            print('감싼 화면: %s' % ', '.join(map(str, done[:40])) + (' …' if len(done) > 40 else ''))
+    elif args.cmd == 'fit-corner-boxes':
+        dk = Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]; n_ch = n_sk = 0
+        for pos, sn in enumerate(order, 1):
+            for r in dk.fit_corner_boxes(sn, tol_in=args.tol, pad=args.pad, dry_run=args.dry_run):
+                if r['what'] == '바꿈':
+                    n_ch += 1
+                    print('화면 %d "%s" %s → %s%s' % (pos, r['name'], r['old'], r['new'], ('  [참고] 겹침: %s' % ', '.join(r['overlap'])) if r['overlap'] else ''))
+                else:
+                    n_sk += 1; print('[참고] 화면 %d "%s" %s' % (pos, r['name'], r['what']))
+        if not args.dry_run:
+            dk.save(args.o)
+        print('구석 글상자 맞춤 %d · 건너뜀 %d%s' % (n_ch, n_sk, ' (dry-run — 저장 안 함)' if args.dry_run else ' → %s' % args.o))
     elif args.cmd == 'widen-labels':
         dk = Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]; n_ch = n_sk = 0
         for pos, sn in enumerate(order, 1):

@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.26'
+EXPECT_VERSION = '16.27'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -1098,10 +1098,10 @@ def t_conform_title_fits_font_when_band_would_cover_content():
     n1 = B.import_slide(N, 1, after=[s for s, _, _ in B.order()][-1])
     body_before = re.search(r'<p:sp>(?:(?!</p:sp>).)*?name="Body".*?</p:sp>', open(B._slide(n1), encoding='utf8').read(), re.S).group(0)
     ch = T.conform_title(B, n1, prof)
-    assert ch[0].startswith('[참고]') and '겹쳐' in ch[0] and 'pt 로 줄였다' in ch[0], ch
+    # v16.27 (발표 근골격): 줄이는 하한이 lint 제목 최소 24pt — 이 fixture 는 24pt 밑으로 줄여야 들어가므로 바꾸지 않고 [!]
+    assert ch[0].startswith('[!]') and '겹쳐' in ch[0] and '24pt 밑으로' in ch[0], ch
     x = open(B._slide(n1), encoding='utf8').read()
     assert 'cy="603504"' in x and body_before in x                        # 띠 높이·본문 그대로
-    assert not T.check_title_template(B, None, screens=[B.screen_no(n1)], stream=io.StringIO())
     B.save('/tmp/tb_fit.pptx'); assert T.validate('/tmp/tb_fit.pptx', base)
 
 def t_import_slide_maps_layout_by_name_and_keeps_positions():
@@ -1618,6 +1618,42 @@ def t_v1626_widen_label():
     assert int(s2.group(1)) == int(0.5 * E)                                                                                          # 왼쪽 끝 고정
     assert '(R3 가나다)' in y and 'sz="1800"' in y
     d.save('/tmp/k6.pptx'); assert T.validate('/tmp/k6.pptx', SRC)
+
+
+def t_v1627_fit_corner_boxes_and_protect_memo():
+    d = T.Deck.open(SRC, wd('k7'))
+    W, H = d.slide_size(); E = T.EMU_IN
+    def box(i, nm, txt, x, y, w, h, fill=False, sz=1000):
+        f = '<a:solidFill><a:srgbClr val="FFFF00"/></a:solidFill>' if fill else '<a:noFill/>'
+        return ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="%d" y="%d"/>'
+                '<a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>%s</p:spPr><p:txBody><a:bodyPr wrap="none">'
+                '<a:spAutoFit/></a:bodyPr><a:lstStyle/><a:p><a:r><a:rPr lang="ko-KR" sz="%d"/><a:t>%s</a:t></a:r></a:p></p:txBody></p:sp>'
+                % (i, nm, x, y, w, h, f, sz, txt))
+    long_txt = 'Textbook of Radiology, Ch.25 Trauma, X. Soft tissue injury (cited)'
+    w0, h0 = int(3.11 * E), int(0.27 * E)
+    boxes = (box(961, '인용 구석', long_txt, W - w0, H - h0, w0, h0) +                          # 오른쪽·아래에 붙음
+             box(962, '가운데 글', long_txt, int(2 * E), int(2 * E), int(1 * E), int(0.3 * E)) +  # 가장자리 아님
+             box(963, '채운 구석', long_txt, 0, 0, int(1 * E), int(0.3 * E), fill=True) +
+             box(964, '이웃 상자', 'x', W - int(4.3 * E), H - int(0.25 * E), int(0.5 * E), int(0.2 * E)))
+    x = open(d._slide(7), encoding='utf8').read()
+    open(d._slide(7), 'w', encoding='utf8').write(x.replace('</p:spTree>', boxes + '</p:spTree>'))
+    r = {q['name']: q for q in d.fit_corner_boxes(7)}
+    assert set(r) == {'인용 구석'}, r                                              # 가운데·채운 상자는 대상 아님
+    q = r['인용 구석']; ox, oy, ow, oh = q['old']; nx, ny, nw, nh = q['new']
+    assert q['what'] == '바꿈' and nw > ow and abs((nx + nw) - (ox + ow)) < 0.02 and abs((ny + nh) - (oy + oh)) < 0.02, q   # 오른쪽·아래 끝 고정
+    assert '이웃 상자' in q['overlap'], q
+    y = open(d._slide(7), encoding='utf8').read()
+    assert long_txt in y and 'sz="1000"' in y and 'wrap="none"' in y
+    d.save('/tmp/k7.pptx'); assert T.validate('/tmp/k7.pptx', SRC)
+    # protect-memo CLI
+    d2 = T.Deck.open(SRC, wd('p2')); order = [sn for sn, _, _ in d2.order() if sn]
+    d2.set_notes(order[1], ['원작자 노트 한 줄']); d2.set_notes(order[2], ['대본'], ['· 참고']); d2.save('/tmp/p2_in.pptx')
+    r = subprocess.run([sys.executable, os.path.join(HERE, 'deck_toolkit.py'), 'protect-memo', '/tmp/p2_in.pptx', '-o', '/tmp/p2_out.pptx', '--screens', '2-3'],
+                       capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    assert r.returncode == 0 and '감싼 화면 1' in r.stdout, (r.stdout, r.stderr[-300:])
+    d3 = T.Deck.open('/tmp/p2_out.pptx', wd('p3'))
+    assert d3.notes_sections(order[1])[2] == ['원작자 노트 한 줄'] and d3.notes_sections(order[2])[0] == ['대본']
+    assert T.MIN_FIT_TITLE_PT == T.MIN_TITLE_PT == 24
 
 
 def t_v1619_da_after_vowel():

@@ -16,7 +16,7 @@ import os
 import re
 import sys
 
-__version__ = '1.8'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
+__version__ = '1.9'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
 
 KEYS = ('작업:', '대본:', '참고:', '본문:', '제목:', '복제본(문제) 대본:')
 PARA_OP = re.compile(r'^문단 (교체|추가|삭제)\b')
@@ -343,7 +343,7 @@ def _title_text(D, sn):
     return _h.unescape(' '.join(''.join(re.findall(r'<a:t>([^<]*)</a:t>', p)) for p in re.findall(r'<a:p>.*?</a:p>', m.group(0), re.S))).strip()
 
 
-def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout, base_origin=None):
+def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout, base_origin=None, notes_mode='stop'):
     """문법 문제 + (deck 가 있으면) 기준 덱 대조 → 보고서. 반환: (오류 수, 경고 수)."""
     probs = list(doc['problems'])
     w = lambda s='': print(s, file=stream)
@@ -408,6 +408,16 @@ def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout, ba
                     probs.append(('경고', fx['ln'], '본문 수정 화면 %d `%s` — 부분 일치로는 여러 번, 조각 전체로는 1번(whole 로 적용)' % (fx['screen'], fx['old'][:30])))
                 else:
                     probs.append(('오류', fx['ln'], '본문 수정 화면 %d `%s` — %s' % (fx['screen'], fx['old'][:30], r['reason'])))
+        # v1.9 (발표 P1): 원작자 노트만 있는 덱(3부 구조가 어디에도 없음)에 대본을 쓰면 원작자 노트가 사라진다 — 기본은 멈춤
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        risk, structured = overwrite_risk(doc, deck)
+        if risk and not structured and notes_mode == 'stop':
+            probs.append(('오류', 0, '기준 덱이 원작자 노트(표지 없음)뿐인데 넘김이 %d화면에 대본을 쓴다 — 그대로면 원작자 노트가 사라진다. '
+                          'apply --protect-memo(원작자 노트를 기존 메모 구역으로 감싸고 적용) 또는 --notes-are-scripts(대본으로 덮기): 화면 %s'
+                          % (len(risk), ', '.join(map(str, risk[:15])) + (' …' if len(risk) > 15 else ''))))
+        elif risk and notes_mode == 'stop':
+            probs.append(('경고', 0, '표지 없는 노트 %d화면에 대본을 쓴다 — 이 덱에는 3부 구조 노트가 있어 대본만 쓴 우리 노트로 본다. 원작자 노트면 --protect-memo: 화면 %s'
+                          % (len(risk), ', '.join(map(str, risk[:15])) + (' …' if len(risk) > 15 else ''))))
         for nw in doc['new']:
             for name, args in nw['ops'] or []:
                 if name in ('새 슬라이드', '레이아웃') and args and int(args[0]) > n:
@@ -463,6 +473,26 @@ def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout, ba
         w('기준 sha256 이 머리에 없다 — 노트만 다른 판(예: 한 판 앞 덱)은 화면 수·제목·문단 키로 구별되지 않는다. '
           '발표 적용 회신의 결과 sha256 을 다음 넘김 머리 `기준 sha256` 에 적으면 잡힌다')
     return len(errs), len(warns)
+
+
+def _raw_note(T, deck, sn):
+    """표지 없는 노트(원작자 노트 그대로이거나, 참고·메모 없이 대본만 쓴 우리 노트) — 둘은 노트만으로는 구별되지 않는다."""
+    ls = deck.notes(sn)
+    return any(l.strip() for l in ls) and not any(T._is_memo_sep(l) or T._is_cutoff_line(l) or l.strip() == T.NOTES_SEP for l in ls)
+
+
+def _deck_has_structure(T, deck):
+    """덱 어디에든 3부 구조(참고 표지·기존 메모 표지)가 있으면 우리가 손본 덱 — 표지 없는 노트는 대본만 쓴 우리 노트일 수 있다."""
+    return any(T._is_memo_sep(l) or T._is_cutoff_line(l) or l.strip() == T.NOTES_SEP for sn in deck.slide_numbers() for l in deck.notes(sn))
+
+
+def overwrite_risk(doc, deck):
+    """v1.9 (발표 P1): 넘김이 대본을 쓰는 기준 화면 중 노트가 표지 없는 것 → (화면 목록, 덱에 3부 구조가 있는가)."""
+    import deck_toolkit as T
+    order = [s for s, _, _ in deck.order() if s]
+    hit = [no for no, sc in sorted(doc['screens'].items()) if isinstance(sc['script'], list) and 1 <= no <= len(order)
+           and not any(n == '삭제' for n, _ in (sc['ops'] or [])) and _raw_note(T, deck, order[no - 1])]
+    return hit, _deck_has_structure(T, deck)
 
 
 def content_hash(path):
@@ -723,7 +753,7 @@ def _tips_bullets(tips):
     return [('· ' + t[2:]) if t.startswith('- ') else t for t in tips]
 
 
-def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=None):
+def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=None, notes_mode='stop'):
     """check 오류 0 인 넘김을 기준 덱에 적용해 out_path 에 저장. 반환: 보고 dict. 순서는 check 의 '적용 순서'.
     원작자 메모 수정 요청은 적용하지 않고 보고서에 남긴다(요청서 3-4 — 사용자 허락 뒤 settext(notes=True, zone='memo'))."""
     import tempfile, shutil
@@ -735,6 +765,16 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
     F = [s for s, _, _ in D.order() if s]           # 기준 화면 → 파일 번호(넣고 빼도 변하지 않는다)
     rep = {'warn': [], 'done': [], 'memo_req': [], 'new': [], 'dup': [], 'deleted': [], 'imports': [], 'dup_new': []}
     W = rep['warn'].append; DONE = rep['done'].append
+    # v1.9 (발표 P1): 원작자 노트를 덮는 적용은 기본 멈춤 — --protect-memo 면 먼저 감싸고, --notes-are-scripts 면 덮는다
+    risk, structured = overwrite_risk(doc, D)
+    if risk and not structured and notes_mode == 'stop':
+        raise ValueError('기준 덱이 원작자 노트(표지 없음)뿐인데 %d화면에 대본을 쓴다 — --protect-memo 또는 --notes-are-scripts' % len(risk))
+    protected = set()
+    if notes_mode == 'protect':
+        protected = {sn for sn in F if D.protect_memo(sn)}
+        DONE('원작자 노트 감쌈 %d화면(--protect-memo)' % len(protected))
+        if structured:
+            W('--protect-memo — 이 덱에는 이미 3부 구조 노트가 있다. 표지 없는 노트 %d화면이 대본만 쓴 우리 노트였다면 메모로 잘못 감쌌다' % len(protected))
     # 0. 문단 키를 먼저 문단 번호로 풀어 둔다 — 본문 수정이 키 글을 바꿔도(물리 v1 '23-23' → '[짤]23-23') 같은 문단을 찾는다(v1.3, 발표 3-2)
     plan = {}
     for no, sc in sorted(doc['screens'].items()):
@@ -923,6 +963,7 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
         rep['new'].append((label, s)); last_new = s
         if imp:
             rep['imports'].append((label, src_label, s, '그대로' if as_is else '틀', memo_n, sizes))
+            rep.setdefault('import_src', []).append((label, src, src_sn, s))
             rep.setdefault('import_want', []).append((label, s, want_memo))
         # v1.5 (발표 M3-③): 새 슬라이드·가져옴에도 '앞에 복제' — 원천은 방금 만든 슬라이드, 메모는 같이 복제된다
         if any(n == '앞에 복제' for n, _ in (nw['ops'] or [])):
@@ -936,6 +977,15 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
             rep.setdefault('import_want', []).append((label + ' (복제본)', d2, want_memo if imp else None))
     if rep['new']:
         DONE('새 슬라이드 %d%s' % (len(rep['new']), (' (가져옴 %d)' % len(rep['imports'])) if rep['imports'] else ''))
+    if rep.get('import_src'):   # v1.9 (발표 P4): 가져온 슬라이드의 넘침 [심각] — 원천 덱에서부터 있던 것인지
+        import io as _io
+        sev = lambda lines, n: sum(1 for l in lines if l.startswith('[심각] slide%d:' % n))
+        dst = T.check_text_overflow(D, stream=_io.StringIO())
+        cache = {}
+        for (lb, src_deck, src_sn, sn) in rep['import_src']:
+            if id(src_deck) not in cache:
+                cache[id(src_deck)] = T.check_text_overflow(src_deck, stream=_io.StringIO())
+            rep.setdefault('import_over', {})[sn] = (sev(cache[id(src_deck)], src_sn), sev(dst, sn))
     # 5. 앞에 복제(정답 표시 제거)
     for no, sc in sorted(doc['screens'].items()):
         if not any(n == '앞에 복제' for n, _ in (sc['ops'] or [])):
@@ -986,9 +1036,11 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
         D.set_notes(sn, script, tips); nn += 1
     if nn:
         DONE('노트 %d화면' % nn)
-    if plain_notes:   # v1.3 (발표 3-7): 화면마다가 아니라 한 줄로
-        W('표지 없는 노트(대본만 있던 노트) %d화면을 대본으로 보고 바꿨다 — 기준 덱이 restore-memo·normalize-notes 된 판이면 정상: 화면 %s'
-          % (len(plain_notes), ', '.join(map(str, plain_notes[:12])) + (' …' if len(plain_notes) > 12 else '')))
+    if plain_notes:   # v1.3 (발표 3-7): 화면마다가 아니라 한 줄로. v1.9 (발표 P1): 'normalize-notes 된 판이면 정상' 은 틀렸다 — normalize-notes 는 원작자 노트를 감싸지 않는다
+        W('표지 없는 노트 %d화면을 대본으로 보고 덮었다(%s) — 원작자 노트였다면 이 결과를 버리고 --protect-memo 로 다시: 화면 %s'
+          % (len(plain_notes), '--notes-are-scripts' if notes_mode == 'scripts' else '덱에 3부 구조가 있어 우리 대본으로 봄',
+             ', '.join(map(str, plain_notes[:12])) + (' …' if len(plain_notes) > 12 else '')))
+    rep['scripted_raw'] = len(plain_notes)
     # 9. 삭제
     for no, sc in sorted(doc['screens'].items()):
         if any(n == '삭제' for n, _ in (sc['ops'] or [])):
@@ -1003,14 +1055,21 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
     R = T.Deck.open(out_path, os.path.join(wd, 'r'))
     ro = [s for s, _, _ in R.order() if s]
     B = T.Deck.open(base_path, os.path.join(wd, 'b'))
-    mapping, memo_ok, memo_bad = {}, 0, []
+    # v1.9 (발표 P3): 슬라이드 파일 번호로 짝짓는다(병합·이동·삭제에도 같은 슬라이드). 메모 구역이 있던 화면·문단 수와 감싼 화면을 따로 센다
+    mapping, memo_ok, memo_bad, memo_paras, prot_ok = {}, 0, [], 0, 0
     for no, sn in enumerate(F, 1):
         if sn in ro:
             mapping[no] = ro.index(sn) + 1
-            if B.notes_sections(sn)[2] == R.notes_sections(sn)[2]:
-                memo_ok += 1
-            else:
+            want = [l for l in B.notes(sn) if l.strip()] if sn in protected else B.notes_sections(sn)[2]
+            got = R.notes_sections(sn)[2]
+            if [l.strip() for l in want if l.strip()] != [l.strip() for l in got if l.strip()]:
                 memo_bad.append(no)
+            elif want:
+                if sn in protected:
+                    prot_ok += 1
+                else:
+                    memo_ok += 1; memo_paras += len([l for l in want if l.strip()])
+    rep.update({'memo_paras': memo_paras, 'protected': (prot_ok, len(protected))})
     # v1.7 (발표 M3 덧붙임): 가져온 슬라이드·그 복제본의 메모 구역이 원천에서 기대한 그대로인지 결과 덱에서 대조
     imp_ok, imp_bad = 0, []
     for lb, sn, want in rep.get('import_want', []):
@@ -1022,6 +1081,7 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
         else:
             imp_bad.append(lb)
     rep['import_memo'] = (imp_ok, imp_bad)
+    rep.pop('import_src', None)
     rep.update({'mapping': mapping, 'memo_ok': memo_ok, 'memo_bad': memo_bad, 'screens': len(ro),
                 'valid': (bool(T.validate(out_path, base_path)) if os.path.exists(VALIDATE_PY) else None),   # v1.6 (발표 K4): 없으면 '건너뜀'
                 'sha': hashlib.sha256(open(out_path, 'rb').read()).hexdigest()[:16], 'content': content_hash(out_path)})
@@ -1037,7 +1097,12 @@ def report(rep, stream=sys.stdout):
     w('| 결과 | %d화면 · validate %s · **sha256 앞 16자 `%s`** · 내용 해시 `%s` (둘 다 적용 회신에 — 다음 넘김의 `기준 sha256` 은 어느 쪽이어도 된다) |' % (
         rep['screens'], {True: '통과', False: '**실패**', None: '건너뜀(validate.py 없음 — 통과 아님)'}[rep['valid']], rep['sha'], rep.get('content', '—')))
     w('| 한 일 | %s |' % (' · '.join(rep['done']) or '없음'))
-    w('| 원작자 메모 | 기준 화면 %d곳 그대로%s |' % (rep['memo_ok'], (' · **달라진 화면 %s**' % rep['memo_bad']) if rep['memo_bad'] else ''))
+    pr = rep.get('protected', (0, 0))
+    w('| 원작자 메모 | 메모 구역이 있던 기준 화면 %d곳 · 메모 문단 %d개 그대로%s%s%s |' % (
+        rep['memo_ok'], rep.get('memo_paras', 0),
+        (' · 감싼 화면(--protect-memo) %d/%d 원래 노트 그대로' % pr) if pr[1] else '',
+        (' · **표지 없는 노트를 대본으로 덮은 화면 %d**' % rep['scripted_raw']) if rep.get('scripted_raw') else '',
+        (' · **달라진 화면 %s**' % rep['memo_bad']) if rep['memo_bad'] else ''))
     if rep.get('import_memo') and (rep['import_memo'][0] or rep['import_memo'][1]):
         ok, bad = rep['import_memo']
         w('| 가져옴 메모 대조 | 원천과 같음 %d%s |' % (ok, (' · **다름: %s**' % ', '.join(bad)) if bad else ''))
@@ -1046,8 +1111,10 @@ def report(rep, stream=sys.stdout):
     if rep.get('dup_new'):
         w('| 앞에 복제(새·가져옴) | %s |' % ', '.join('"%s" → slide%d(빨강 %d 제거, 해설 상자 %d 삭제)' % d for d in rep['dup_new']))
     for lb, src, sn, mode, memo_n, sizes in rep.get('imports', []):
-        w('| 가져옴 | "%s" ← %s → slide%d · %s · 원작자 메모 %s%s |' % (lb.replace('|', '/'), src, sn, mode, ('%d줄' % memo_n) if memo_n else '없음',
-                                                         (' · ' + '; '.join(sizes)) if sizes else ''))
+        ov = rep.get('import_over', {}).get(sn)
+        w('| 가져옴 | "%s" ← %s → slide%d · %s · 원작자 메모 %s%s%s |' % (
+            lb.replace('|', '/'), src, sn, mode, ('%d줄' % memo_n) if memo_n else '없음', (' · ' + '; '.join(sizes)) if sizes else '',
+            (' · 넘침 [심각] 원천 %d → 결과 %d%s' % (ov[0], ov[1], ' **(가져오며 생김)**' if ov[1] > ov[0] else '')) if ov else ''))
     if rep['deleted']:
         w('| 삭제 | 기준 화면 %s |' % rep['deleted'])
     if rep['memo_req']:
@@ -1189,11 +1256,15 @@ def main():
     c = sub.add_parser('check', help='문법 검사 + (--deck) 기준 덱 대조 미리보기')
     c.add_argument('md'); c.add_argument('--deck', default=None); c.add_argument('--sha', default=None, help='보낸 쪽이 적은 넘김 문서 sha256 앞 16자')
     c.add_argument('--base-origin', default=None, help='적용 전에 정리한 덱이면 정리 전 원본 — 넘김의 기준 sha256 을 이것으로 대조(v1.8)')
+    c.add_argument('--protect-memo', action='store_true', help='원작자 노트를 감싸고 적용할 것(v1.9) — check 에서는 멈춤 오류를 풀기만')
+    c.add_argument('--notes-are-scripts', action='store_true', help='표지 없는 노트를 대본으로 덮어도 된다(v1.9)')
     ap_ = sub.add_parser('apply', help='check 오류 0 일 때만 적용 + 보고서 (v1.2)')
     ap_.add_argument('md'); ap_.add_argument('--deck', required=True); ap_.add_argument('-o', '--out', required=True)
     ap_.add_argument('--sha', default=None); ap_.add_argument('--import', dest='imports', action='append', default=[], help='덱이름=경로 (가져옴)')
     ap_.add_argument('--report', default=None, help='보고서 md 도 파일로')
     ap_.add_argument('--base-origin', default=None, help='--deck 이 정리본이면 정리 전 원본(기준 sha256 대조용, v1.8)')
+    ap_.add_argument('--protect-memo', action='store_true', help='적용 전에 표지 없는 원작자 노트를 기존 메모 구역으로 감싼다(v1.9, 발표 P1)')
+    ap_.add_argument('--notes-are-scripts', action='store_true', help='표지 없는 노트를 대본으로 덮는다 — 원작자 노트가 사라진다(v1.9)')
     cp = sub.add_parser('compare', help='두 덱을 화면별로 비교(글·노트·숨김·배경) — 도구 적용본과 손 적용본 대조 (v1.2)')
     cp.add_argument('a'); cp.add_argument('b')
     a = ap.parse_args()
@@ -1205,13 +1276,14 @@ def main():
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import deck_toolkit as T
         D = T.Deck.open(a.deck); D.src_path = a.deck
-        e, _ = check(doc, D, b, a.sha, base_origin=a.base_origin)
+        mode = 'protect' if a.protect_memo else ('scripts' if a.notes_are_scripts else 'stop')
+        e, _ = check(doc, D, b, a.sha, base_origin=a.base_origin, notes_mode=mode)
         if e:
             print('\n**적용하지 않았다 — 위 오류를 넘긴 쪽에 돌려보낸다**')
             sys.exit(1)
         imports = dict(x.split('=', 1) for x in a.imports)
         try:
-            rep = apply(doc, a.deck, a.out, imports)
+            rep = apply(doc, a.deck, a.out, imports, notes_mode=mode)
         except Exception as ex:   # v1.3 (발표 3-2): Traceback 이 아니라 멈춤·보고 — 결과 파일은 만들지 않는다
             if os.path.exists(a.out):
                 os.remove(a.out)
@@ -1231,7 +1303,8 @@ def main():
         import deck_toolkit as T
         D = T.Deck.open(a.deck)
         D.src_path = a.deck
-    e, _ = check(doc, D, b, a.sha, base_origin=a.base_origin)
+    e, _ = check(doc, D, b, a.sha, base_origin=a.base_origin,
+                 notes_mode='protect' if a.protect_memo else ('scripts' if a.notes_are_scripts else 'stop'))
     sys.exit(1 if e else 0)
 
 
