@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.25'
+EXPECT_VERSION = '16.26'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -1593,6 +1593,32 @@ def t_v1618_delete_shape():
         d.delete_shape(pic_slide, T.html.unescape(nm))
         assert 'Id="%s"' % rid not in open(d._slide_rels(pic_slide), encoding='utf8').read()
     d.save('/tmp/c1.pptx'); assert T.validate('/tmp/c1.pptx', SRC)
+
+def t_v1626_widen_label():
+    d = T.Deck.open(SRC, wd('k6'))
+    W, _ = d.slide_size(); E = T.EMU_IN
+    def box(i, nm, txt, x, w, algn='l', fill=False):
+        f = '<a:solidFill><a:srgbClr val="FFFF00"/></a:solidFill>' if fill else '<a:noFill/>'
+        return ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="%d" y="100"/>'
+                '<a:ext cx="%d" cy="300000"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>%s</p:spPr><p:txBody><a:bodyPr wrap="none">'
+                '<a:spAutoFit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="%s"/><a:r><a:rPr lang="ko-KR" sz="1800"/><a:t>%s</a:t></a:r></a:p></p:txBody></p:sp>'
+                % (i, nm, x, w, f, algn, txt))
+    x = open(d._slide(7), encoding='utf8').read()
+    boxes = (box(951, '이름표 1', '(R3 가나다)', W - int(1.5 * E), int(1.2 * E), 'r') + box(952, '이름표 2', '(R1 라마바)', int(0.5 * E), int(1.0 * E)) +
+             box(953, '이름표 3', '(R2 사아자)', int(3 * E), int(1.0 * E), fill=True) + box(954, '이름표 4', '(R4 차카타)', 0, int(1.0 * E), 'r') +
+             box(955, '본문 글', 'Not a label', int(5 * E), int(1.0 * E)))
+    open(d._slide(7), 'w', encoding='utf8').write(x.replace('</p:spTree>', boxes + '</p:spTree>'))
+    r = d.widen_label(7, pattern=r'\(R\d [^)]*\)', min_width_in=2.0)
+    got = {nm: what for nm, _, _, _, what in r}
+    assert got == {'이름표 1': '바꿈', '이름표 2': '바꿈', '이름표 3': '건너뜀: 채우기 있음', '이름표 4': '건너뜀: 슬라이드 밖으로 나감'}, got
+    y = open(d._slide(7), encoding='utf8').read()
+    s1 = re.search(r'name="이름표 1".*?<a:off x="(\d+)" y="100"/><a:ext cx="(\d+)"', y, re.S)
+    assert int(s1.group(1)) + int(s1.group(2)) == W - int(1.5 * E) + int(1.2 * E) and int(s1.group(2)) == int(round(2.0 * E))   # 오른쪽 끝 고정
+    s2 = re.search(r'name="이름표 2".*?<a:off x="(\d+)" y="100"/>', y, re.S)
+    assert int(s2.group(1)) == int(0.5 * E)                                                                                          # 왼쪽 끝 고정
+    assert '(R3 가나다)' in y and 'sz="1800"' in y
+    d.save('/tmp/k6.pptx'); assert T.validate('/tmp/k6.pptx', SRC)
+
 
 def t_v1619_da_after_vowel():
     d = T.Deck.open(SRC, wd('b1'), theme='cud')

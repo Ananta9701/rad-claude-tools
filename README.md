@@ -16,6 +16,7 @@ python3 /tmp/rct/claim_graph.py selfcheck --dir /tmp/rct --role 발표 --tests -
 - `git clone` 을 쓴다(v2.17~): 대화창·Cowork 클라우드 작업공간·Mac VM 셸 어디서나 되고, 받은 커밋 해시가 selfcheck 표에 남는다.
   (Cowork 클라우드 작업공간은 tarball 주소 `codeload…` 를 세션 권한 문제로 막는다 — 09-26 시험.)
 - `--compare /mnt/project` 는 예비로 둔 프로젝트 파일과 판을 대조한다. Cowork 에서는 뺀다(없는 경로).
+- **Cowork(Mac VM)는 `/tmp/rct` 대신 `~/rct`** — VM 의 `/tmp/rct` 는 다른 사용자 소유라 지울 수 없다(v2.25). 명령의 `/tmp/rct` 를 `~/rct` 로 바꿔 쓴다.
 - 이후 도구는 `/tmp/rct` 에서 쓴다: `python3 /tmp/rct/deck_toolkit.py …`, 스크립트에서는 `sys.path.insert(0, '/tmp/rct')`.
 - 결과 표(selfcheck)를 도구회신 §1 에 붙인다. 불일치가 있으면 작업 전에 사용자에게 알린다.
 

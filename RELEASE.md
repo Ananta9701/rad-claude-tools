@@ -1,39 +1,43 @@
-# RELEASE v2.24 — manifest v44 — 2026-09-27
+# RELEASE v2.25 — manifest v45 — 2026-09-27
 
-> **v2.24** — 발표 병합 준비 M1–M4(`handoff.py` 1.5)와 교과서 plan 결과 반영(`textbook.py` 0.3). claim_graph·deck·verify 는 그대로. 이전 판 내용은 `HISTORY.md`.
-> 사용자 결정(09-27): 한 판으로 올린다. 교과서 장 표는 **장 수·제목만** 확인하고, 3단계 분할에서 장 파일마다 앞뒤 2쪽을 겹친다.
+> **v2.25** — 교과서 3단계(`textbook.py` 0.4: split·page·search)와 발표 회신 세 건(`handoff.py` 1.6, `deck_toolkit.py` 16.26 이름표 폭). 전달 규약 v3(폴더 `→` → `to`, 09-27 사용자 결정 — id 그대로). claim_graph·verify 는 그대로. 이전 판 내용은 `HISTORY.md`.
+> 사용자 결정(09-27): 장별 원본 PDF 는 만들지 않는다(글자 md + 필요한 쪽만 그림), Gemini 는 수동 조사 + 로컬 찾기(API 자동화 안 함), 한 판으로 올린다.
 
 ## 1. 바뀐 것
 
 | 도구 | 판 | 내용 |
 |---|---|---|
-| `handoff.py` | 1.5 | **M2** 머리 `> 범위: 2023-2025` — 연도 규칙이 기준 덱 이름보다 먼저(못 읽으면 오류). **가져옴 두 방식** — 제목·본문을 적으면 틀(종전), 둘 다 없으면 **그대로**(그림·글상자·글). **M1**(= N4) 가져옴에 `레이아웃 = 화면 N` 이 있으면 제목·본문 자리 표시자의 명시 글자 크기를 지워 목적지 레이아웃을 따르게 하고, 제목은 화면 N 의 제목 규격(`title_profile`·`conform_title`)으로 — 바뀐 크기는 보고서 "가져옴" 줄(`본문 14pt → 20pt`). 그림·화살표·따로 그린 글상자는 그대로. **M3** 가져옴의 `메모 복사` — 원천 노트를 결과의 기존 메모 구역으로(표지 없는 노트면 전체, 3부 구조면 메모 구역만), 없으면 들어오지 않음, 출처는 보고서에만. 새 슬라이드(틀)의 `메모 복사` 는 오류(전에는 조용히 무시). **새 슬라이드·가져옴의 `앞에 복제`**(전에는 조용히 무시) — 메모도 복제본에. **M4** 같은 자리 뒤 여러 장은 적은 순서대로. 보고서에 가져옴 줄(원천·방식·메모 줄 수·크기 변화) |
-| `test_handoff.py` | 1.5 | 20개(+2): 범위 머리·가져옴 문법(제목만 오류, 둘 다 없음 통과, 틀의 메모 복사 오류), 병합 적용 끝까지(순서 s1·s2·복제본·s3, 메모 복사 있음/없음, 복제본 메모, 그대로 가져온 제목, 명시 14pt 지움과 보고) |
-| `HANDOFF_FORMAT.md` | 1.5 | 머리 `범위:`, 가져옴 두 방식·`대본: 변경 없음` 뜻, 레이아웃·메모 복사·앞에 복제 확장, `앞에 복제` 는 작업 줄 맨 끝 |
-| `textbook.py` | 0.3 | 번호를 `--skip`·`--only` 전 전체 목록으로(probe·plan 같음), 첫 장이 1이 아닌 책(분책 2권), 장당 평균 4쪽 미만 책갈피 깊이는 장 아님, 인쇄 쪽은 3표·과반·60쪽 이내가 아니면 "—", 쪽 머리 제목 앞 `I `·`|` 떼기, 마지막 장은 찾아보기·Index 앞까지, 장을 못 정하면 **30쪽 묶음**, 책마다 **하위 프로세스**(메모리 풀림·죽은 책만 오류 md) |
-| `test_textbook.py` | 0.3 | 20개(+4): 첫 장 11, 인쇄 쪽 거절 4가지·제목 정리, 찾아보기 앞 끝·쪽 묶음, 하위 프로세스가 죽은 책 |
-| `TEXTBOOK.md` | 0.3 | §2 v0.3 규칙·확인은 장 수와 제목만, §3 장 파일 앞뒤 2쪽 겹침, 장별 PDF 는 미정(원본 약 12 GB 만큼 더 쌓임) |
+| `textbook.py` | 0.4 | **split** — 확인한 plan 장 표로 책마다 `{번호}_{책}/` 에 앞붙이·장·뒤붙이 md 와 INDEX, 맨 위 INDEX. 장 파일마다 앞뒤 2쪽 겹침(표지), 30쪽 넘는 장은 나눔, 쪽 표지 `[p.인쇄 · PDF]`. 책마다 하위 프로세스·예산 이어하기, INDEX 가 끝 표시. **page** — 인쇄 쪽(INDEX 로) 또는 PDF 쪽의 이미지를 PNG 로(스캔본은 쪽 전체). **search** — 분할 md 에서 띄어쓰기 무시 찾기, 겹침 쪽은 제 장 파일로 한 번. **plan 고침**: 예산을 목록·사전 점검부터 재고 기본 120초, 다 만든 뒤에 md 를 열어 씀(0바이트 원인), 0바이트·깨진 md 는 다시 함·요약에서 "남음". 기본 이름·`--name` 에 `→` 안 씀. **장 표 v2 검토 뒤 보강**: 앞붙이·뒤붙이도 30쪽씩(뒤붙이 509쪽 한 파일 방지), 수상하게 긴 장의 뒤쪽은 `미확인` 이름(사용자 결정 나), `Chapter N` 제목을 하위 책갈피 이름으로(Gore), 쪽 번호 표가 있으면 그 번호로 표지·INDEX·`page --printed`, plan 은 여는 쪽 표지를 제목 일치보다 먼저·쪽 머리 없는 꼬리 60쪽 넘으면 경고 |
+| `test_textbook.py` | 0.4 | 27개(+7): 책 이름 줄이기, 0바이트 md 이어하기, split 끝까지(겹침 표지·INDEX·인쇄→PDF·다시 돌리면 건너뜀)와 찾기, 긴 장 나누기, 쪽 그림, 여는 쪽 먼저·꼬리 경고·앞뒤 나눔·미확인 이름·Chapter N 제목 채움, 쪽 번호 표 |
+| `TEXTBOOK.md` | 0.4 | §3 split·page·search 절차, 도구 경로 `~/rct`, 결과 폴더 `to코드` |
+| `handoff.py` | 1.6 | **Y1** 연도 규칙 강조를 출제줄(⇥ 문단)의 범위 안 번호 서식으로(3개 미만이면 덱 전체, 못 정하면 경고). **R2** 대본·참고의 `**` 를 노트에 넣을 때 지움 + 문법 경고. **K1** 결과 zip 항목 시각 고정(같은 입력 → 같은 sha), 보고서에 내용 해시, `기준 sha256` 이 내용 해시와 맞으면 경고만. **K2** 결과를 임시 폴더에서 만들어 마지막에 복사. **K4** validate.py 가 없으면 "건너뜀(통과 아님)". 미리보기 제목 앞 `—` 제거 |
+| `test_handoff.py` | 1.6 | 22개(+2): 출제줄 기준 빨강·`**` 지움, 두 번 적용 sha 같음·내용 해시 대조·validate 건너뜀 |
+| `HANDOFF_FORMAT.md` | 1.6 | v1.6 규칙 한 문단, `기준 sha256` 에 내용 해시 허용 |
+| `deck_toolkit.py` | 16.26 | **K6** `widen_label(n, name=|pattern=, min_width_in=2.0)`·CLI `widen-labels` — 채우기·테두리 없는 글상자만, 정렬 쪽 모서리 고정, 글·크기·색 불변, 슬라이드 밖이면 건너뜀 |
+| `test_toolkit.py` | 16.26 | 171개(+1): 오른쪽·왼쪽 고정, 채우기 있는 상자·밖으로 나가는 상자 건너뜀 |
+| `DECK_SPEC.md` | 16.26 | 판 기록 한 줄, 전달함 폴더 이름 |
 
 ## 2. 회신 항목별 답
 
 | 항목 | 반영 |
 |---|---|
-| 발표 `260927_도구회신_병합넘김_준비_v1` M1 (N4 먼저) | 1.5 — 가져옴 + `레이아웃 = …` 일 때. 레이아웃 지정 없는 가져옴은 종전대로(원천 크기 고정 + 경고) |
-| M2 `범위:` | 1.5 |
-| M3 ① 기본 | 원작자 노트는 들어오지 않는다(새 노트) — 시험으로 고정 |
-| M3 ② `메모 복사` | 기존 메모 구역으로. 출처 표시는 노트에 넣지 않고 보고서에 — 노트 원문을 바꾸지 않으려고 |
-| M3 ③ 가져온 화면의 `앞에 복제` | 전에는 새 슬라이드 구역의 `앞에 복제` 가 **조용히 무시**됐다 — 지원, 복제본 메모도 같다 |
-| M3 덧붙임 (`diff --map` 이 가져온 덱 메모까지) | 이번 판에 넣지 않음 — HISTORY §5 |
-| M4 같은 자리 여러 장 가져옴 순서 | 1.5 |
-| Cowork `260927_회신_Cowork→코드_교과서plan_결과_v1` 3-1 번호 | 0.3 — `--skip`·`--only` 전 전체 목록 번호 |
-| 3-2 못 정함 3권 | 분책 2권(첫 장 11 추정)은 첫 장 규칙으로, 쪽 머리 없는 2권(MRI Essentials·심장 혈관)은 30쪽 묶음 — 장으로 나누려면 사용자 목록 |
-| 3-3 확인할 것이 많은 책 | 대부분 "장 시작 추정" — 사용자 결정으로 경계는 겹침이 받는다 |
-| 3-4 예산 안에서 죽음 | 하위 프로세스(메모리가 책마다 풀림). 원인이 셸 시간이면 이것으로는 안 풀린다 — 다시 나오면 알려 달라 |
-| 3-5 두경부 | 보류(사용자) |
+| 발표 `260927_도구회신_첫실전적용_v1` R1 (보내는 쪽 sha 자리) | 전달 규약 v3 §4 — `{같은 줄기}_보냄기록.md` 한 줄(이름·바이트·sha256 앞 16자) |
+| R2 (`**` 가 노트에) | handoff 1.6 |
+| 발표 `260927_도구회신_Cowork실전시험_v1` K1 (sha 비결정) | handoff 1.6 — zip 정규화 + 내용 해시(기계가 다르면 압축 결과가 다를 수 있어 내용 해시를 함께) |
+| K2 (동기화 폴더에 바로 쓰기 실패) | handoff 1.6 |
+| K3 (`/tmp/rct`) | README·TEXTBOOK·전달 규약 v3 — Cowork 는 `~/rct` |
+| K4 (validate 건너뜀을 통과로) | handoff 1.6 |
+| K5 (`→` 폴더 연결 거부) | 폴더 이름 `to…` 로 바꿈(09-27, 사용자 결정 가). 이 이름으로 연결되는지는 다음 Cowork 작업에서 확인 |
+| 발표 `260927_도구회신_병합시험_v1` Y1 | handoff 1.6 |
+| 미리보기 `—` | handoff 1.6 |
+| K6 이름표 폭 | deck 16.26 |
+| Cowork `260927_회신_Cowork→코드_교과서plan_v2_결과_v1` 3-1 예산 | textbook 0.4 |
+| 3-2 0바이트 거짓 완료 | textbook 0.4 — 원인은 하위 프로세스가 md 를 먼저 열어 비운 채 계산한 것(Killed 면 0바이트가 남는다) |
+| 3-3 메모리 2.6 GB | 고치지 않음 — 책마다 하위 프로세스로 한 권씩만. 더 큰 책에서 죽으면 알려 달라 |
 
 ## 3. 받을 파일
 
-zip 두 개: `v2.24_GitHub.zip`(GitHub 에 전부), `v2.24_코드전용.zip`(코드 프로젝트 파일을 전부 지우고 5개).
+zip 두 개: `v2.25_GitHub.zip`(GitHub 에 전부), `v2.25_코드전용.zip`(코드 프로젝트 파일을 전부 지우고 5개).
 
 <!-- sets:begin — release.py 가 만든다. 손으로 고치지 않는다 -->
 ### 저자 (7)
@@ -44,8 +48,8 @@ zip 두 개: `v2.24_GitHub.zip`(GitHub 에 전부), `v2.24_코드전용.zip`(코
 | `CLAIM_GRAPH.md` | v15.8.1 | `ca0bd5652f32` | — |
 | `verify_toolkit.py` | v1.3.4 | `e703af6d5418` | — |
 | `test_verify_toolkit.py` | v1.3.4 | `aba65de39d87` | — |
-| `TOOLS_MANIFEST.md` | v44 | `e819a1d86d52` | ○ |
-| `RELEASE.md` | v2.24 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v45 | `8495c7f6da1d` | ○ |
+| `RELEASE.md` | v2.25 | — | 이 문서 |
 
 ### 발표 (11)
 | 파일 | 판 | 해시 | 변경 |
@@ -53,14 +57,14 @@ zip 두 개: `v2.24_GitHub.zip`(GitHub 에 전부), `v2.24_코드전용.zip`(코
 | `claim_graph.py` | v15.8.1 | `dc3ac0780b61` | — |
 | `test_claim_graph.py` | v15.8.1 | `bcfe1c1e42d6` | — |
 | `CLAIM_GRAPH.md` | v15.8.1 | `ca0bd5652f32` | — |
-| `deck_toolkit.py` | v16.25 | `85cbd8af803d` | — |
-| `test_toolkit.py` | v16.25 | `51cdbea4be1e` | — |
-| `DECK_SPEC.md` | v16.25 | `f8f57f8d85df` | — |
-| `handoff.py` | v1.5 | `724c5adca67b` | ○ |
-| `test_handoff.py` | v1.5 | `b56c09230166` | ○ |
-| `HANDOFF_FORMAT.md` | v1.5 | `b3781af6adc7` | ○ |
-| `TOOLS_MANIFEST.md` | v44 | `e819a1d86d52` | ○ |
-| `RELEASE.md` | v2.24 | — | 이 문서 |
+| `deck_toolkit.py` | v16.26 | `cab6d76ae0d8` | ○ |
+| `test_toolkit.py` | v16.26 | `b9405ff4bfd8` | ○ |
+| `DECK_SPEC.md` | v16.26 | `ac64f8ec2607` | ○ |
+| `handoff.py` | v1.6 | `267652b14b3e` | ○ |
+| `test_handoff.py` | v1.6 | `2b94fe5cae1f` | ○ |
+| `HANDOFF_FORMAT.md` | v1.6 | `1e05b05950d4` | ○ |
+| `TOOLS_MANIFEST.md` | v45 | `8495c7f6da1d` | ○ |
+| `RELEASE.md` | v2.25 | — | 이 문서 |
 
 ### 리뷰어 (6)
 | 파일 | 판 | 해시 | 변경 |
@@ -69,17 +73,17 @@ zip 두 개: `v2.24_GitHub.zip`(GitHub 에 전부), `v2.24_코드전용.zip`(코
 | `test_claim_graph.py` | v15.8.1 | `bcfe1c1e42d6` | — |
 | `CLAIM_GRAPH.md` | v15.8.1 | `ca0bd5652f32` | — |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v44 | `e819a1d86d52` | ○ |
-| `RELEASE.md` | v2.24 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v45 | `8495c7f6da1d` | ○ |
+| `RELEASE.md` | v2.25 | — | 이 문서 |
 
 ### 교과서 (5)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `textbook.py` | v0.3 | `abe606ebc772` | ○ |
-| `test_textbook.py` | v0.3 | `f4a634b3cef0` | ○ |
-| `TEXTBOOK.md` | v0.3 | `feb568e6edc9` | ○ |
-| `TOOLS_MANIFEST.md` | v44 | `e819a1d86d52` | ○ |
-| `RELEASE.md` | v2.24 | — | 이 문서 |
+| `textbook.py` | v0.4 | `6372db295c4c` | ○ |
+| `test_textbook.py` | v0.4 | `94a34fd8445f` | ○ |
+| `TEXTBOOK.md` | v0.4 | `7f92ff9511f3` | ○ |
+| `TOOLS_MANIFEST.md` | v45 | `8495c7f6da1d` | ○ |
+| `RELEASE.md` | v2.25 | — | 이 문서 |
 
 ### 코드 (22)
 | 파일 | 판 | 해시 | 변경 |
@@ -87,36 +91,39 @@ zip 두 개: `v2.24_GitHub.zip`(GitHub 에 전부), `v2.24_코드전용.zip`(코
 | `claim_graph.py` | v15.8.1 | `dc3ac0780b61` | — |
 | `test_claim_graph.py` | v15.8.1 | `bcfe1c1e42d6` | — |
 | `CLAIM_GRAPH.md` | v15.8.1 | `ca0bd5652f32` | — |
-| `deck_toolkit.py` | v16.25 | `85cbd8af803d` | — |
-| `test_toolkit.py` | v16.25 | `51cdbea4be1e` | — |
-| `DECK_SPEC.md` | v16.25 | `f8f57f8d85df` | — |
+| `deck_toolkit.py` | v16.26 | `cab6d76ae0d8` | ○ |
+| `test_toolkit.py` | v16.26 | `b9405ff4bfd8` | ○ |
+| `DECK_SPEC.md` | v16.26 | `ac64f8ec2607` | ○ |
 | `verify_toolkit.py` | v1.3.4 | `e703af6d5418` | — |
 | `test_verify_toolkit.py` | v1.3.4 | `aba65de39d87` | — |
-| `handoff.py` | v1.5 | `724c5adca67b` | ○ |
-| `test_handoff.py` | v1.5 | `b56c09230166` | ○ |
-| `HANDOFF_FORMAT.md` | v1.5 | `b3781af6adc7` | ○ |
-| `textbook.py` | v0.3 | `abe606ebc772` | ○ |
-| `test_textbook.py` | v0.3 | `f4a634b3cef0` | ○ |
-| `TEXTBOOK.md` | v0.3 | `feb568e6edc9` | ○ |
+| `handoff.py` | v1.6 | `267652b14b3e` | ○ |
+| `test_handoff.py` | v1.6 | `2b94fe5cae1f` | ○ |
+| `HANDOFF_FORMAT.md` | v1.6 | `1e05b05950d4` | ○ |
+| `textbook.py` | v0.4 | `6372db295c4c` | ○ |
+| `test_textbook.py` | v0.4 | `94a34fd8445f` | ○ |
+| `TEXTBOOK.md` | v0.4 | `7f92ff9511f3` | ○ |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v44 | `e819a1d86d52` | ○ |
-| `CODE_PROJECT_README.md` | v5 | `369b99ea8f0f` | — |
-| `HISTORY.md` | — | `236dc9b5f5cb` | ○ |
+| `TOOLS_MANIFEST.md` | v45 | `8495c7f6da1d` | ○ |
+| `CODE_PROJECT_README.md` | v5 | `6db694b44ea6` | ○ |
+| `HISTORY.md` | — | `e9a32b3e8fbe` | ○ |
 | `release.py` | — | `d6f02167dda3` | — |
-| `GITHUB_README.md` | — | `de9f905c7f6c` | — |
-| `PRIVATE_TERMS.txt` | — | `4285e1f439fb` | — |
-| `RELEASE.md` | v2.24 | — | 이 문서 |
+| `GITHUB_README.md` | — | `a338fce401db` | ○ |
+| `PRIVATE_TERMS.txt` | — | `d2562278023a` | ○ |
+| `RELEASE.md` | v2.25 | — | 이 문서 |
 <!-- sets:end -->
 
 ## 4. 각 프로젝트 대화창이 첫 세션에서 할 일
 
-1. 발표: selfcheck(handoff 1.5) 뒤 **작은 병합 시험**(도구회신 §3) — 기준 덱 사본 + 다른 덱 문제 몇 장 그대로 가져옴·`레이아웃 = 화면 N`·`메모 복사`·`앞에 복제`, 머리 `범위:`. 보고서의 "가져옴" 줄(크기 변화)로 넘침 점검 대상을 고른다.
-2. 교과서(Cowork): plan 을 **새 이름**(`--name …교과서plan_v2`)으로 다시 — 결과는 `→코드`. 두경부는 `--skip 두경부`(번호는 그대로 08).
-3. 저자·리뷰어: 도구 변경 없음. 세션 시작 selfcheck 만.
+0. **모든 프로젝트 지침**: `→` 를 `to` 로(폴더 `to코드`·`to발표`·`to영상의학`·`to저자`·`to리뷰어`, id 그대로) — 맨 위 `260927_통보_코드to전체_Drive전달규약_v3`. Cowork 는 도구를 `~/rct` 로.
+1. 발표: selfcheck(handoff 1.6·deck 16.26). 이름표는 `widen-labels --pattern "\(R\d [^)]*\)" --dry-run` 으로 먼저 보고 적용, PowerPoint·Drive 미리보기 확인은 사용자. 다음 적용 회신부터 보고서의 내용 해시도 적는다.
+2. 영상의학: 넘김을 올리면 `…_보냄기록.md` 한 줄(전달 규약 v3 §4). 참고에 `**` 를 쓰지 않아도 된다(지워진다).
+3. 교과서(Cowork): 사용자가 장 표 확인용 md(`교과서 분할/260927_장표확인_v1.md`)로 장 수·제목을 확인한 뒤 `TEXTBOOK.md` §3 의 split. 제목 고침은 plan md 의 표 줄에. 그 전에는 돌리지 않는다.
+4. 저자·리뷰어: 폴더 이름만.
 
 ## 5. 검증하지 않은 것
 
-- handoff 1.5 는 fixture 덱(같은 템플릿 두 벌)으로만 시험했다. 테마·마스터가 다른 실제 두 덱 사이의 가져옴, 목적지 레이아웃 크기가 원천보다 커져 넘치는 경우, 그림이 많은 문제 슬라이드는 발표 병합 시험에서 처음 본다.
-- `conform_title` 로 제목을 맞추는 부분은 fixture 에서 제목 규격이 잡히지 않아 거의 돌지 않았다.
-- textbook 0.3 의 첫 장 규칙은 문자열 시험뿐 — 근골격영상의학 2 가 실제로 11장부터인지는 확인하지 않았다(추정).
-- 하위 프로세스가 Cowork VM 의 `Killed` 를 막는지는 모른다(원인 미상).
+- split·page·search 는 fixture PDF 와 이 컨테이너의 tesseract "그림 + OCR 글자층" PDF 로만 돌렸다. 실제 스캔 책의 이미지 방식(JBIG2 등)을 pypdf 가 풀지 못하면 page 가 실패한다 — 첫 실행에서 드러난다.
+- 30쪽 나눔이 대화창이 한 번에 읽기에 알맞은지는 어림이다.
+- Drive 검색이 `교과서 분할` 의 md 를 찾는지(대화창 낱말 찾기)는 첫 분할 뒤 확인한다.
+- handoff 의 sha 고정은 같은 기계에서만 보장된다(zlib 판이 다르면 압축 결과가 다를 수 있다) — 그래서 내용 해시를 함께 쓴다.
+- `→` 를 바꾼 폴더 이름으로 Cowork 연결이 되는지 모른다.

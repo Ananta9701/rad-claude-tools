@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.25'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.26'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -1318,6 +1318,50 @@ class Deck:
         x, a, b = self._find_para(slide_no, key, shape)
         open(self._slide(slide_no), 'w', encoding='utf8').write(x[:b] + self.runs_xml(runs, **kw) + x[b:])
         return True
+
+    def widen_label(self, slide_no, name=None, pattern=None, min_width_in=2.0, dry_run=False):
+        """v16.26 (발표 K6): 채우기·테두리 없는 글상자(자리 표시자·그룹 안 제외)의 폭을 min_width_in 인치까지 넓힌다.
+        wrap="none"·spAutoFit 을 따르지 않는 보기(Google Slides·Drive 미리보기)에서 풀이자 이름표가 두 줄로 꺾여 옆 글을 가린 일.
+        정렬 쪽 모서리를 고정한다(왼쪽 정렬 = 왼쪽 끝, 오른쪽 = 오른쪽 끝, 가운데 = 가운데). 글·크기·색은 그대로.
+        슬라이드 밖으로 나가게 되면 바꾸지 않는다. name(도형 이름) 또는 pattern(글 전체가 맞는 정규식) 중 하나는 준다.
+        반환: [(이름, 글, 전 폭 인치|None, 새 폭 인치|None, '바꿈'|'그대로…'|'건너뜀: …')]"""
+        if name is None and pattern is None:
+            raise ValueError('widen_label: name 또는 pattern 을 준다')
+        p = self._slide(slide_no); x = open(p, encoding='utf8').read()
+        W, _ = self.slide_size(); need = int(round(min_width_in * EMU_IN))
+        grp = [(m.start(), m.end()) for m in re.finditer(r'<p:grpSp>.*?</p:grpSp>', x, re.S)]
+        out, edits = [], []
+        for m in re.finditer(r'<p:sp>(?:(?!<p:sp>).)*?</p:sp>', x, re.S):
+            seg = m.group(0)
+            if '<p:ph' in seg or any(a <= m.start() < b for a, b in grp):
+                continue
+            nm = re.search(r'<p:cNvPr\b[^>]*\bname="([^"]*)"', seg); nm = html.unescape(nm.group(1)) if nm else ''
+            txt = html.unescape(''.join(_AT.findall(seg))).strip()
+            if (name is not None and nm != name) or (pattern is not None and not re.fullmatch(pattern, txt)):
+                continue
+            sp = (re.search(r'<p:spPr\b.*?</p:spPr>|<p:spPr\s*/>', seg, re.S) or [''])[0]
+            if re.search(r'<a:(?:solidFill|gradFill|pattFill|blipFill)\b', re.sub(r'<a:ln\b.*?</a:ln>', '', sp, flags=re.S)):
+                out.append((nm, txt, None, None, '건너뜀: 채우기 있음')); continue
+            ln = re.search(r'<a:ln\b.*?</a:ln>', sp, re.S)
+            if ln and '<a:noFill/>' not in ln.group(0) and re.search(r'<a:(?:solidFill|gradFill|pattFill)\b', ln.group(0)):
+                out.append((nm, txt, None, None, '건너뜀: 테두리 있음')); continue
+            xf = re.search(r'<a:off x="(-?\d+)" y="(-?\d+)"\s*/>\s*<a:ext cx="(\d+)" cy="(\d+)"\s*/>', seg)
+            if not xf:
+                out.append((nm, txt, None, None, '건너뜀: 위치 없음')); continue
+            x0, cx = int(xf.group(1)), int(xf.group(3))
+            if cx >= need:
+                out.append((nm, txt, cx / EMU_IN, cx / EMU_IN, '그대로(이미 넓음)')); continue
+            al = (re.search(r'<a:pPr\b[^>]*\balgn="(\w+)"', seg) or [None, 'l'])[1]
+            nx = x0 + cx - need if al == 'r' else (x0 + (cx - need) // 2 if al == 'ctr' else x0)
+            if nx < 0 or nx + need > W:
+                out.append((nm, txt, cx / EMU_IN, None, '건너뜀: 슬라이드 밖으로 나감')); continue
+            new = seg[:xf.start()] + '<a:off x="%d" y="%s"/><a:ext cx="%d" cy="%s"/>' % (nx, xf.group(2), need, xf.group(4)) + seg[xf.end():]
+            edits.append((m.start(), m.end(), new)); out.append((nm, txt, cx / EMU_IN, need / EMU_IN, '바꿈'))
+        if edits and not dry_run:
+            for a, b, sg in reversed(edits):
+                x = x[:a] + sg + x[b:]
+            open(p, 'w', encoding='utf8').write(x)
+        return out
 
     def delete_shape(self, slide_no, name, must_contain=None):
         """v16.18 (발표 C1): 이름이 정확히 name 인 도형(sp·pic·grpSp·graphicFrame·cxnSp) **하나**를 지운다. 같은 이름이 둘 이상이거나
@@ -4756,6 +4800,9 @@ def main():
     po.add_argument('--font', default=DEFAULT_FONT, choices=list(FONT_PROFILES))
     po.add_argument('--audience', choices=('internal', 'external'), default=None, help='내부 발표는 환자 정보 검사 생략, 외부는 [!] (v16.9)')
     ex = sub.add_parser('handout'); ex.add_argument('pptx'); ex.add_argument('-o', required=True)
+    wl = sub.add_parser('widen-labels', help='채우기·테두리 없는 이름표 글상자의 폭을 넓힌다(정렬 쪽 모서리 고정, v16.26)')
+    wl.add_argument('pptx'); wl.add_argument('-o', required=True); wl.add_argument('--pattern', required=True, help='글 전체가 맞을 정규식, 예: "\\(R\\d [^)]*\\)"')
+    wl.add_argument('--min-width', type=float, default=2.0); wl.add_argument('--dry-run', action='store_true')
     pg = sub.add_parser('purge', help='순서 밖 슬라이드·노트·고아 미디어 제거 후 저장 (v16.6.1)'); pg.add_argument('pptx'); pg.add_argument('-o', required=True)
     ti = sub.add_parser('titles', help='제목 띠 넘침 점검, --like 로 규격을 배워 --screens 를 맞춘다 (v16.9)')
     ti.add_argument('pptx')
@@ -4888,6 +4935,17 @@ def main():
         validate(args.o, args.pptx)
     elif args.cmd == 'handout':
         print(export_notes(Deck.open(args.pptx), args.o))
+    elif args.cmd == 'widen-labels':
+        dk = Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]; n_ch = n_sk = 0
+        for pos, sn in enumerate(order, 1):
+            for nm, txt, a, b, what in dk.widen_label(sn, pattern=args.pattern, min_width_in=args.min_width, dry_run=args.dry_run):
+                if what == '바꿈':
+                    n_ch += 1
+                elif what.startswith('건너뜀'):
+                    n_sk += 1; print('[참고] 화면 %d "%s" %s — %s' % (pos, nm, txt[:30], what))
+        if not args.dry_run:
+            dk.save(args.o)
+        print('이름표 넓힘 %d · 건너뜀 %d%s' % (n_ch, n_sk, ' (dry-run — 저장 안 함)' if args.dry_run else ' → %s' % args.o))
     elif args.cmd == 'purge':
         dk = Deck.open(args.pptx); r = dk.purge_orphans(); dk.save(args.o)
         print('제거: 슬라이드 %d · 노트 %d · 미디어 %d → %s / verify: %s' % (r['slides'], r['notes'], r['media'], args.o, '통과' if validate(args.o) else '실패'))

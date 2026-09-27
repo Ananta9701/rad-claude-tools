@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import textbook as TB          # noqa: E402
 
-EXPECT_VERSION = '0.3'
+EXPECT_VERSION = '0.4'
 TMP = tempfile.mkdtemp(prefix='ttb_')
 
 
@@ -303,6 +303,7 @@ def t_offsets_and_titles():
     assert TB._offsets(mk([None, 200, 201, 202, 203]), 0, 4) is None         # 차이 −199
     assert TB._clean_title('I 흉부 병변의 위치 결정') == '흉부 병변의 위치 결정'
     assert TB._clean_title('| 무기폐 ·”:-') == '무기폐' and TB._clean_title('식도') == '식도'
+    assert TB._clean_title('흉부결핵 I') == '흉부결핵' and TB._clean_title('CT 물리 I') == 'CT 물리' and TB._clean_title('Part I') == 'Part'
 
 
 def t_back_matter_and_chunks():
@@ -331,6 +332,107 @@ def t_plan_child_killed():
     assert 'error=yes' in b and 'Killed' in b, b
     s = open(os.path.join(out, 'k_요약.md'), encoding='utf8').read()
     assert '| 01 | a.pdf | 쪽 머리 | 2 |' in s and '| 02 | zz_kill.pdf | 오류 |' in s, s
+
+
+# ── v0.4 (3단계) ───────────────────────────────────────────────────────
+def t_short_name():
+    assert TB.short_name('복부영상의학(4판)(양장본 HardCover) (대한복부영상의학회)_R+_OCR+.pdf') == '복부영상의학(4판)'
+    assert TB.short_name('흉부영상진단 X선(3판)(양장본 HardCover) (대한흉부영상의학회)_R+_OCR+ (1).pdf') == '흉부영상진단 X선(3판)'
+    assert TB.short_name('Practical+Textbook+of+Cardiac+CT+and+MRI.pdf') == 'Practical Textbook of Cardiac CT and MRI'
+    assert TB.short_name('심장 혈관.pdf') == '심장 혈관' and TB.short_name('A→B & C.pdf') == 'A_B _ C'
+
+
+def t_plan_resumes_empty_md():
+    d = os.path.join(TMP, 'z0'); os.makedirs(d); _heads_book(os.path.join(d, 'a.pdf'))
+    out = os.path.join(TMP, 'z0_out'); os.makedirs(out)
+    open(os.path.join(out, 'z_01.md'), 'w').close()                                       # 0바이트 — 거짓 완료였던 것
+    done, _ = TB.plan(d, out, 'z', stream=io.StringIO())
+    assert done == 1 and TB._md_ok(os.path.join(out, 'z_01.md'), TB.PLAN_HEAD)
+    assert '남은 책 0권' in open(os.path.join(out, 'z_요약.md'), encoding='utf8').read()
+
+
+def _split_setup(tag):
+    d = os.path.join(TMP, tag); os.makedirs(d); _heads_book(os.path.join(d, 'h book.pdf'))
+    pdir = os.path.join(TMP, tag + '_plan'); TB.plan(d, pdir, 'pl', stream=io.StringIO())
+    return d, pdir
+
+
+def t_split_search_and_printed_map():
+    d, pdir = _split_setup('sp')
+    out = os.path.join(TMP, 'sp_out')
+    done, left = TB.split(d, pdir, 'pl', out, stream=io.StringIO())
+    assert done == 1 and left == []
+    bd = os.path.join(out, '01_h book')
+    assert sorted(os.listdir(bd)) == ['00_앞붙이.md', '01_Liver.md', '02_Kidney.md', '99_뒤붙이.md', 'INDEX.md'], os.listdir(bd)
+    c1 = open(os.path.join(bd, '01_Liver.md'), encoding='utf8').read()
+    assert '[p.— · PDF 1] (겹침 — 앞)' in c1 and '[p.1 · PDF 3]' in c1 and '[p.5 · PDF 7]' in c1 and '[p.7 · PDF 9] (겹침 — 뒤)' in c1, c1[:600]
+    assert 'Lorem ipsum' in c1
+    ix = open(os.path.join(bd, 'INDEX.md'), encoding='utf8').read()
+    assert '| `01_Liver.md` | 1 | Liver | 1–5 | 3–7 | 5 |' in ix, ix
+    assert TB.printed_to_pdf(os.path.join(bd, 'INDEX.md'), 4) == 6 and TB.printed_to_pdf(os.path.join(bd, 'INDEX.md'), 99) is None
+    top = open(os.path.join(out, 'INDEX.md'), encoding='utf8').read()
+    assert '| 01 | h book | `01_h book/INDEX.md` | 4 | 13 |' in top and '남은 책 0권' in top, top
+    assert TB.split(d, pdir, 'pl', out, stream=io.StringIO())[0] == 0                       # 끝난 책은 건너뜀
+    hits = TB.search(out, 'Loremipsum radiology', stream=io.StringIO())                   # 띄어쓰기 무시
+    pdfs = [h[2] for h in hits]
+    assert len(pdfs) == len(set(pdfs)) and len(hits) == 11, hits                            # 겹침 쪽은 한 번만(글 있는 11쪽)
+    assert [h[1] for h in hits if h[2] == '[p.6 · PDF 8]'] == ['02_Kidney.md'], hits          # 겹침 쪽은 제 장 파일로
+    assert sorted({h[1] for h in TB.search(out, 'Chapter 2 Kidney', stream=io.StringIO())}) == ['00_앞붙이.md', '02_Kidney.md']   # 차례 쪽도 찾힌다
+
+
+def t_split_parts_long_chapter():
+    rows = [('앞', '앞붙이', 1, 2, None), (1, 'Long chapter', 3, 70, 2), ('뒤', '뒤붙이', 71, 75, None)]
+    u = TB.split_units(rows, 75, part=30, overlap=2)
+    assert [x[0] for x in u] == ['00_앞붙이.md', '01_Long_chapter_1.md', '01_Long_chapter_2.md', '01_Long_chapter_3.md', '99_뒤붙이.md'], u
+    assert [(x[3], x[4], x[5], x[6]) for x in u[1:4]] == [(3, 32, 1, 34), (33, 62, 31, 64), (63, 70, 61, 72)], u
+
+
+def t_page_images():
+    from PIL import Image, ImageDraw
+    d = os.path.join(TMP, 'img'); os.makedirs(d)
+    im = Image.new('RGB', (300, 400), 'white'); ImageDraw.Draw(im).rectangle([50, 50, 250, 350], outline='black', width=5)
+    im.save(os.path.join(d, 'img book.pdf'), 'PDF'); _heads_book(os.path.join(d, 'other.pdf'))
+    out = os.path.join(TMP, 'img_out')
+    got = TB.page_images(d, 'img book', out, pdf_page=1, stream=io.StringIO())
+    assert len(got) == 1 and got[0].endswith('img_book_PDF1.png') and Image.open(got[0]).size == (300, 400), got
+    for bad in (dict(book='zzz', pdf_page=1), dict(book='img book', pdf_page=9)):
+        try:
+            TB.page_images(d, bad['book'], out, pdf_page=bad['pdf_page'], stream=io.StringIO()); assert False, bad
+        except SystemExit:
+            pass
+    buf = io.StringIO(); assert TB.page_images(d, 'other', out, pdf_page=1, stream=buf) == [] and '이미지가 없다' in buf.getvalue()
+
+
+def t_v04_opener_first_tail_warning_units():
+    # 여는 쪽 표지가 제목 일치보다 먼저 — 차례 쪽(p.4)이 장 제목을 담고 있어도 p.8 의 표지를 고른다
+    spec = {10: ({1},) + ((), ''), 12: ({1},) + ((), ''), 14: ({1},) + ((), ''), 20: ({2},) + ((), ''), 22: ({2},) + ((), '')}
+    marks = _marks(spec, 200)
+    marks[3]['lead'] = '가짜1가짜2차례'; marks[7]['opener'] = {1}; marks[189]['lead'] = '찾아보기'
+    chs, checks = TB.chapters_from_heads(marks)
+    assert (chs[0]['start'] + 1, chs[0]['why']) == (8, '여는 쪽 표지'), chs[0]
+    assert any('2장 끝' in c and '쪽 머리 없이' in c for c in checks), checks                 # 쪽 머리 없는 꼬리 167쪽
+    # split: 앞·뒤 나눔, 수상하게 긴 장의 뒤쪽은 '미확인'
+    rows = [('앞', '앞붙이', 1, 95, None)] + [(k, 'T%d' % k, 96 + (k - 1) * 20, 95 + k * 20, None) for k in range(1, 6)] + \
+           [(6, 'Long', 196, 400, None), ('뒤', '뒤붙이', 401, 440, None)]
+    u = TB.split_units(rows, 440)
+    names = [x[0] for x in u]
+    assert names[:4] == ['00_앞붙이_1.md', '00_앞붙이_2.md', '00_앞붙이_3.md', '00_앞붙이_4.md'] and '장 미확인일 수 있음' in u[0][2], u[:2]
+    assert '06_Long_1.md' in names and '06_미확인_p226-255.md' in names and not any(n.startswith('06_Long_2') for n in names), names
+    assert names[-2:] == ['99_뒤붙이_1.md', '99_뒤붙이_2.md'], names
+    assert TB._fill_titles([(1, 'Chapter 1', 5, 9, None), (2, 'Intro', 10, 12, None)],
+                           [(0, 'Chapter 1', 5), (1, '1 Imaging Contrast Agents', 5), (0, 'Chapter 2', 10)])[0][1] == '1 Imaging Contrast Agents'
+
+
+def t_v04_split_page_labels():
+    d = os.path.join(TMP, 'lab'); os.makedirs(d)
+    pages = [['Cover']] + [['Chapter %d' % (i // 6 + 1), FILL] for i in range(30)]
+    ol = [('Cover', 0, None)] + [('Chapter %d Topic' % k, 1 + (k - 1) * 6, None) for k in range(1, 6)]
+    make_pdf(os.path.join(d, 'lab.pdf'), pages, ol, labels=[(0, 0, '/r', 1), (1, 30, '/D', 1)])
+    pdir = os.path.join(TMP, 'lab_plan'); TB.plan(d, pdir, 'pl', stream=io.StringIO())
+    out = os.path.join(TMP, 'lab_out'); TB.split(d, pdir, 'pl', out, stream=io.StringIO())
+    c1 = open(os.path.join(out, '01_lab', '01_Chapter_1_Topic.md'), encoding='utf8').read()
+    assert '[p.i · PDF 1] (겹침 — 앞)' in c1 and '[p.1 · PDF 2]' in c1 and '인쇄 1–6쪽' in c1, c1[:400]
+    assert '| `01_Chapter_1_Topic.md` | 1 | Chapter 1 Topic | 1–6 | 2–7 | 6 |' in open(os.path.join(out, '01_lab', 'INDEX.md'), encoding='utf8').read()
 
 
 if __name__ == '__main__':

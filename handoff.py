@@ -16,7 +16,7 @@ import os
 import re
 import sys
 
-__version__ = '1.5'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
+__version__ = '1.6'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
 
 KEYS = ('작업:', '대본:', '참고:', '본문:', '제목:', '복제본(문제) 대본:')
 PARA_OP = re.compile(r'^문단 (교체|추가|삭제)\b')
@@ -167,6 +167,8 @@ def parse(text):
                     prob('오류', op['ln'], '문단 교체는 L 줄 하나 — 여러 줄이면 교체 하나 + 문단 추가로')
             if cur['ops'] is None:
                 prob('오류', cur['ln'], '"작업:" 줄이 없다')
+            if any('**' in t for v in (cur['script'], cur['tips'], cur['dup_script']) if isinstance(v, list) for t in v):
+                prob('경고', cur['ln'], '대본·참고에 ** — 노트는 서식 없는 글이라 적용 때 ** 를 지운다(v1.6, 발표 R2)')
             if cur['script'] is None and not any(o[0] == '삭제' for o in (cur['ops'] or [])):
                 prob('오류', cur['ln'], '"대본:" 이 없다 — 대본을 바꾸지 않으면 "대본: 변경 없음"')
             if cur['kind'] == 'screen' and cur['tips'] is None and not any(o[0] == '삭제' for o in (cur['ops'] or [])):
@@ -197,7 +199,7 @@ def parse(text):
             close()
             zone = 'screen'
             cur = {'kind': 'screen' if m_scr else 'new', 'ln': i, 'no': int(m_scr.group(1)) if m_scr else None,
-                   'title_h': (m_scr.group(2) if m_scr else m_new.group(1)).strip(), 'ops': None, 'note': '',
+                   'title_h': (m_scr.group(2) if m_scr else re.sub(r'^\s*[—–-]\s*', '', m_new.group(1))).strip(), 'ops': None, 'note': '',
                    'script': None, 'tips': None, 'dup_script': None, 'title': None, 'body': None,
                    'para': [], 'boxes': None}
             if m_scr:
@@ -357,8 +359,12 @@ def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout):
         if doc['screens_n'] and n != doc['screens_n']:
             probs.append(('오류', 0, '기준 덱 화면 수 %d ≠ 넘김 머리 %d화면 — 기준 판이 다르다' % (n, doc['screens_n'])))
         if doc['base_sha'] and deck_path_sha(deck) and deck_path_sha(deck) != doc['base_sha']:
-            probs.append(('오류', 0, '기준 덱 sha256 %s ≠ 넘김 머리의 기준 sha256 %s — 기준 판과 파일이 다르다. 다른 판이거나, '
-                          '사용자가 고쳐 저장했는지 확인(열어 저장만 해도 바뀐다)' % (deck_path_sha(deck), doc['base_sha'])))
+            ch = content_hash(deck.src_path)
+            if ch == doc['base_sha']:   # v1.6 (발표 K1): 파일 sha 는 zip 안 시각·압축이 달라도 바뀐다 — 내용이 같으면 경고만
+                probs.append(('경고', 0, '기준 덱 파일 sha256 %s ≠ 넘김의 %s 이지만 **내용 해시가 같다** — 같은 판의 다른 사본(다시 압축됨)' % (deck_path_sha(deck), doc['base_sha'])))
+            else:
+                probs.append(('오류', 0, '기준 덱 sha256 %s(내용 해시 %s) ≠ 넘김 머리의 기준 sha256 %s — 기준 판과 파일이 다르다. 다른 판이거나, '
+                              '사용자가 고쳐 저장했는지 확인(열어 저장만 해도 바뀐다)' % (deck_path_sha(deck), ch, doc['base_sha'])))
         bad_titles = []
         for no, sc in sorted(doc['screens'].items()):
             if no < 1 or no > n:
@@ -445,6 +451,36 @@ def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout):
         w('기준 sha256 이 머리에 없다 — 노트만 다른 판(예: 한 판 앞 덱)은 화면 수·제목·문단 키로 구별되지 않는다. '
           '발표 적용 회신의 결과 sha256 을 다음 넘김 머리 `기준 sha256` 에 적으면 잡힌다')
     return len(errs), len(warns)
+
+
+def content_hash(path):
+    """v1.6 (발표 K1): pptx(zip) 안 파일 이름·내용만으로 낸 해시 앞 16자 — zip 항목 시각·압축 방식과 무관. 같은 판이면 같다."""
+    import zipfile
+    h = hashlib.sha256()
+    with zipfile.ZipFile(path) as z:
+        for n in sorted(z.namelist()):
+            h.update(n.encode('utf8') + b'\0' + hashlib.sha256(z.read(n)).digest())
+    return h.hexdigest()[:16]
+
+
+def _normalize_zip(src, dst):
+    """v1.6 (발표 K1): 항목 시각을 1980-01-01 로, 속성을 고정해 다시 쓴다 — 같은 입력·같은 기계면 같은 파일 sha."""
+    import zipfile
+    with zipfile.ZipFile(src) as zi, zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zo:
+        for it in zi.infolist():
+            zinfo = zipfile.ZipInfo(it.filename, date_time=(1980, 1, 1, 0, 0, 0))
+            zinfo.compress_type = zipfile.ZIP_DEFLATED
+            zinfo.external_attr = 0o644 << 16
+            zinfo.create_system = 3
+            zo.writestr(zinfo, zi.read(it.filename))
+
+
+VALIDATE_PY = '/mnt/skills/public/pptx/scripts/office/validate.py'   # deck_toolkit.validate 가 쓰는 것 — 없으면 건너뛴다
+
+
+def _plain_note(lines):
+    """v1.6 (발표 R2): 노트는 서식 없는 글 — 대본·참고의 ** 를 지운다."""
+    return [l.replace('**', '') for l in lines] if isinstance(lines, list) else lines
 
 
 def deck_path_sha(deck):
@@ -559,19 +595,27 @@ def _range_years(*names):
 
 
 def _dominant_num_style(deck, years):
-    """덱 안에서 이번 범위 번호가 가장 많이 쓰는 서식 (굵게, 빨강) — 결정 2(사용자 09-27)."""
+    """덱에서 이번 범위 번호가 가장 많이 쓰는 서식 (굵게, 빨강) — 결정 2(사용자 09-27).
+    v1.6 (발표 Y1): **출제줄(⇥ 로 시작하는 문단)** 만 센다 — 덱 전체를 세면 문제 화면 제목 'Q. … (25-11)' 의 보통 글자가 다수라
+    교육목표 출제줄의 빨강이 지워졌다. 출제줄 표본이 3개 미만이면 덱 전체로. 반환: (서식 또는 None, 표본 수, '출제줄'|'덱 전체')."""
     import html as _h
     from collections import Counter
-    c = Counter()
+    tab, alls = Counter(), Counter()
     for sn in deck.slide_numbers():
         x = open(deck._slide(sn), encoding='utf8').read()
-        for rm in re.finditer(r'<a:r>(.*?)</a:r>', x, re.S):
-            t = _h.unescape(''.join(re.findall(r'<a:t>([^<]*)</a:t>', rm.group(1))))
-            if any(m.group(2) in years for m in _NUM.finditer(t)):
-                rp = re.search(r'<a:rPr\b[^>]*/>|<a:rPr\b[^>]*>.*?</a:rPr>', rm.group(1), re.S)
-                rp = rp.group(0) if rp else ''
-                c[(bool(re.search(r'\bb="1"', rp)), bool(re.search(r'srgbClr val="(?:FF0000|C00000|E00000|FF3333|EE0000)"', rp)))] += 1
-    return c.most_common(1)[0][0] if c else None
+        for pm in re.finditer(r'<a:p>.*?</a:p>', x, re.S):
+            is_tab = _ptext(pm.group(0)).startswith('\t')
+            for rm in re.finditer(r'<a:r>(.*?)</a:r>', pm.group(0), re.S):
+                t = _h.unescape(''.join(re.findall(r'<a:t>([^<]*)</a:t>', rm.group(1))))
+                if any(m.group(2) in years for m in _NUM.finditer(t)):
+                    rp = re.search(r'<a:rPr\b[^>]*/>|<a:rPr\b[^>]*>.*?</a:rPr>', rm.group(1), re.S)
+                    rp = rp.group(0) if rp else ''
+                    k = (bool(re.search(r'\bb="1"', rp)), bool(re.search(r'srgbClr val="(?:FF0000|C00000|E00000|FF3333|EE0000)"', rp)))
+                    alls[k] += 1
+                    if is_tab:
+                        tab[k] += 1
+    c, scope = (tab, '출제줄') if sum(tab.values()) >= 3 else (alls, '덱 전체')
+    return (c.most_common(1)[0][0] if c else None), sum(c.values()), scope
 
 
 def _apply_year_rule(line, years, style):
@@ -694,7 +738,10 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
                 for j, line in enumerate(op['lines']):
                     plan.setdefault(sn, []).append(('추가', i, line, no, j))
     years, ysrc = _years_for(doc, base_path)
-    style = _dominant_num_style(D, years) if years else None
+    style, ns, scope = _dominant_num_style(D, years) if years else (None, 0, '')
+    if plan and years and (style is None or (scope == '덱 전체' and style == (False, False))):
+        W('번호 연도 규칙 — 범위 안 번호의 강조를 정하지 못했다(출제줄 표본 부족 · %s %d개 · 결과 %s) — 강조가 필요한 번호는 넘김에 {r:}·** 로 적는다'
+          % (scope, ns, '없음' if style is None else '보통'))
     if plan and not years:
         W('번호 연도 규칙 — 기준 덱 이름에서 범위 연도를 읽지 못해 쓰지 않았다(넘김 표기대로). 병합 넘김이면 머리에 "> 범위: 2023-2025"')
     elif plan and ysrc == 'head':
@@ -844,10 +891,10 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
             raw = src.notes(src_sn)
             sectioned = any(T._is_memo_sep(l) or T._is_cutoff_line(l) for l in raw)
             ss, st, sm = src.notes_sections(src_sn)
-            script = nw['script'] if isinstance(nw['script'], list) else (ss if sectioned else [])
+            script = _plain_note(nw['script']) if isinstance(nw['script'], list) else (ss if sectioned else [])
             if nw['script'] == 'KEEP' and not sectioned and any(l.strip() for l in raw):
                 W('가져옴 "%s" — 원천 노트에 대본 구역이 없어 대본을 비웠다(원천 노트는 %s)' % (label, '기존 메모로 옮겼다' if memo_copy else '가져오지 않았다 — 필요하면 "메모 복사"'))
-            tips = _tips_bullets(nw['tips']) if isinstance(nw['tips'], list) else (st if (nw['tips'] == 'KEEP' and sectioned) else None)
+            tips = _tips_bullets(_plain_note(nw['tips'])) if isinstance(nw['tips'], list) else (st if (nw['tips'] == 'KEEP' and sectioned) else None)
             if memo_copy:
                 if not sectioned:
                     D.protect_memo(s)
@@ -858,7 +905,7 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
                         W('가져옴 "%s" — 메모 복사: 원천 노트에 기존 메모 구역이 없다(원천이 이미 대본 노트) — 복사한 메모 없음' % label)
             D.set_notes(s, script, tips or None)
         else:
-            D.set_notes(s, nw['script'] if isinstance(nw['script'], list) else [], _tips_bullets(nw['tips']) if isinstance(nw['tips'], list) else None)
+            D.set_notes(s, _plain_note(nw['script']) if isinstance(nw['script'], list) else [], _tips_bullets(_plain_note(nw['tips'])) if isinstance(nw['tips'], list) else None)
         rep['new'].append((label, s)); last_new = s
         if imp:
             rep['imports'].append((label, src_label, s, '그대로' if as_is else '틀', memo_n, sizes))
@@ -869,7 +916,7 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
             k2 = D.strip_color(d2, 'FF0000')
             for box in nw['boxes'] or []:
                 _delete_box(D, d2, box)
-            D.set_notes(d2, nw['dup_script'] or [], None)
+            D.set_notes(d2, _plain_note(nw['dup_script'] or []), None)
             rep['dup_new'].append((label, d2, k2, len(nw['boxes'] or [])))
     if rep['new']:
         DONE('새 슬라이드 %d%s' % (len(rep['new']), (' (가져옴 %d)' % len(rep['imports'])) if rep['imports'] else ''))
@@ -885,7 +932,7 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
         k = D.strip_color(s, 'FF0000')
         for box in sc['boxes'] or []:
             _delete_box(D, s, box)
-        D.set_notes(s, sc['dup_script'] or [], None)
+        D.set_notes(s, _plain_note(sc['dup_script'] or []), None)
         rep['dup'].append((no, s, k, len(sc['boxes'] or [])))
     if rep['dup']:
         DONE('앞에 복제 %d' % len(rep['dup']))
@@ -918,8 +965,8 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
         if isinstance(sc['script'], list) and cur_s and not cur_t and not D.notes_sections(sn)[2] and \
                 not any(T._is_memo_sep(l) or T._is_cutoff_line(l) for l in D.notes(sn)):
             plain_notes.append(no)
-        script = sc['script'] if isinstance(sc['script'], list) else cur_s
-        tips = _tips_bullets(sc['tips']) if isinstance(sc['tips'], list) else (None if sc['tips'] == 'NONE' else (cur_t or None))
+        script = _plain_note(sc['script']) if isinstance(sc['script'], list) else cur_s
+        tips = _tips_bullets(_plain_note(sc['tips'])) if isinstance(sc['tips'], list) else (None if sc['tips'] == 'NONE' else (cur_t or None))
         D.set_notes(sn, script, tips); nn += 1
     if nn:
         DONE('노트 %d화면' % nn)
@@ -932,7 +979,10 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
             D.remove_slide(F[no - 1]); rep['deleted'].append(no)
     if rep['deleted']:
         D.purge_orphans(); DONE('삭제 %d' % len(rep['deleted']))
-    D.save(out_path)
+    # v1.6 (발표 K2): 동기화 폴더에서 zip 임시 파일 이름 바꾸기가 막혔다 — 임시 폴더에 만들고 마지막에 한 번 복사.
+    # (K1) zip 항목 시각을 고정해 같은 입력이면 같은 파일 sha
+    raw = os.path.join(wd, 'out_raw.pptx'); fixed = os.path.join(wd, 'out_fixed.pptx')
+    D.save(raw); _normalize_zip(raw, fixed); shutil.copyfile(fixed, out_path)
     # 보고: 매핑·메모 보존·검증
     R = T.Deck.open(out_path, os.path.join(wd, 'r'))
     ro = [s for s, _, _ in R.order() if s]
@@ -946,8 +996,8 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
             else:
                 memo_bad.append(no)
     rep.update({'mapping': mapping, 'memo_ok': memo_ok, 'memo_bad': memo_bad, 'screens': len(ro),
-                'valid': bool(T.validate(out_path, base_path)),
-                'sha': hashlib.sha256(open(out_path, 'rb').read()).hexdigest()[:16]})
+                'valid': (bool(T.validate(out_path, base_path)) if os.path.exists(VALIDATE_PY) else None),   # v1.6 (발표 K4): 없으면 '건너뜀'
+                'sha': hashlib.sha256(open(out_path, 'rb').read()).hexdigest()[:16], 'content': content_hash(out_path)})
     if workdir is None:   # v1.3 (발표 3-7): 임시 폴더(덱마다 수백 MB)를 지운다 — 대화창 디스크가 찼다
         shutil.rmtree(wd, ignore_errors=True)
     return rep
@@ -957,7 +1007,8 @@ def report(rep, stream=sys.stdout):
     w = lambda s='': print(s, file=stream)
     w('## 넘김 적용 보고 (handoff.py v%s)' % __version__); w()
     w('| 항목 | 값 |'); w('|---|---|')
-    w('| 결과 | %d화면 · validate %s · **sha256 앞 16자 `%s`** (적용 회신에 적는다) |' % (rep['screens'], '통과' if rep['valid'] else '**실패**', rep['sha']))
+    w('| 결과 | %d화면 · validate %s · **sha256 앞 16자 `%s`** · 내용 해시 `%s` (둘 다 적용 회신에 — 다음 넘김의 `기준 sha256` 은 어느 쪽이어도 된다) |' % (
+        rep['screens'], {True: '통과', False: '**실패**', None: '건너뜀(validate.py 없음 — 통과 아님)'}[rep['valid']], rep['sha'], rep.get('content', '—')))
     w('| 한 일 | %s |' % (' · '.join(rep['done']) or '없음'))
     w('| 원작자 메모 | 기준 화면 %d곳 그대로%s |' % (rep['memo_ok'], (' · **달라진 화면 %s**' % rep['memo_bad']) if rep['memo_bad'] else ''))
     if rep['dup']:
@@ -1085,7 +1136,7 @@ def main():
         if a.report:
             import io as _io
             buf = _io.StringIO(); report(rep, buf); open(a.report, 'w', encoding='utf8').write(buf.getvalue())
-        sys.exit(0 if rep['valid'] and not rep['memo_bad'] else 1)
+        sys.exit(0 if rep['valid'] is not False and not rep['memo_bad'] else 1)
     b = open(a.md, 'rb').read()
     doc = parse(b.decode('utf8'))
     D = None

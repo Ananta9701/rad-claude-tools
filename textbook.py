@@ -27,11 +27,11 @@ import time
 import unicodedata
 from collections import Counter
 
-__version__ = '0.3'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.4'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
 
 TOC_WORDS = re.compile(r'차\s*[례려레]|목\s*차|c\s*o\s*n\s*t\s*e\s*n\s*t\s*s', re.I)   # v0.2: OCR '차려'·'C O N T E N T S'
 NUM_LINE = re.compile(r'^\s*[-–—]?\s*(\d{1,4})\s*[-–—]?\s*$')
-BAD_NAME = re.compile(r'[&/?\\:*"<>|]')
+BAD_NAME = re.compile(r'[&/?\\:*"<>|→]')
 
 
 def load_pypdf():
@@ -380,6 +380,7 @@ def resolve_chapters(marks, lookahead=12):
 def _clean_title(t):
     """v0.3: 쪽 머리 제목 앞의 구분선 OCR 조각('I '·'| '·'l ')과 끝의 부스러기를 뗀다."""
     t = re.sub(r'^\s*[I|l1!\]]\s+', '', t or '')
+    t = re.sub(r'\s+[I|l]$', '', t.strip())          # v0.4: 끝의 구분선 조각('흉부결핵 I')
     return re.sub(r'[\s\W_]+$', '', t).strip()
 
 
@@ -401,15 +402,12 @@ def chapters_from_heads(marks):
         key = _title_key(title)[:4]
         lo = prev_last + 1 if prev_last >= 0 else max(0, ch['first'] - 8)
         start, why = None, ''
-        for i in range(lo, ch['first'] + 1):
-            if marks[i].get('list'):
-                continue                              # 차례·목록 쪽
-            if ch['num'] in marks[i]['opener']:
-                start, why = i, '여는 쪽 표지'
-                break
-            if key and len(key) >= 2 and key in _title_key(marks[i]['lead'])[:40] and not marks[i]['head']:
-                start, why = i, '여는 쪽 제목'
-                break
+        rng = [i for i in range(lo, ch['first'] + 1) if not marks[i].get('list')]   # 차례·목록 쪽 빼고
+        # v0.4: 여는 쪽 표지를 먼저 찾고, 없을 때만 장 제목 — 차례 쪽이 장 제목을 담고 있어 1장 시작이 차례로 잡힌 일(부인과영상)
+        start, why = next(((i, '여는 쪽 표지') for i in rng if ch['num'] in marks[i]['opener']), (None, ''))
+        if start is None:
+            start, why = next(((i, '여는 쪽 제목') for i in rng if key and len(key) >= 2 and not marks[i]['head']
+                               and key in _title_key(marks[i]['lead'])[:40]), (None, ''))
         if start is None:
             start, why = max(lo, ch['first'] - 1), '쪽 머리만'
             checks.append('%d장 시작 PDF p.%d 는 추정(첫 쪽 머리 p.%d 바로 앞) — 여는 쪽을 확인' % (ch['num'], start + 1, ch['first'] + 1))
@@ -426,6 +424,11 @@ def chapters_from_heads(marks):
             out[-1]['end'] = last
             if last < len(marks) - 1:
                 checks.append('마지막 장의 끝을 마지막 쪽 머리 p.%d 로 두었다(찾아보기·Index 쪽을 못 찾음) — 뒤 경계를 확인' % (last + 1))
+    for ch, c0 in zip(out, chs):
+        tail = ch['end'] - c0['last']
+        if tail > 60:   # v0.4: 쪽 머리 없는 꼬리가 길면 뒤 장들을 못 잡은 것 — 소아영상의학 12장 508쪽이 경고 없이 지나갔다
+            checks.append('%d장 끝 %d쪽이 쪽 머리 없이 이어진다(마지막 쪽 머리 p.%d, 장 끝 p.%d) — 뒤 장들을 못 잡았을 수 있다'
+                          % (ch['num'], tail, c0['last'] + 1, ch['end'] + 1))
     return out, checks
 
 
@@ -561,15 +564,27 @@ def plan_md(k, f, r, name):
     return '\n'.join(L) + '\n'
 
 
-def plan(folder, out, name, only=None, skip=(), recursive=False, level=None, budget=150, stream=sys.stdout):
+PLAN_HEAD = re.compile(r'<!-- plan: method=(.*?) chapters=(\d+) check=(\d+) pages=(\S+) seconds=(\S+) error=(\w+) -->')
+
+
+def _md_ok(fp, head):
+    """v0.4 (Cowork plan v2 3-2): 0바이트·첫 줄 형식이 깨진 md 는 '안 한 것' 으로 — 거짓 완료를 막는다."""
+    try:
+        return os.path.getsize(fp) > 0 and bool(head.match(open(fp, encoding='utf8').readline()))
+    except OSError:
+        return False
+
+
+def plan(folder, out, name, only=None, skip=(), recursive=False, level=None, budget=120, stream=sys.stdout):
+    t0 = time.time()      # v0.4 (Cowork plan v2 3-1): 목록·사전 점검 시간도 예산에 넣는다
     if BAD_NAME.search(name):
         raise SystemExit('[멈춤] --name 에 & / ? 같은 기호를 쓰지 않는다(전달 규약 §3): %s' % name)
     load_pypdf()
     sel = list_books(folder, only, skip, recursive, numbered=True)
     os.makedirs(out, exist_ok=True)
-    todo = [(k, b) for k, b in sel if not os.path.exists(os.path.join(out, '%s_%02d.md' % (name, k)))]
+    todo = [(k, b) for k, b in sel if not _md_ok(os.path.join(out, '%s_%02d.md' % (name, k)), PLAN_HEAD)]
     preflight(folder, [b for _, b in todo])
-    t0, rate, done, left = time.time(), 0.08, 0, []
+    rate, done, left = 0.08, 0, []
     for k, b in todo:
         path = os.path.join(folder, b)
         if done:
@@ -587,7 +602,7 @@ def plan(folder, out, name, only=None, skip=(), recursive=False, level=None, bud
         cp = subprocess.run([sys.executable, os.path.abspath(__file__), '_plan_one', path, fp, str(k), b, name] +
                             (['--level', str(level)] if level is not None else []),
                             capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
-        if cp.returncode != 0 or not os.path.exists(fp):
+        if cp.returncode != 0 or not _md_ok(fp, PLAN_HEAD):
             why = 'Killed(메모리 부족 추정)' if cp.returncode in (-9, 137) else 'rc=%d %s' % (
                 cp.returncode, ((cp.stderr or '').strip().splitlines() or [''])[-1][:160])
             open(fp, 'w', encoding='utf8').write(plan_md(k, b, {'error': '하위 프로세스 실패 — %s. 다시 하려면 이 파일을 지우고 같은 명령' % why,
@@ -600,11 +615,10 @@ def plan(folder, out, name, only=None, skip=(), recursive=False, level=None, bud
     rows = []
     for k, b in sel:
         fp = os.path.join(out, '%s_%02d.md' % (name, k))
-        if not os.path.exists(fp):
-            rows.append('| %02d | %s | (남음) | | | | |' % (k, _cell(b)))
+        if not _md_ok(fp, PLAN_HEAD):
+            rows.append('| %02d | %s | (남음%s) | | | | |' % (k, _cell(b), ' — 파일이 비었거나 깨짐, 다시 돌리면 다시 한다' if os.path.exists(fp) else ''))
             continue
-        m = re.match(r'<!-- plan: method=(.*?) chapters=(\d+) check=(\d+) pages=(\S+) seconds=(\S+) error=(\w+) -->',
-                     open(fp, encoding='utf8').readline())
+        m = PLAN_HEAD.match(open(fp, encoding='utf8').readline())
         if m:
             rows.append('| %02d | %s | %s | %s | %s | %s | %s |' % (k, _cell(b), '오류' if m.group(6) == 'yes' else m.group(1),
                                                                 m.group(2), m.group(3), m.group(4), m.group(5)))
@@ -619,13 +633,288 @@ def plan(folder, out, name, only=None, skip=(), recursive=False, level=None, bud
     return done, left
 
 
+# ───────────────────────── 3단계: split · page · search ─────────────────────────
+PART = 30          # 장 md 한 파일의 쪽 수 한도 — 대화창이 한 번에 읽을 만큼(어림)
+OVERLAP = 2        # 사용자 09-27: 장 파일마다 앞뒤 2쪽 겹침
+ROW = re.compile(r'^\| (\d\d|앞|뒤) \| (.+?) \| (\d+) \| (\d+) \| (\d+) \| (.*?) \| (.*?) \|$')
+INDEX_HEAD = re.compile(r'<!-- index: book=(.*?) files=(\d+) pages=(\d+) -->')
+
+
+def short_name(f):
+    """책 파일 이름 → 폴더 이름: 스캔 표지(_R+_OCR+), 양장본, 끝의 (1)·(편자·학회) 를 뗀다."""
+    b = os.path.splitext(os.path.basename(f))[0].split('_R+')[0]
+    b = re.sub(r'\(양장본 HardCover\)', '', b)
+    b = re.sub(r'\s*\(1\)\s*$', '', b)
+    b = re.sub(r'\s+\([^()]*\)\s*$', '', b)
+    b = re.sub(r'[&/?\\:*"<>|→]', '_', b).replace('+', ' ')
+    return re.sub(r'\s+', ' ', b).strip()
+
+
+def _safe(t, n=30):
+    t = re.sub(r'[&/?\\:*"<>|→\s]+', ' ', _clean_title(t or '')).strip().replace('–', '-')
+    return (t[:n].strip() or '장').replace(' ', '_')
+
+
+def read_plan_rows(fp):
+    """plan md 의 장 표 → [(구분, 제목, PDF 시작, PDF 끝, 인쇄 차이 or None)] — 구분: '앞'·'뒤'·장 번호(int)."""
+    rows = []
+    for l in open(fp, encoding='utf8'):
+        m = ROW.match(l.rstrip('\n'))
+        if not m:
+            continue
+        k, title, a, b = m.group(1), m.group(2).replace('\\|', '|'), int(m.group(3)), int(m.group(4))
+        pr = re.match(r'^(\d+)–(\d+)$', m.group(6).strip())
+        off = (a - int(pr.group(1))) if pr else None
+        rows.append((k if k in ('앞', '뒤') else int(k), title, a, b, off))
+    return rows
+
+
+def split_units(rows, n, part=PART, overlap=OVERLAP):
+    """장 표 → 쓸 파일들 [(파일 이름, 장, 제목, 핵심 쪽 lo, hi, 겹침 포함 lo2, hi2, 인쇄 차이)].
+    v0.4: 앞붙이·뒤붙이도 part 쪽씩 나눈다(뒤붙이 509쪽 한 파일이 될 뻔했다). 장 길이가 max(60, 중앙값×3)쪽을 넘으면 첫 part 만 그 장
+    이름, 나머지는 '미확인'(쪽 머리를 못 잡은 뒤 장들일 수 있다 — 사용자 결정 09-27: 이름 없이 30쪽 묶음)."""
+    lens = sorted(b - a + 1 for k, _, a, b, _ in rows if isinstance(k, int))
+    med = lens[len(lens) // 2] if lens else 0
+    out = []
+    for k, title, a, b, off in rows:
+        chunks = list(range(a, b + 1, part))
+        many = len(chunks) > 1
+        for j, lo in enumerate(chunks):
+            hi = min(b, lo + part - 1)
+            if k in ('앞', '뒤'):
+                base = '00_앞붙이' if k == '앞' else '99_뒤붙이'
+                t = ('앞붙이' if k == '앞' else '뒤붙이(찾아보기 포함)') + ((' %d/%d' % (j + 1, len(chunks))) if many else '') + \
+                    (' — 장 미확인일 수 있음' if b - a + 1 > 40 else '')
+                out.append(('%s%s.md' % (base, ('_%d' % (j + 1)) if many else ''), k, t, lo, hi, lo, hi, None))
+                continue
+            if j > 0 and b - a + 1 > max(60, 3 * med):
+                out.append(('%02d_미확인_p%d-%d.md' % (k, lo, hi), k, '(장 미확인 — %d장 뒤일 수 있음) PDF %d–%d' % (k, lo, hi),
+                            lo, hi, max(1, lo - overlap), min(n, hi + overlap), off))
+                continue
+            nm = '%02d_%s%s.md' % (k, _safe(title), ('_%d' % (j + 1)) if many else '')
+            out.append((nm, k, title, lo, hi, max(1, lo - overlap), min(n, hi + overlap), off))
+    return out
+
+
+def _marker(p, off, lo, hi, labels=None):
+    tag = ' (겹침 — 앞)' if p < lo else (' (겹침 — 뒤)' if p > hi else '')
+    pr = labels[p - 1] if labels else ((p - off) if off is not None and p - off >= 1 else '—')
+    return '[p.%s · PDF %d]%s' % (pr, p, tag)
+
+
+def _labels(reader):
+    try:
+        return reader.page_labels if '/PageLabels' in reader.trailer['/Root'].get_object() else None
+    except Exception:
+        return None
+
+
+def _fill_titles(rows, outline):
+    """v0.4: 제목이 'Chapter N' 뿐이면 같은 PDF 쪽에서 시작하는 더 긴 책갈피 제목으로(Gore — 이름은 한 단계 아래 책갈피에 있다)."""
+    out = []
+    for k, title, a, b, off in rows:
+        if isinstance(k, int) and re.match(r'^\s*chapter\s*\d+\s*$', title, re.I):
+            title = next((t for _, t, p in outline if p == a and len(t) > len(title) + 3), title)
+        out.append((k, title, a, b, off))
+    return out
+
+
+def split_book(pdf_path, plan_fp, book_dir, label, part=PART, overlap=OVERLAP):
+    """한 권 → 장 md 들 + INDEX.md(마지막에 — 이것이 끝 표시). 글자는 OCR 글자층 그대로."""
+    pypdf = load_pypdf()
+    reader = pypdf.PdfReader(pdf_path, strict=False)
+    n = len(reader.pages)
+    labels = _labels(reader)
+    units = split_units(_fill_titles(read_plan_rows(plan_fp), _outline(reader)), n, part, overlap)
+    if not units:
+        raise ValueError('장 표가 비었다: %s' % os.path.basename(plan_fp))
+    os.makedirs(book_dir, exist_ok=True)
+    cache = {}
+
+    def text(p):
+        if p not in cache:
+            cache.clear() if len(cache) > 2 * overlap + 2 else None
+            t = _page_text(reader.pages[p - 1])
+            cache[p] = '' if t.startswith('\x00') else t.strip()
+        return cache[p]
+    idx = []
+    for nm, k, title, lo, hi, lo2, hi2, off in units:
+        L = ['# %s — %s %s' % (label, ('%d장' % k) if isinstance(k, int) else k, title), '',
+             '> 원본 `%s` PDF %d–%d쪽%s. 글자는 OCR — 인용할 문구는 원본 쪽 그림으로 확인한다(`textbook.py page`). 겹침 쪽은 표지에 적었다.' % (
+                 os.path.basename(pdf_path), lo, hi, (' · 인쇄 %s–%s쪽' % (labels[lo - 1], labels[hi - 1])) if labels else
+                 ('' if off is None else ' · 인쇄 %d–%d쪽' % (lo - off, hi - off))), '']
+        for p in range(lo2, hi2 + 1):
+            L += [_marker(p, off, lo, hi, labels), '', text(p), '']
+        open(os.path.join(book_dir, nm), 'w', encoding='utf8').write('\n'.join(L))
+        pr = ('%s–%s' % (labels[lo - 1], labels[hi - 1])) if labels else (('%d–%d' % (lo - off, hi - off)) if off is not None else '—')
+        idx.append('| `%s` | %s | %s | %s | %d–%d | %d |' % (nm, k, _cell(title)[:50], pr, lo, hi, hi - lo + 1))
+    I = ['<!-- index: book=%s files=%d pages=%d -->' % (os.path.basename(pdf_path), len(units), n),
+         '# INDEX — %s' % label, '',
+         '> textbook.py v%s split · 원본 `%s`(%d쪽) · 장 표 `%s`. 장 파일마다 앞뒤 %d쪽 겹침, %d쪽 넘는 장은 나눔.' % (
+             __version__, os.path.basename(pdf_path), n, os.path.basename(plan_fp), overlap, part),
+         '> 쪽 표지 `[p.인쇄쪽 · PDF 쪽]`. 인쇄 쪽을 모르면 `p.—`. 그림은 `textbook.py page --book … --printed N`.', '',
+         '| 파일 | 장 | 제목 | 인쇄 쪽 | PDF 쪽 | 쪽 수 |', '|---|---|---|---|---|---|'] + idx
+    open(os.path.join(book_dir, 'INDEX.md'), 'w', encoding='utf8').write('\n'.join(I) + '\n')
+    return len(units)
+
+
+def split(folder, plan_dir, plan_name, out, only=None, skip=(), recursive=False, budget=120, stream=sys.stdout):
+    """plan 장 표(사용자가 장 수·제목을 확인한 것)로 책마다 `{out}/{번호}_{책}/` 에 장 md·INDEX, `{out}/INDEX.md` 에 책 목록.
+    책마다 하위 프로세스, --budget 이어하기(plan 과 같다). 끝난 책(INDEX.md 가 온전한 책)은 건너뛴다."""
+    t0 = time.time()
+    load_pypdf()
+    sel = list_books(folder, only, skip, recursive, numbered=True)
+    os.makedirs(out, exist_ok=True)
+    bdir = lambda k, b: os.path.join(out, '%02d_%s' % (k, short_name(b)))
+    todo, noplan = [], []
+    for k, b in sel:
+        pf = os.path.join(plan_dir, '%s_%02d.md' % (plan_name, k))
+        if not _md_ok(pf, PLAN_HEAD) or 'error=yes' in open(pf, encoding='utf8').readline():
+            noplan.append(b); continue
+        if not _md_ok(os.path.join(bdir(k, b), 'INDEX.md'), INDEX_HEAD):
+            todo.append((k, b, pf))
+    preflight(folder, [b for _, b, _ in todo])
+    done, left, rate = 0, [], 0.08
+    for k, b, pf in todo:
+        path = os.path.join(folder, b)
+        if done:
+            try:
+                est = len(load_pypdf().PdfReader(path, strict=False).pages) * rate
+            except Exception:
+                est = 0
+            if time.time() - t0 + est > budget:
+                left.append(b); continue
+        print('[%02d] %s' % (k, b), file=stream, flush=True)
+        t1 = time.time()
+        cp = subprocess.run([sys.executable, os.path.abspath(__file__), '_split_one', path, pf, bdir(k, b), short_name(b)],
+                            capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+        if cp.returncode != 0:
+            print('  [오류] %s' % ('Killed(메모리 부족 추정)' if cp.returncode in (-9, 137) else ((cp.stderr or '').strip().splitlines() or [''])[-1][:200]),
+                  file=stream)
+        else:
+            try:
+                rate = max(rate, (time.time() - t1) / float(len(load_pypdf().PdfReader(path, strict=False).pages)))
+            except Exception:
+                pass
+        done += 1
+    rows = []
+    for k, b in sel:
+        ip = os.path.join(bdir(k, b), 'INDEX.md')
+        if _md_ok(ip, INDEX_HEAD):
+            m = INDEX_HEAD.match(open(ip, encoding='utf8').readline())
+            rows.append('| %02d | %s | `%s/INDEX.md` | %s | %s |' % (k, short_name(b), os.path.basename(bdir(k, b)), m.group(2), m.group(3)))
+        else:
+            rows.append('| %02d | %s | (%s) | | |' % (k, short_name(b), '장 표 없음' if b in noplan else '남음'))
+    S = ['# 교과서 분할 — INDEX', '',
+         '> textbook.py v%s split. 책 → 그 책 폴더의 `INDEX.md` → 장 md 하나. 글자는 OCR 이다 — 인용은 원본 쪽 그림으로 확인.' % __version__,
+         '> 낱말 찾기: 대화창은 Drive 검색(이 폴더 안 `fullText contains`), Cowork 는 `textbook.py search`.', '',
+         '| # | 책 | 목차 | 파일 | 쪽 |', '|---|---|---|---|---|'] + rows
+    S += ['', '이번 실행 %d권 · 남은 책 %d권 · %.0f 초' % (done, sum(1 for r in rows if '(남음)' in r), time.time() - t0), '']
+    open(os.path.join(out, 'INDEX.md'), 'w', encoding='utf8').write('\n'.join(S))
+    print('\n'.join(S), file=stream)
+    return done, left
+
+
+def _book_pick(folder, book, recursive=False):
+    sel = [(k, b) for k, b in list_books(folder, recursive=recursive, numbered=True) if _nfc(book) in _nfc(b)]
+    if len(sel) != 1:
+        raise SystemExit('[멈춤] --book "%s" 에 맞는 책이 %d권 — 파일 이름의 더 긴 조각을 준다%s' % (
+            book, len(sel), (': ' + ', '.join(b for _, b in sel[:6])) if sel else ''))
+    return sel[0]
+
+
+def printed_to_pdf(index_md, printed):
+    """책 INDEX.md 의 (인쇄 쪽, PDF 쪽) 범위로 인쇄 쪽 → PDF 쪽. 못 찾으면 None."""
+    for l in open(index_md, encoding='utf8'):
+        m = re.match(r'^\| `[^`]+` \| [^|]+ \| .*? \| (\d+)–(\d+) \| (\d+)–(\d+) \|', l)
+        if m and int(m.group(1)) <= printed <= int(m.group(2)):
+            return int(m.group(3)) + printed - int(m.group(1))
+    return None
+
+
+def page_images(folder, book, out, pdf_page=None, printed=None, split_dir=None, recursive=False, stream=sys.stdout):
+    """쪽 그림 뽑기 — 그 쪽에 든 이미지(스캔본이면 쪽 전체 그림)를 PNG 로. 반환: 쓴 파일 목록."""
+    k, b = _book_pick(folder, book, recursive)
+    if pdf_page is None and printed is not None:
+        preflight(folder, [b])
+        labs = _labels(load_pypdf().PdfReader(os.path.join(folder, b), strict=False))
+        if labs and str(printed) in labs:
+            pdf_page = labs.index(str(printed)) + 1       # v0.4: 쪽 번호 표가 있는 책(전자책)은 그 표로
+    if pdf_page is None:
+        if printed is None or not split_dir:
+            raise SystemExit('[멈춤] --pdf N, 또는 --printed N 과 --split 분할폴더')
+        ip = os.path.join(split_dir, '%02d_%s' % (k, short_name(b)), 'INDEX.md')
+        if not os.path.exists(ip):
+            raise SystemExit('[멈춤] %s 가 없다 — 이 책을 먼저 split 한다' % ip)
+        pdf_page = printed_to_pdf(ip, printed)
+        if pdf_page is None:
+            raise SystemExit('[멈춤] 인쇄 %d쪽을 INDEX 에서 찾지 못했다(인쇄 쪽을 모르는 장일 수 있다) — --pdf 로 준다' % printed)
+    preflight(folder, [b])
+    reader = load_pypdf().PdfReader(os.path.join(folder, b), strict=False)
+    if not 1 <= pdf_page <= len(reader.pages):
+        raise SystemExit('[멈춤] PDF %d쪽 없음(1–%d)' % (pdf_page, len(reader.pages)))
+    os.makedirs(out, exist_ok=True)
+    stem = '%s_%s' % (short_name(b).replace(' ', '_'), ('p%d' % printed) if printed else 'PDF%d' % pdf_page)
+    got = []
+    try:
+        imgs = list(reader.pages[pdf_page - 1].images)
+    except Exception as e:
+        raise SystemExit('[멈춤] 이미지를 읽지 못했다: %s: %s' % (type(e).__name__, str(e)[:120]))
+    for i, im in enumerate(imgs, 1):
+        fp = os.path.join(out, '%s%s.png' % (stem, ('_%d' % i) if len(imgs) > 1 else ''))
+        try:
+            im.image.save(fp)
+            got.append(fp)
+        except Exception as e:
+            print('[참고] 이미지 %d 저장 실패: %s' % (i, type(e).__name__), file=stream)
+    if not imgs:
+        print('[참고] PDF %d쪽에 이미지가 없다(글·벡터 그림) — 원본을 그 쪽으로 열어 본다' % pdf_page, file=stream)
+    for fp in got:
+        print(fp, file=stream)
+    return got
+
+
+def search(split_dir, term, book=None, limit=40, stream=sys.stdout):
+    """분할 md 에서 낱말 찾기 — 띄어쓰기 무시(OCR 이 띄어쓰기를 자주 바꾼다), 대소문자 무시. 겹침 쪽은 한 번만.
+    반환: [(책, 파일, 쪽 표지, 문맥)]"""
+    core = re.sub(r'\s+', '', _nfc(term))
+    if not core:
+        raise SystemExit('[멈춤] 찾을 낱말이 비었다')
+    pat = re.compile(r'\s*'.join(map(re.escape, core)), re.I)
+    found = {}                       # (책, PDF 쪽) → (항목, 겹침 쪽인가) — 같은 쪽은 겹침이 아닌 쪽(제 장 파일)을 남긴다
+    for bd in sorted(os.listdir(split_dir)):
+        dp = os.path.join(split_dir, bd)
+        if not os.path.isdir(dp) or (book and _nfc(book) not in _nfc(bd)):
+            continue
+        for f in sorted(os.listdir(dp)):
+            if not f.endswith('.md') or f == 'INDEX.md':
+                continue
+            txt = _nfc(open(os.path.join(dp, f), encoding='utf8').read())
+            parts = re.split(r'^(\[p\.[^\]]*\].*)$', txt, flags=re.M)
+            for i in range(1, len(parts) - 1, 2):
+                mark, body = parts[i], parts[i + 1]
+                pdfp = re.search(r'PDF (\d+)', mark)
+                key = (bd, pdfp.group(1) if pdfp else mark)
+                m = pat.search(body)
+                ov = '(겹침' in mark
+                if not m or (key in found and (ov or not found[key][1])):
+                    continue
+                a, b = max(0, m.start() - 40), min(len(body), m.end() + 40)
+                found[key] = ((bd, f, mark.split(' (겹침')[0], re.sub(r'\s+', ' ', body[a:b]).strip()), ov)
+    hits = [v[0] for v in found.values()][:limit]
+    L = ['| 책 | 파일 | 쪽 | 문맥 |', '|---|---|---|---|'] + ['| %s | `%s` | %s | %s |' % (_cell(a), b, c, _cell(d)) for a, b, c, d in hits]
+    print('"%s" — %d곳%s' % (term, len(hits), ' (한도 %d)' % limit if len(hits) >= limit else ''), file=stream)
+    print('\n'.join(L), file=stream)
+    return hits
+
+
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd', required=True)
     for cmd, word in (('probe', '교과서probe'), ('plan', '교과서plan')):
         p = sub.add_parser(cmd, help={'probe': '책마다 구조 조사 → md', 'plan': '책마다 장 표 제안 → md'}[cmd])
         p.add_argument('folder'); p.add_argument('--out', required=True)
-        p.add_argument('--name', default=time.strftime('%y%m%d') + '_회신_Cowork→코드_%s_v1' % word)
+        p.add_argument('--name', default=time.strftime('%y%m%d') + '_회신_Cowork_%s_v1' % word)   # v0.4: 이름에 → 를 쓰지 않는다(규약 v3)
         p.add_argument('--only', default=None, help='파일 이름에 이 글자가 든 PDF 만')
         p.add_argument('--skip', action='append', default=[], help='파일 이름에 이 글자가 든 PDF 는 뺀다(여러 번)')
         p.add_argument('--recursive', action='store_true', help='하위 폴더까지')
@@ -633,7 +922,19 @@ if __name__ == '__main__':
             p.add_argument('--front', type=int, default=40); p.add_argument('--samples', type=int, default=20)
         else:
             p.add_argument('--level', type=int, default=None, help='책갈피 깊이를 장으로 (--only 와 함께)')
-            p.add_argument('--budget', type=float, default=150, help='이 초가 차면 멈춤 — 다시 돌리면 이어서')
+            p.add_argument('--budget', type=float, default=120, help='이 초가 차면 멈춤 — 다시 돌리면 이어서(셸 180초)')
+    sp = sub.add_parser('split', help='확인한 장 표로 장 md·INDEX (3단계)')
+    sp.add_argument('folder'); sp.add_argument('--plan-dir', required=True); sp.add_argument('--plan-name', required=True)
+    sp.add_argument('--out', required=True); sp.add_argument('--only', default=None); sp.add_argument('--skip', action='append', default=[])
+    sp.add_argument('--recursive', action='store_true'); sp.add_argument('--budget', type=float, default=120)
+    pg = sub.add_parser('page', help='쪽 그림 뽑기 → PNG')
+    pg.add_argument('folder'); pg.add_argument('--book', required=True); pg.add_argument('--out', required=True)
+    pg.add_argument('--pdf', type=int, default=None); pg.add_argument('--printed', type=int, default=None); pg.add_argument('--split', default=None)
+    pg.add_argument('--recursive', action='store_true')
+    se = sub.add_parser('search', help='분할 md 에서 낱말 찾기(띄어쓰기 무시)')
+    se.add_argument('split_dir'); se.add_argument('term'); se.add_argument('--book', default=None); se.add_argument('--max', type=int, default=40)
+    so = sub.add_parser('_split_one', help=argparse.SUPPRESS)
+    so.add_argument('path'); so.add_argument('plan_md'); so.add_argument('book_dir'); so.add_argument('label')
     one = sub.add_parser('_plan_one', help=argparse.SUPPRESS)      # plan 이 책마다 부르는 하위 프로세스
     one.add_argument('path'); one.add_argument('md'); one.add_argument('k', type=int); one.add_argument('label'); one.add_argument('name')
     one.add_argument('--level', type=int, default=None)
@@ -641,7 +942,16 @@ if __name__ == '__main__':
     if a.cmd == '_plan_one':
         if os.environ.get('TEXTBOOK_TEST_KILL') and os.environ['TEXTBOOK_TEST_KILL'] in a.path:   # 시험용: 죽는 책 흉내
             os.kill(os.getpid(), signal.SIGKILL)
-        open(a.md, 'w', encoding='utf8').write(plan_md(a.k, a.label, plan_book(a.path, a.level), a.name))
+        text = plan_md(a.k, a.label, plan_book(a.path, a.level), a.name)   # v0.4: 다 만든 뒤에 연다 — 전에는 먼저 비워 두고 55초 계산
+        open(a.md, 'w', encoding='utf8').write(text)
+    elif a.cmd == '_split_one':
+        split_book(a.path, a.plan_md, a.book_dir, a.label)
+    elif a.cmd == 'split':
+        split(a.folder, a.plan_dir, a.plan_name, a.out, a.only, a.skip, a.recursive, a.budget)
+    elif a.cmd == 'page':
+        page_images(a.folder, a.book, a.out, a.pdf, a.printed, a.split, a.recursive)
+    elif a.cmd == 'search':
+        search(a.split_dir, a.term, a.book, a.max)
     elif a.cmd == 'probe':
         probe(a.folder, a.out, a.name, a.only, a.front, a.samples, skip=a.skip, recursive=a.recursive)
     else:

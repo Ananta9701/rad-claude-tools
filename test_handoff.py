@@ -14,7 +14,7 @@ sys.path.insert(0, HERE)
 import handoff as H          # noqa: E402
 import deck_toolkit as T     # noqa: E402
 
-EXPECT_VERSION = '1.5'
+EXPECT_VERSION = '1.6'
 TMP = tempfile.mkdtemp(prefix='th_')
 
 
@@ -391,6 +391,69 @@ def t_v15_merge_import_order_memo_layout():
     assert any(k.startswith('본문') and '14pt' in k for k in rep['imports'][0][5]), rep['imports'][0]
     buf = io.StringIO(); H.report(rep, buf)
     assert '| 가져옴 | "가져온 문제 1" ← 문제덱 화면 2' in buf.getvalue() and '원작자 메모 1줄' in buf.getvalue(), buf.getvalue()
+
+
+# ── v1.6 (발표 Y1·R2·K1·K2·K4) ─────────────────────────────────────────
+def _tab_para(txt, num, red=True):
+    rp = '<a:rPr lang="en-US"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:rPr>' if red else '<a:rPr lang="en-US"/>'
+    return ('<a:p><a:pPr lvl="2"/><a:r><a:rPr lang="en-US"/><a:t>\t%s </a:t></a:r><a:r>%s<a:t>%s</a:t></a:r></a:p>' % (txt, rp, num))
+
+
+def t_v16_year_rule_counts_tab_lines():
+    base0 = _fixture_deck()
+    D0 = T.Deck.open(base0, os.path.join(TMP, 'y1a')); F0 = [x for x, _, _ in D0.order() if x]
+    for k in (2, 3, 4, 5, 6, 8):                                     # 문제 제목 같은 보통 글자 (25-11) 여섯 — 덱 전체로 세면 '보통'
+        p_, x_, a_, b_ = D0._body_span(F0[k - 1])
+        open(p_, 'w', encoding='utf8').write(x_[:a_] + '<a:p><a:r><a:rPr lang="en-US"/><a:t>Q. case (25-11)</a:t></a:r></a:p>' + x_[a_:])
+    p_, x_, a_, b_ = D0._body_span(F0[6])
+    open(p_, 'w', encoding='utf8').write(x_[:a_] + _tab_para('Alpha', '25-10') + _tab_para('Beta', '24-02') + _tab_para('Gamma', '23-05') + x_[b_:])
+    base = os.path.join(TMP, 'y1_base.pptx'); D0.save(base)
+    D = T.Deck.open(base, os.path.join(TMP, 'y1b')); D.src_path = base
+    F = [x for x, _, _ in D.order() if x]; n = len(F)
+    md = (HEAD % n).replace('> 날짜:', '> 범위: 2023-2025\n> 날짜:') + \
+        '### 화면 7 — %s\n작업: 없음\n문단 교체 — `Alpha 25-10` 줄:\n본문:\nL2 ⇥ Alpha changed 25-10\n대본: 변경 없음\n참고:\n- **강조** 한 줄\n' % H._title_text(D, F[6])
+    d = H.parse(md)
+    assert H.check(d, D, stream=io.StringIO())[0] == 0, d['problems']
+    assert any('**' in p[2] for p in warns(d)), d['problems']                                 # R2 경고
+    out = os.path.join(TMP, 'y1.pptx'); rep = H.apply(d, base, out, workdir=os.path.join(TMP, 'y1w'))
+    R = T.Deck.open(out, os.path.join(TMP, 'y1r'))
+    para = [q for q in re.findall(r'<a:p>.*?</a:p>', open(R._slide(F[6]), encoding='utf8').read(), re.S) if 'Alpha changed' in q][0]
+    run = [r for r in re.findall(r'<a:r>.*?</a:r>', para, re.S) if '25-10' in r][0]
+    assert 'FF0000' in run, para                                                              # Y1: 출제줄 기준 → 빨강
+    assert R.notes_sections(F[6])[1] == ['· 강조 한 줄'], R.notes_sections(F[6])               # R2: ** 지움
+    assert not any('정하지 못했다' in w for w in rep['warn']), rep['warn']
+
+
+def t_v16_deterministic_sha_content_hash_and_validate_skip():
+    base = _fixture_deck()
+    D = T.Deck.open(base, os.path.join(TMP, 'k1a')); D.src_path = base
+    F = [x for x, _, _ in D.order() if x]; n = len(F)
+    md = doc('### 화면 2 — %s\n작업: 없음\n대본:\n한 줄.\n참고: 없음\n' % H._title_text(D, F[1]), n)
+    d = H.parse(md)
+    o1, o2 = os.path.join(TMP, 'k1_1.pptx'), os.path.join(TMP, 'k1_2.pptx')
+    r1 = H.apply(d, base, o1, workdir=os.path.join(TMP, 'k1w1'))
+    import time as _t; _t.sleep(2.1)                                                          # zip 시각이 들어가면 달라질 만큼
+    real = H.VALIDATE_PY; H.VALIDATE_PY = '/nonexistent/validate.py'
+    try:
+        r2 = H.apply(d, base, o2, workdir=os.path.join(TMP, 'k1w2'))
+    finally:
+        H.VALIDATE_PY = real
+    assert r1['sha'] == r2['sha'] and r1['content'] == r2['content'], (r1['sha'], r2['sha'])  # K1
+    assert r2['valid'] is None and r1['valid'] is True                                        # K4
+    buf = io.StringIO(); H.report(r2, buf); assert '건너뜀(validate.py 없음 — 통과 아님)' in buf.getvalue()
+    # 같은 내용·다른 zip(시각) 사본 → 기준 sha256 에 내용 해시를 적으면 경고만
+    import zipfile
+    cp = os.path.join(TMP, 'k1_copy.pptx')
+    with zipfile.ZipFile(o1) as zi, zipfile.ZipFile(cp, 'w', zipfile.ZIP_STORED) as zo:
+        for it in zi.infolist():
+            zo.writestr(zipfile.ZipInfo(it.filename, date_time=(2020, 5, 5, 5, 5, 6)), zi.read(it.filename))
+    assert H.deck_path_sha(type('X', (), {'src_path': cp})()) != r1['sha'] and H.content_hash(cp) == r1['content']
+    C = T.Deck.open(cp, os.path.join(TMP, 'k1c')); C.src_path = cp
+    md2 = doc('### 화면 2 — %s\n작업: 없음\n대본: 변경 없음\n참고: 변경 없음\n' % H._title_text(C, [x for x, _, _ in C.order() if x][1]), n)
+    d2 = H.parse(md2.replace('(%d화면) — 화면 번호는 v1 기준\n' % n, '(%d화면) — 화면 번호는 v1 기준\n> 기준 sha256: `%s`\n' % (n, r1['content'])))
+    assert d2['base_sha'] == r1['content'], d2['base_sha']
+    e, wn = H.check(d2, C, stream=io.StringIO())
+    assert e == 0 and wn >= 1, d2['problems']
 
 
 def t_cli():
