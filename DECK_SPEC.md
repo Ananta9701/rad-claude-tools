@@ -1,4 +1,4 @@
-# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.27)
+# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.28)
 
 영상의학과 발표자 — quiz / case review / journal review 공용
 
@@ -1176,6 +1176,7 @@ v13 에서 `claim_graph.py` 로 분리해 발표·저자·리뷰어 세 프로�
   다르면 원천 슬라이드 배경을 뺀다(`keep_bg=True` 로 유지). `diff --match-text`·`restore-memo --match-text` 는 글에 그림 해시를 더해
   짝짓고, 후보가 여럿이거나 글·그림이 없으면 '모호' 로 두고 짝짓지 않는다. `diff --memo-only` 는 기존 메모 표지가 없는 화면을 세지
   않는다. `Deck.open` 의 기본 풀기 자리는 임시 폴더(읽기 전용 폴더의 파일도 연다)
+- **v16.28 (v2.29, 발표 K8)**: 제목 띠의 **필요 높이** = 위·아래 안쪽 여백 + 줄 수 × 글자 크기 × 줄간격. `title_profile` 은 띠가 필요 높이의 90% 도 안 되는 제목의 높이를 배우지 않고(`excluded` 수 — spAutoFit 에 기대는 제목, 도구가 만든 값이 다음 규격이 된 일: 근골격 1줄 1.22" → 0.66"), `conform_title` 은 규격 높이가 그보다 낮으면 필요 높이로 올린다(Google Slides 는 spAutoFit 을 따르지 않는다 — 여백 0.39"×2 에 0.66" 띠라 글 아래쪽이 띠 밖). 새 CLI `title-bands [--screens] [--dry-run]`(Google 안전): 띠가 위 여백 + 줄 높이보다 낮으면 위쪽 끝 고정으로 필요 높이까지, 아래 내용과 겹치면 바꾸지 않고 알림.
 - **v16.27 (v2.28, 발표 근골격 P2·K7)**: CLI `protect-memo [--screens]`(표지 없는 원작자 노트를 기존 메모 구역으로, 감싼 화면 수 출력). `Deck.fit_corner_boxes(n)`·CLI `fit-corner-boxes [--dry-run] [--pad 0.15] [--tol 0.02]` — 가장자리에 붙은 채우기·테두리 없는 글상자를 붙은 쪽 고정으로 글 폭(테마 본문 글꼴로 잼, 없으면 0.5em 모델)×(1+pad)·줄 수에 맞게 키운다, 반대쪽으로 키운 자리가 다른 상자와 겹치면 알림. 제목을 띠에 맞추려 줄이는 하한을 lint 제목 최소 24pt 로(전에는 16 — 23pt 로 줄여 lint 와 부딪침).
 - **v16.26 (v2.25, 발표 K6)**: `Deck.widen_label(n, name=|pattern=, min_width_in=2.0)`·CLI `widen-labels --pattern` — 채우기·테두리 없는 글상자(자리 표시자·그룹 안 제외)의 폭만 넓힌다. 정렬 쪽 모서리 고정, 글·크기·색 불변, 슬라이드 밖으로 나가면 건너뜀. Google Slides·Drive 미리보기가 `wrap="none"` 을 따르지 않아 풀이자 이름표가 두 줄로 꺾인 일. 적용 뒤 PowerPoint(모습 불변)·Drive 미리보기(한 줄)를 사용자가 확인한다.
 - **v16.25 (v2.20)**: `insert_paragraph_like` 틀을 같은 탭 여부로(출제줄 강조 뒤바뀜), `_merge_format` 이 줄 앞 공백 수를 원래대로(D9). 사용자 규칙 두 줄(글머리 ·, 번호 연도 규칙).

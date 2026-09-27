@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.27'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.28'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -3202,16 +3202,49 @@ def title_profile(deck, like=None, slides=None):
     if not infos:
         return None
     sz = _mode([i['sz'] for i in infos]); est = sz or _mode([i['eff_sz'] for i in infos])
-    hb = {}
+    hb, excluded = {}, 0
     for i in infos:
-        hb.setdefault(_title_lines(i, est), []).append(i['h'])
+        n = _title_lines(i, est)
+        # v16.28 (발표 K8): 띠가 필요 높이(안쪽 여백 + 줄 높이 × 줄 수)보다 확연히 낮은 제목은 높이를 배우지 않는다 — PowerPoint 의
+        # spAutoFit 에 기대는 제목(Google Slides 는 키우지 않는다)이나 도구가 만든 값이 다음 규격이 된 일(근골격 1줄 1.22" → 0.66")
+        if i['h'] < 0.9 * _title_need_h(i['tIns'], i['bIns'], n, est, i.get('lnspc', 1.0)):
+            excluded += 1
+            continue
+        hb.setdefault(n, []).append(i['h'])
     return {'x': _mode([i['x'] for i in infos]), 'y': _mode([i['y'] for i in infos]), 'w': _mode([i['w'] for i in infos]),
             'h_by_lines': {n: _mode(hs) for n, hs in hb.items()}, 'sz': sz, 'est_sz': est,
             'latin': _mode([i['latin'] for i in infos]), 'autofit': _mode([i['autofit'] for i in infos]),
             'fill': _mode([i['fill'] for i in infos]),
             'ins': _mode([(i['lIns'], i['rIns'], i['tIns'], i['bIns']) for i in infos]),
             'bodyPr': _mode([re.search(r'<a:bodyPr\b[^>]*?/?>', i['seg']).group(0) if re.search(r'<a:bodyPr\b', i['seg']) else '' for i in infos]),
-            'n': len(infos), 'layout': infos[0]['layout']}
+            'n': len(infos), 'layout': infos[0]['layout'], 'excluded': excluded}
+
+
+def _title_need_h(t_ins, b_ins, lines, sz, lnspc=1.0):
+    """v16.28: 제목 띠가 글을 담는 데 필요한 높이(EMU) = 위·아래 안쪽 여백 + 줄 수 × 글자 크기 × 줄간격."""
+    return int((t_ins or 0) + (b_ins or 0) + lines * (sz or 2800) / 100.0 * LINE_FACTOR * (lnspc or 1.0) * 12700)
+
+
+def raise_title_band(deck, slide_no, dry_run=False):
+    """v16.28 (발표 K8 선택 3): Google 안전 — 제목 자리 표시자 띠가 필요 높이보다 낮으면 위쪽 끝을 고정하고 필요 높이로 키운다.
+    키운 띠가 아래 내용(본문·그림)과 겹치면 바꾸지 않고 알린다. 반환: 문자열 목록('[!]' = 바꾸지 않음)."""
+    i = _title_info(deck, slide_no)
+    if not i or i['kind'] != 'ph':
+        return []
+    lines = _title_lines(i, i['eff_sz'])
+    need = _title_need_h(i['tIns'], i['bIns'], lines, i['eff_sz'], i.get('lnspc', 1.0))
+    if i['h'] >= need - (i['bIns'] or 0):      # 글이 보이는 데는 위 여백 + 줄 높이면 된다(아래 여백은 먹혀도 보인다)
+        return []
+    hit = [(n, y0) for n, y0, y1 in _shapes_below_title(deck, slide_no, i['start'], i['end']) if y0 < i['y'] + need - int(0.02 * EMU_IN) and y1 > i['y']]
+    if hit:
+        return ['[!] 띠 %.2f" < 필요 %.2f" 인데 키우면 "%s" 와 겹친다 — 바꾸지 않음' % (i['h'] / EMU_IN, need / EMU_IN, hit[0][0])]
+    seg = re.sub(r'(<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy=")\d+(")', lambda m: m.group(1) + str(need) + m.group(2), i['seg'], 1)
+    if seg == i['seg']:
+        return ['[!] 띠 위치를 상속받는 자리 표시자 — 바꾸지 않음(titles --like 로 규격을 먼저)']
+    if not dry_run:
+        p = deck._slide(slide_no); x = open(p, encoding='utf8').read()
+        open(p, 'w', encoding='utf8').write(x[:i['start']] + seg + x[i['end']:])
+    return ['띠 %.2f" → %.2f"(%d줄, 안쪽 여백 포함)' % (i['h'] / EMU_IN, need / EMU_IN, lines)]
 
 
 def _shapes_below_title(deck, slide_no, title_start, title_end):
@@ -3296,6 +3329,14 @@ def conform_title(deck, slide_no, prof, adopt_box=False, dry_run=False):
         return _fit_title_in_box(deck, slide_no, i, prof, [], dry_run)
     lines = _title_lines(dict(i, lIns=prof['ins'][0], rIns=prof['ins'][1]), prof['est_sz'], prof['w'])
     want_h = prof['h_by_lines'].get(lines)
+    need_h = _title_need_h(prof['ins'][2], prof['ins'][3], lines, prof['est_sz'], i.get('lnspc', 1.0))
+    raised = None
+    if want_h is None and lines <= 2:
+        want_h, raised = need_h, '규격에 %d줄 높이가 없어 필요 높이 %.2f\"' % (lines, need_h / EMU_IN)
+    elif want_h is not None and want_h < 0.9 * need_h:
+        # v16.28 (발표 K8): 규격 높이가 필요 높이보다 낮으면 필요 높이로 — Google Slides 는 spAutoFit 을 따르지 않아 글이 띠 밖으로 나온다
+        raised = '규격 %.2f\" < 필요 %.2f\"(안쪽 여백 포함) — 필요 높이로' % (want_h / EMU_IN, need_h / EMU_IN)
+        want_h = need_h
     if want_h is None:
         return ['[!] 규격 크기로 %d줄 — 제목 글을 줄여야 한다(도구가 줄이지 않는다)' % lines]
     band_bottom = prof['y'] + want_h
@@ -3319,7 +3360,7 @@ def conform_title(deck, slide_no, prof, adopt_box=False, dry_run=False):
     rest = inner.replace(geom.group(0), '') if geom else inner
     new_sppr = '<p:spPr>' + xf + (geom.group(0) if geom else '') + (prof['fill'] or '') + rest + '</p:spPr>'
     seg = seg[:sppr.start()] + new_sppr + seg[sppr.end():]
-    ch.append('위치·크기 → 규격 %d줄 (%.2f")' % (lines, want_h / EMU_IN))
+    ch.append('위치·크기 → 규격 %d줄 (%.2f")' % (lines, want_h / EMU_IN) + ((' — ' + raised) if raised else ''))
     if (i['fill'] or '') != (prof['fill'] or ''):
         ch.append('띠 색 → 규격')
     # bodyPr: 여백·정렬·자동 맞춤을 규격 것으로
@@ -4906,6 +4947,8 @@ def main():
     po.add_argument('--font', default=DEFAULT_FONT, choices=list(FONT_PROFILES))
     po.add_argument('--audience', choices=('internal', 'external'), default=None, help='내부 발표는 환자 정보 검사 생략, 외부는 [!] (v16.9)')
     ex = sub.add_parser('handout'); ex.add_argument('pptx'); ex.add_argument('-o', required=True)
+    tb = sub.add_parser('title-bands', help='제목 띠가 필요 높이보다 낮으면 키운다 — Google Slides 안전(v16.28, 발표 K8)')
+    tb.add_argument('pptx'); tb.add_argument('-o', required=True); tb.add_argument('--screens', default=None); tb.add_argument('--dry-run', action='store_true')
     pm = sub.add_parser('protect-memo', help='표지 없는 원작자 노트를 기존 메모 구역으로 감싼다(v16.27, 발표 P2)')
     pm.add_argument('pptx'); pm.add_argument('-o', required=True); pm.add_argument('--screens', default=None, help='화면 번호(예: 3,5-9). 없으면 전부')
     fc = sub.add_parser('fit-corner-boxes', help='가장자리에 붙은 글상자를 붙은 쪽 고정으로 글에 맞게 키운다(v16.27, 발표 K7)')
@@ -5046,6 +5089,22 @@ def main():
         validate(args.o, args.pptx)
     elif args.cmd == 'handout':
         print(export_notes(Deck.open(args.pptx), args.o))
+    elif args.cmd == 'title-bands':
+        dk = Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]
+        want = _parse_screens(args.screens, len(order)) if args.screens else set(range(1, len(order) + 1))
+        n_ch = n_sk = 0
+        for pos, sn in enumerate(order, 1):
+            if pos not in want:
+                continue
+            for c in raise_title_band(dk, sn, dry_run=args.dry_run):
+                print('화면 %d: %s' % (pos, c))
+                if c.startswith('[!]'):
+                    n_sk += 1
+                else:
+                    n_ch += 1
+        if not args.dry_run:
+            dk.save(args.o)
+        print('제목 띠 키움 %d · 바꾸지 않음 %d%s' % (n_ch, n_sk, ' (dry-run — 저장 안 함)' if args.dry_run else ' → %s' % args.o))
     elif args.cmd == 'protect-memo':
         dk = Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]
         want = _parse_screens(args.screens, len(order)) if args.screens else set(range(1, len(order) + 1))

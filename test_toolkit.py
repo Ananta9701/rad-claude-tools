@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.27'
+EXPECT_VERSION = '16.28'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -1654,6 +1654,36 @@ def t_v1627_fit_corner_boxes_and_protect_memo():
     d3 = T.Deck.open('/tmp/p2_out.pptx', wd('p3'))
     assert d3.notes_sections(order[1])[2] == ['원작자 노트 한 줄'] and d3.notes_sections(order[2])[0] == ['대본']
     assert T.MIN_FIT_TITLE_PT == T.MIN_TITLE_PT == 24
+
+
+def t_v1628_title_need_height():
+    # 발표 K8(근골격): 가져온 제목의 안쪽 여백 위·아래 0.39"(360000) 인데 띠를 0.66" 로 맞췄다 — Google Slides 에서 글이 띠 밖으로
+    from pptx import Presentation
+    from pptx.util import Pt, Emu, Inches
+    from pptx.dml.color import RGBColor
+    prs = Presentation(); prs.slide_width, prs.slide_height = Inches(10), Inches(7.5)
+    for k, h in enumerate([1117331] * 6 + [605908] * 3):
+        sl = prs.slides.add_slide(prs.slide_layouts[5])
+        t = sl.shapes.title; t.left, t.top, t.width, t.height = Emu(0), Emu(0), Inches(10), Emu(h)
+        t.fill.solid(); t.fill.fore_color.rgb = RGBColor(0xD9, 0xD9, 0xD9)
+        t.text_frame.text = 'Q. 25-%02d Short title' % k
+        t.text_frame.margin_top = t.text_frame.margin_bottom = Emu(360000)
+        for r in t.text_frame.paragraphs[0].runs:
+            r.font.size = Pt(28)
+    path = os.path.join(TMP, 'k8.pptx'); prs.save(path)
+    B = T.Deck.open(path, wd('k8'))
+    prof = T.title_profile(B, like=1)
+    assert prof['h_by_lines'].get(1) == 1117331 and prof['excluded'] == 3, prof          # 0.66" 띠 셋은 배우지 않는다
+    order = [x for x, _, _ in B.order() if x]
+    bad = dict(prof, h_by_lines={1: 605908})                                               # 오염된 규격을 받았어도
+    ch = T.conform_title(B, order[7], bad)
+    assert ch and '필요 높이로' in ch[0], ch
+    cy = int(re.search(r'<a:ext cx="\d+" cy="(\d+)"', T._title_info(B, order[7])['seg']).group(1))
+    assert cy >= T._title_need_h(360000, 360000, 1, 2800) - 2, cy
+    r = T.raise_title_band(B, order[8])                                                    # Google 안전: 0.66" → 필요 높이
+    assert r and r[0].startswith('띠 0.66"'), r
+    assert T.raise_title_band(B, order[0]) == []                                          # 1.22" 는 그대로
+    B.save('/tmp/k8o.pptx'); assert T.validate('/tmp/k8o.pptx', path)
 
 
 def t_v1619_da_after_vowel():
