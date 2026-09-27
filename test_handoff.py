@@ -14,7 +14,7 @@ sys.path.insert(0, HERE)
 import handoff as H          # noqa: E402
 import deck_toolkit as T     # noqa: E402
 
-EXPECT_VERSION = '1.4'
+EXPECT_VERSION = '1.5'
 TMP = tempfile.mkdtemp(prefix='th_')
 
 
@@ -330,6 +330,68 @@ def t_v14_new_slide_level_template():
     xs = open(R._slide(rep['new'][0][1]), encoding='utf8').read()
     deep = [q for q in re.findall(r'<a:p>.*?</a:p>', xs, re.S) if '깊은 줄' in q][0]
     assert 'marL="685800"' in deep and 'sz="1600"' in deep, deep                # 화면 7 의 L2 서식
+
+# ── v1.5 (발표 병합 준비 M1–M4) ─────────────────────────────────────────
+def t_v15_range_header_and_import_grammar():
+    d = H.parse((HEAD % 10).replace('> 날짜:', '> 범위: 2023-2025\n> 날짜:') + '### 화면 2 — x\n작업: 없음\n대본: 변경 없음\n참고: 변경 없음\n')
+    assert d['range'] == '2023-2025' and H._years_for(d, '/x/전평_2022-2024.pptx') == ({'23', '24', '25'}, 'head')
+    assert H._years_for({'range': None, 'base': ''}, '/x/전평_2022-2024.pptx') == ({'22', '23', '24'}, 'name')
+    bad = H.parse((HEAD % 10).replace('> 날짜:', '> 범위: 23-25\n> 날짜:'))
+    assert any('범위' in p[2] for p in errs(bad)), bad['problems']
+    one = H.parse(doc('### 새 슬라이드 — A\n작업: 가져옴: 문제덱 화면 2 → 화면 5 뒤\n제목: A\n대본:\n가\n참고: 없음\n'))
+    assert any('둘 다' in p[2] for p in errs(one)), one['problems']                 # 제목만 — 오류
+    both_none = H.parse(doc('### 새 슬라이드 — A\n작업: 가져옴: 문제덱 화면 2 → 화면 5 뒤 · 메모 복사\n대본:\n가\n참고: 없음\n'))
+    assert not errs(both_none), both_none['problems']                                # 그대로 가져옴
+    tpl_memo = H.parse(doc('### 새 슬라이드 — B\n작업: 새 슬라이드(형식, 화면 6과 같은 틀) → 화면 9 앞 · 메모 복사\n제목: B\n본문:\nL0 x\n대본:\n가\n참고: 없음\n'))
+    assert any('메모 복사는 가져옴에서만' in p[2] for p in errs(tpl_memo)), tpl_memo['problems']
+
+
+def _src_deck():
+    srcp = os.path.join(TMP, 'src25_0.pptx'); T.make_fixture(srcp)
+    S0 = T.Deck.open(srcp, os.path.join(TMP, 'm_s0')); SF = [x for x, _, _ in S0.order() if x]
+    for k in (2, 3, 4):
+        S0.set_notes(SF[k - 1], ['원천 %d 원작자 메모' % k])
+    p_, x_, a_, b_ = S0._body_span(SF[1])
+    open(p_, 'w', encoding='utf8').write(x_[:a_] + '<a:p><a:r><a:rPr lang="ko-KR" sz="1400"/><a:t>원천 본문 14pt</a:t></a:r></a:p>' + x_[b_:])
+    p_, x_, a_, b_ = S0._body_span(SF[3])
+    open(p_, 'w', encoding='utf8').write(x_[:a_] + '<a:p><a:r><a:rPr lang="ko-KR"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:rPr>'
+                                         '<a:t>정답 표시</a:t></a:r></a:p>' + x_[b_:])
+    out = os.path.join(TMP, 'src25.pptx'); S0.save(out)
+    return out
+
+
+def t_v15_merge_import_order_memo_layout():
+    base = _fixture_deck(); srcp = _src_deck()
+    D = T.Deck.open(base, os.path.join(TMP, 'mg0')); D.src_path = base
+    F = [x for x, _, _ in D.order() if x]; n = len(F)
+    S = T.Deck.open(srcp, os.path.join(TMP, 'mg_s')); SF = [x for x, _, _ in S.order() if x]
+    md = doc('### 새 슬라이드 — 가져온 문제 1\n작업: 가져옴: 문제덱 화면 2 → 화면 5 뒤 · 레이아웃 = 화면 6 과 같게 · 메모 복사\n대본:\n첫 가져옴 대본.\n참고: 없음\n\n'
+             '### 새 슬라이드 — 가져온 문제 2\n작업: 가져옴: 문제덱 화면 3 → 화면 5 뒤\n대본:\n둘째.\n참고: 없음\n\n'
+             '### 새 슬라이드 — 가져온 문제 3\n작업: 가져옴: 문제덱 화면 4 → 화면 5 뒤 · 메모 복사 · 앞에 복제(정답 표시 제거) — 해설 상자 없음\n'
+             '복제본(문제) 대본:\n먼저 풀어 보세요.\n대본:\n셋째.\n참고: 없음\n', n)
+    d = H.parse(md)
+    buf = io.StringIO(); e, _ = H.check(d, D, stream=buf)
+    assert e == 0 and '그대로 · 메모 복사' in buf.getvalue(), (d['problems'], buf.getvalue()[-600:])
+    out = os.path.join(TMP, 'merged.pptx')
+    rep = H.apply(d, base, out, imports={'문제덱': srcp}, workdir=os.path.join(TMP, 'mgw'))
+    assert rep['valid'] and not rep['memo_bad'] and len(rep['imports']) == 3 and len(rep['dup_new']) == 1, rep
+    R = T.Deck.open(out, os.path.join(TMP, 'mg_r')); ro = [x for x, _, _ in R.order() if x]
+    s1, s2, s3 = [sn for _, sn in rep['new']]; d3 = rep['dup_new'][0][1]
+    i5 = ro.index(F[4])
+    assert ro[i5 + 1:i5 + 5] == [s1, s2, d3, s3], (ro[i5 + 1:i5 + 5], s1, s2, d3, s3)       # M4: 적은 순서, 복제본은 바로 앞
+    assert R.notes_sections(s1) == (['첫 가져옴 대본.'], [], ['원천 2 원작자 메모']) or \
+        list(map(list, R.notes_sections(s1))) == [['첫 가져옴 대본.'], [], ['원천 2 원작자 메모']], R.notes_sections(s1)   # M3 ②
+    assert R.notes_sections(s2)[2] == [] and R.notes_sections(s2)[0] == ['둘째.']                                   # M3 ① 기본은 안 들어옴
+    assert R.notes_sections(s3)[2] == ['원천 4 원작자 메모'] == R.notes_sections(d3)[2]                              # M3 ③ 복제본도 같은 메모
+    assert R.notes_sections(d3)[0] == ['먼저 풀어 보세요.'] and 'FF0000' not in open(R._slide(d3), encoding='utf8').read()
+    assert 'FF0000' in open(R._slide(s3), encoding='utf8').read()
+    assert H._title_text(R, s1) == H._title_text(S, SF[1])                                                       # 그대로 가져옴
+    x1 = open(R._slide(s1), encoding='utf8').read()
+    assert '원천 본문 14pt' in x1 and 'sz="1400"' not in x1, x1[:400]                                             # M1: 명시 크기 지움
+    assert any(k.startswith('본문') and '14pt' in k for k in rep['imports'][0][5]), rep['imports'][0]
+    buf = io.StringIO(); H.report(rep, buf)
+    assert '| 가져옴 | "가져온 문제 1" ← 문제덱 화면 2' in buf.getvalue() and '원작자 메모 1줄' in buf.getvalue(), buf.getvalue()
+
 
 def t_cli():
     base = _fixture_deck()

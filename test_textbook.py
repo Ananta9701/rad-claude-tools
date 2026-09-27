@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import textbook as TB          # noqa: E402
 
-EXPECT_VERSION = '0.2'
+EXPECT_VERSION = '0.3'
 TMP = tempfile.mkdtemp(prefix='ttb_')
 
 
@@ -221,6 +221,7 @@ def t_skip_recursive():
     assert TB.list_books(d, recursive=True) == ['a.pdf', 'b.pdf', os.path.join('sub', 'c.pdf')]
     assert TB.list_books(d, skip=['b.pdf'], recursive=True) == ['a.pdf', os.path.join('sub', 'c.pdf')]
     assert TB.list_books(d, only='c', recursive=True, numbered=True) == [(3, os.path.join('sub', 'c.pdf'))]
+    assert TB.list_books(d, skip=['b.pdf'], recursive=True, numbered=True) == [(1, 'a.pdf'), (3, os.path.join('sub', 'c.pdf'))]   # v0.3: 빼도 번호 그대로
 
 
 def _heads_book(path):
@@ -249,14 +250,14 @@ def t_plan_heads_pdf():
 
 def t_plan_outline_pdf():
     d = os.path.join(TMP, 'plan2'); os.makedirs(d)
-    pages = [['Cover']] + [['Chapter %d' % (i // 3 + 1), FILL] for i in range(15)]
-    ol = [('Cover', 0, None)] + [('Chapter %d Topic' % k, 1 + (k - 1) * 3, None) for k in range(1, 6)]
-    make_pdf(os.path.join(d, 'o.pdf'), pages, ol, labels=[(0, 0, '/r', 1), (1, 15, '/D', 1)])
+    pages = [['Cover']] + [['Chapter %d' % (i // 6 + 1), FILL] for i in range(30)]
+    ol = [('Cover', 0, None)] + [('Chapter %d Topic' % k, 1 + (k - 1) * 6, None) for k in range(1, 6)]
+    make_pdf(os.path.join(d, 'o.pdf'), pages, ol, labels=[(0, 0, '/r', 1), (1, 30, '/D', 1)])
     out = os.path.join(TMP, 'plan2_out')
     TB.plan(d, out, 'p', stream=io.StringIO())
     b = open(os.path.join(out, 'p_01.md'), encoding='utf8').read()
-    assert 'method=책갈피 (깊이 0)' in b and '| 01 | Chapter 1 Topic | 2 | 4 | 3 | 1–3 | 책갈피 깊이 0 |' in b, b
-    assert '| 05 | Chapter 5 Topic | 14 | 16 | 3 | 13–15 |' in b, b
+    assert 'method=책갈피 (깊이 0)' in b and '| 01 | Chapter 1 Topic | 2 | 7 | 6 | 1–6 | 책갈피 깊이 0 |' in b, b
+    assert '| 05 | Chapter 5 Topic | 26 | 31 | 6 | 25–30 |' in b, b
 
 
 def t_plan_budget_resume():
@@ -281,6 +282,55 @@ def t_cli_plan():
     r = subprocess.run([sys.executable, os.path.join(HERE, 'textbook.py'), 'plan', d, '--out', out, '--name', 'c2', '--skip', 'zzz'],
                        capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
     assert r.returncode == 0 and '| 01 | k.pdf | 쪽 머리 | 2 |' in r.stdout, (r.stdout[-400:], r.stderr[-400:])
+
+
+# ── v0.3 ──────────────────────────────────────────────────────────────
+def t_first_chapter_not_one():
+    # 분책 2권: 쪽 머리가 11장부터. '저11 장' 은 {1, 11} — 뒤 쪽 머리('제 11 장')가 가른다
+    spec = {3: ({1, 11},) + ((), ''), 5: ({11},) + ((), ''), 7: ({1, 11},) + ((), ''), 9: ({11},) + ((), ''),
+            12: ({12},) + ((), ''), 14: ({12, 2},) + ((), ''), 16: ({12},) + ((), '')}
+    chs, skipped = TB.resolve_chapters(_marks(spec, 18))
+    assert [(c['num'], c['first'] + 1) for c in chs] == [(11, 3), (12, 12)] and skipped == [], chs
+    lone = TB.resolve_chapters(_marks({3: ({7},) + ((), '')}, 10))[0]
+    assert lone == [], lone                                                  # 한 번만 나온 번호는 첫 장이 아니다
+
+
+def t_offsets_and_titles():
+    mk = lambda nums: [{'num': x} for x in nums]
+    assert TB._offsets(mk([None, 1, 2, 3, 4]), 1, 4) == (1, 4)
+    assert TB._offsets(mk([None, 1, 2, None, None]), 0, 4) is None            # 2표 — 모자람
+    assert TB._offsets(mk([47, 88, 3, 150, 9]), 0, 4) is None                # 본문 숫자 — 과반 아님
+    assert TB._offsets(mk([None, 200, 201, 202, 203]), 0, 4) is None         # 차이 −199
+    assert TB._clean_title('I 흉부 병변의 위치 결정') == '흉부 병변의 위치 결정'
+    assert TB._clean_title('| 무기폐 ·”:-') == '무기폐' and TB._clean_title('식도') == '식도'
+
+
+def t_back_matter_and_chunks():
+    spec = {3: ({1},) + ((), ''), 5: ({1},) + ((), ''), 7: ({1},) + ((), '')}
+    marks = _marks(spec, 12)
+    marks[9]['lead'] = '찾아보기가나다'
+    chs, checks = TB.chapters_from_heads(marks)
+    assert chs[-1]['end'] == 8 and not any('마지막 장' in c for c in checks), (chs, checks)   # p.10 찾아보기 앞까지
+    d = os.path.join(TMP, 'plain'); os.makedirs(d)
+    make_pdf(os.path.join(d, 'p.pdf'), [['plain text page %d' % i, FILL] for i in range(65)])
+    out = os.path.join(TMP, 'plain_out'); TB.plan(d, out, 'q', stream=io.StringIO())
+    b = open(os.path.join(out, 'q_01.md'), encoding='utf8').read()
+    assert 'method=쪽 묶음 30 chapters=3' in b and '| 03 | p.61–65 | 61 | 65 | 5 |' in b and '30쪽 묶음' in b, b
+
+
+def t_plan_child_killed():
+    d = os.path.join(TMP, 'kill'); os.makedirs(d); _heads_book(os.path.join(d, 'a.pdf')); _heads_book(os.path.join(d, 'zz_kill.pdf'))
+    out = os.path.join(TMP, 'kill_out')
+    os.environ['TEXTBOOK_TEST_KILL'] = 'zz_kill'
+    try:
+        done, left = TB.plan(d, out, 'k', stream=io.StringIO())
+    finally:
+        del os.environ['TEXTBOOK_TEST_KILL']
+    assert done == 2 and left == []
+    b = open(os.path.join(out, 'k_02.md'), encoding='utf8').read()
+    assert 'error=yes' in b and 'Killed' in b, b
+    s = open(os.path.join(out, 'k_요약.md'), encoding='utf8').read()
+    assert '| 01 | a.pdf | 쪽 머리 | 2 |' in s and '| 02 | zz_kill.pdf | 오류 |' in s, s
 
 
 if __name__ == '__main__':

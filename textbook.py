@@ -20,12 +20,14 @@ plan 은 --budget 초가 차면 멈추고, 같은 명령을 다시 돌리면 이
 import argparse
 import os
 import re
+import signal
+import subprocess
 import sys
 import time
 import unicodedata
 from collections import Counter
 
-__version__ = '0.2'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.3'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
 
 TOC_WORDS = re.compile(r'차\s*[례려레]|목\s*차|c\s*o\s*n\s*t\s*e\s*n\s*t\s*s', re.I)   # v0.2: OCR '차려'·'C O N T E N T S'
 NUM_LINE = re.compile(r'^\s*[-–—]?\s*(\d{1,4})\s*[-–—]?\s*$')
@@ -66,8 +68,9 @@ def list_books(folder, only=None, skip=(), recursive=False, numbered=False):
         for f in files:
             if f.lower().endswith('.pdf') and not f.startswith('.'):
                 found.append(f if rel == '.' else os.path.join(rel, f))
-    allb = sorted((b for b in found if not any(_nfc(k) in _nfc(b) for k in (skip or ()))), key=_nfc)
-    sel = [(k, b) for k, b in enumerate(allb, 1) if not only or _nfc(only) in _nfc(b)]
+    allb = sorted(found, key=_nfc)          # v0.3 (Cowork plan 3-1): 번호는 --skip·--only 전 목록 — 뺐다 넣어도 같은 책은 같은 번호
+    sel = [(k, b) for k, b in enumerate(allb, 1) if (not only or _nfc(only) in _nfc(b))
+           and not any(_nfc(x) in _nfc(b) for x in (skip or ()))]
     if not sel:
         raise SystemExit('[멈춤] %s 에 PDF 가 없다%s' % (folder, (' (--only %s)' % only) if only else ''))
     return sel if numbered else [b for _, b in sel]
@@ -261,14 +264,15 @@ def probe(folder, out, name, only=None, front=40, samples=20, stream=sys.stdout,
     if not os.path.isdir(folder):
         raise SystemExit('[멈춤] 폴더가 없다: %s — Cowork 에 동기화 폴더를 연결했는지 본다' % folder)
     load_pypdf()
-    books = list_books(folder, only, skip, recursive)
+    numbered = list_books(folder, only, skip, recursive, numbered=True)
+    books = [b for _, b in numbered]
     preflight(folder, books)
     os.makedirs(out, exist_ok=True)
     if os.path.exists(os.path.join(out, '%s_요약.md' % name)):
         raise SystemExit('[멈춤] %s_요약.md 가 이미 있다 — 같은 이름을 다시 쓰지 않는다(규약 §3). --name 의 판을 올린다' % name)
     res = []
-    for k, f in enumerate(books, 1):
-        print('[%d/%d] %s' % (k, len(books), f), file=stream, flush=True)
+    for k, f in numbered:
+        print('[%02d] %s' % (k, f), file=stream, flush=True)
         r = probe_book(os.path.join(folder, f), front, samples)
         r['file'] = f
         res.append(r)
@@ -279,7 +283,7 @@ def probe(folder, out, name, only=None, front=40, samples=20, stream=sys.stdout,
          '> 글자층 = 표본 쪽 중 50자 이상 나온 쪽. 쪽 번호 차이 = PDF 쪽 − 인쇄 쪽(최빈값, 맞은 수/찾은 수).', '',
          '| # | 파일 | MB | 쪽 | 책갈피 | 쪽 번호 표 | 글자층 | 차례 후보 | 쪽 번호 차이 | 만든 프로그램 |',
          '|---|---|---|---|---|---|---|---|---|---|']
-    S += [summary_row(k, r) for k, r in enumerate(res, 1)]
+    S += [summary_row(k, r) for (k, _), r in zip(numbered, res)]
     S += ['', '오류 %d권 · 조사 %.0f 초' % (sum(1 for r in res if r['error']), sum(r['seconds'] for r in res)), '']
     open(os.path.join(out, '%s_요약.md' % name), 'w', encoding='utf8').write('\n'.join(S))
     print('\n'.join(S), file=stream)
@@ -294,6 +298,7 @@ HEAD_KO = re.compile(r'(제|저)\s*([\]|lI!]?)\s*(\d(?:\s?\d){0,2})\s*[장잠징
 HEAD_EN = re.compile(r'\bchapter\s*(\d{1,3})\b', re.I)
 OPENER = re.compile(r'(?:C\s*H\s*A\s*P\s*T\s*E\s*R|A\s*P\s*T?\s*E\s*R|T\s*E\s*R|(?<![A-Za-z])E\s*R)\s*(\d{1,2})(?!\d)')
 LEAD_NUM = re.compile(r'^\s*(\d{1,4})\s')
+CHUNK = 30
 CH_TITLE = re.compile(r'^\s*(?:chapter|ch\.?)\s*\d+|^\s*\d{1,3}(?:[\s.:)]|$)|^\s*제\s*\d+\s*장', re.I)
 
 
@@ -353,6 +358,15 @@ def resolve_chapters(marks, lookahead=12):
         if c in cand:
             hits[c].append(i)
             continue
+        if c == 0:
+            # v0.3 (Cowork plan: 근골격영상의학 2 — 장 번호가 1이 아니라 이어진다): 첫 장은 어떤 번호든, 뒤 20쪽 안에서 두 번 이상 다시
+            # 나오는 후보 중 가장 많이 나오는 것('저11 장' = {1, 11} 이면 뒤 쪽 머리가 가른다)
+            sup = {k: sum(1 for j in range(i + 1, min(n, i + 21)) if k in marks[j]['head']) for k in cand}
+            k = max(sorted(sup), key=lambda x: sup[x])
+            if sup[k] >= 2:
+                c = k
+                hits[k] = [i]
+            continue
         for k in (c + 1, c + 2):
             if k in cand and any(k in marks[j]['head'] for j in range(i + 1, min(n, i + 1 + lookahead))):
                 if k == c + 2:
@@ -361,6 +375,15 @@ def resolve_chapters(marks, lookahead=12):
                 hits[k] = [i]
                 break
     return [{'num': k, 'first': v[0], 'last': v[-1], 'pages': v} for k, v in sorted(hits.items())], skipped
+
+
+def _clean_title(t):
+    """v0.3: 쪽 머리 제목 앞의 구분선 OCR 조각('I '·'| '·'l ')과 끝의 부스러기를 뗀다."""
+    t = re.sub(r'^\s*[I|l1!\]]\s+', '', t or '')
+    return re.sub(r'[\s\W_]+$', '', t).strip()
+
+
+BACK = re.compile(r'찾\s*아\s*보\s*기|색\s*인|index', re.I)
 
 
 def _title_key(s):
@@ -372,7 +395,8 @@ def chapters_from_heads(marks):
     checks = ['%d장: 쪽 머리를 찾지 못했다(건너뜀) — 앞뒤 장의 경계를 사람이 확인' % k for k in skipped]
     out, prev_last = [], -1
     for ch in chs:
-        titles = Counter(marks[i]['title'] for i in ch['pages'] if marks[i]['title'])
+        titles = Counter(_clean_title(marks[i]['title']) for i in ch['pages'] if marks[i]['title'])
+        titles.pop('', None)
         title = titles.most_common(1)[0][0] if titles else ''
         key = _title_key(title)[:4]
         lo = prev_last + 1 if prev_last >= 0 else max(0, ch['first'] - 8)
@@ -394,9 +418,14 @@ def chapters_from_heads(marks):
     for a, b in zip(out, out[1:]):
         a['end'] = b['start'] - 1
     if out:
-        out[-1]['end'] = chs[-1]['last']
-        if chs[-1]['last'] < len(marks) - 1:
-            checks.append('마지막 장의 끝을 마지막 쪽 머리 p.%d 로 두었다 — 참고문헌·찾아보기 경계를 확인' % (chs[-1]['last'] + 1))
+        last = chs[-1]['last']
+        back = next((i for i in range(last + 1, len(marks)) if BACK.search(marks[i]['lead'][:30]) and not marks[i]['head']), None)
+        if back is not None:
+            out[-1]['end'] = back - 1              # v0.3: 찾아보기·Index 쪽 앞까지(마지막 장의 참고문헌 포함)
+        else:
+            out[-1]['end'] = last
+            if last < len(marks) - 1:
+                checks.append('마지막 장의 끝을 마지막 쪽 머리 p.%d 로 두었다(찾아보기·Index 쪽을 못 찾음) — 뒤 경계를 확인' % (last + 1))
     return out, checks
 
 
@@ -406,12 +435,14 @@ def chapters_from_outline(outline, n, level=None):
     depths = Counter(d for d, _, _ in ent)
     by_title = False
     if level is None:
-        score = {d: sum(1 for dd, t, _ in ent if dd == d and CH_TITLE.match(t)) for d in depths}
+        # v0.3 (Cowork plan: Cardiac 330쪽에 131개 — 절 수준): 평균 4쪽 미만인 깊이는 장으로 보지 않는다
+        fine = {d for d in depths if n / float(depths[d]) >= 4}
+        score = {d: sum(1 for dd, t, _ in ent if dd == d and CH_TITLE.match(t)) for d in depths if d in fine}
         best = max(score, key=lambda d: (score[d], -d)) if score else None
         if best is not None and score[best] >= 5:
             level, by_title = best, True
         else:
-            ok = [d for d in sorted(depths) if depths[d] >= 5]
+            ok = [d for d in sorted(depths) if depths[d] >= 5 and d in fine]
             level = ok[0] if ok else None
     if level is None:
         return None, depths, None
@@ -429,8 +460,15 @@ def chapters_from_outline(outline, n, level=None):
 
 
 def _offsets(marks, lo, hi):
+    """장 안에서 (PDF 쪽 − 인쇄 쪽) 최빈값. v0.3: 3표 이상·과반·|차이| ≤ 60·인쇄 시작 ≥ 1 이 아니면 None('—') — 복부영상의학에서
+    본문 속 숫자를 쪽 번호로 읽어 '-144–35' 가 나왔다. 인쇄 0쪽(번호 없는 여는 쪽)까지는 둔다."""
     c = Counter(i - (marks[i]['num'] - 1) for i in range(lo, hi + 1) if marks[i].get('num'))
-    return c.most_common(1)[0] if c else None
+    if not c:
+        return None
+    off, v = c.most_common(1)[0]
+    if v < 3 or v * 2 < sum(c.values()) or abs(off) > 60 or lo - off + 1 < 0:
+        return None
+    return off, v
 
 
 def plan_book(path, level=None):
@@ -467,10 +505,13 @@ def plan_book(path, level=None):
             marks = [page_marks(_page_text(pg)) for pg in reader.pages]
             r['head_pages'] = sum(1 for m in marks if m['head'])
             chs, checks = chapters_from_heads(marks)
-            r['method'] = '쪽 머리' if chs else '못 정함'
-            r['chapters'], r['checks'] = chs, r['checks'] + checks
+            r['method'] = '쪽 머리' if chs else '쪽 묶음 %d' % CHUNK
             if not chs:
-                r['checks'].append('쪽 머리("제 N 장"·"Chapter N")를 못 찾았다 — 차례로 장 시작 쪽을 사람이 정한다')
+                # v0.3: 장을 못 정한 책(쪽 머리가 없는 책)은 30쪽 묶음 — 제목 없이도 INDEX(쪽 범위)와 글자 md 로 찾을 수 있게
+                chs = [dict(num=i // CHUNK + 1, title='p.%d–%d' % (i + 1, min(n, i + CHUNK)), start=i, end=min(n, i + CHUNK) - 1,
+                            why='쪽 묶음') for i in range(0, n, CHUNK)]
+                checks.append('쪽 머리("제 N 장"·"Chapter N")를 못 찾아 %d쪽 묶음으로 나눴다 — 장으로 나누려면 장 시작 쪽 목록을 사용자가 준다' % CHUNK)
+            r['chapters'], r['checks'] = chs, r['checks'] + checks
         for ch in r['chapters']:
             ch['pages_n'] = ch['end'] - ch['start'] + 1
             if labels:
@@ -540,10 +581,21 @@ def plan(folder, out, name, only=None, skip=(), recursive=False, level=None, bud
                 left.append(b)
                 continue
         print('[%02d] %s' % (k, b), file=stream, flush=True)
-        r = plan_book(path, level)
-        if r.get('pages') and 'head_pages' in r and r['seconds']:
-            rate = max(rate, r['seconds'] / float(r['pages']))
-        open(os.path.join(out, '%s_%02d.md' % (name, k)), 'w', encoding='utf8').write(plan_md(k, b, r, name))
+        # v0.3 (Cowork plan 3회 Killed): 책마다 하위 프로세스 — 메모리가 책마다 풀리고, 한 권이 죽어도 그 권만 오류로 남는다
+        fp = os.path.join(out, '%s_%02d.md' % (name, k))
+        t1 = time.time()
+        cp = subprocess.run([sys.executable, os.path.abspath(__file__), '_plan_one', path, fp, str(k), b, name] +
+                            (['--level', str(level)] if level is not None else []),
+                            capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+        if cp.returncode != 0 or not os.path.exists(fp):
+            why = 'Killed(메모리 부족 추정)' if cp.returncode in (-9, 137) else 'rc=%d %s' % (
+                cp.returncode, ((cp.stderr or '').strip().splitlines() or [''])[-1][:160])
+            open(fp, 'w', encoding='utf8').write(plan_md(k, b, {'error': '하위 프로세스 실패 — %s. 다시 하려면 이 파일을 지우고 같은 명령' % why,
+                                                               'seconds': round(time.time() - t1, 1), 'chapters': [], 'checks': []}, name))
+        else:
+            m = re.search(r'pages=(\d+)', open(fp, encoding='utf8').readline())
+            if m and 'method=쪽' in open(fp, encoding='utf8').readline():
+                rate = max(rate, (time.time() - t1) / float(m.group(1)))
         done += 1
     rows = []
     for k, b in sel:
@@ -582,8 +634,15 @@ if __name__ == '__main__':
         else:
             p.add_argument('--level', type=int, default=None, help='책갈피 깊이를 장으로 (--only 와 함께)')
             p.add_argument('--budget', type=float, default=150, help='이 초가 차면 멈춤 — 다시 돌리면 이어서')
+    one = sub.add_parser('_plan_one', help=argparse.SUPPRESS)      # plan 이 책마다 부르는 하위 프로세스
+    one.add_argument('path'); one.add_argument('md'); one.add_argument('k', type=int); one.add_argument('label'); one.add_argument('name')
+    one.add_argument('--level', type=int, default=None)
     a = ap.parse_args()
-    if a.cmd == 'probe':
+    if a.cmd == '_plan_one':
+        if os.environ.get('TEXTBOOK_TEST_KILL') and os.environ['TEXTBOOK_TEST_KILL'] in a.path:   # 시험용: 죽는 책 흉내
+            os.kill(os.getpid(), signal.SIGKILL)
+        open(a.md, 'w', encoding='utf8').write(plan_md(a.k, a.label, plan_book(a.path, a.level), a.name))
+    elif a.cmd == 'probe':
         probe(a.folder, a.out, a.name, a.only, a.front, a.samples, skip=a.skip, recursive=a.recursive)
     else:
         plan(a.folder, a.out, a.name, a.only, a.skip, a.recursive, a.level, a.budget)
