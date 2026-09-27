@@ -16,7 +16,7 @@ import os
 import re
 import sys
 
-__version__ = '1.9'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
+__version__ = '2.0'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
 
 KEYS = ('작업:', '대본:', '참고:', '본문:', '제목:', '복제본(문제) 대본:')
 PARA_OP = re.compile(r'^문단 (교체|추가|삭제)\b')
@@ -44,6 +44,8 @@ OPS = [
     ('본문 N문단', re.compile(r'^본문 \d+문단$')),
     ('레이아웃', re.compile(r'^레이아웃 = 화면 (\d+) ?(?:과|와) 같게$')),   # v1.4 (발표 N3): 새 슬라이드·가져옴의 레이아웃을 넘김이 정한다
     ('제목·본문 전체 교체', re.compile(r'^제목·본문 전체 교체$')),
+    ('나누기', re.compile(r'^나누기$')),              # v2.0 (발표 K11): '— 본문 k 문단 뒤에서' 는 설명 칸에
+    ('제목에 번호', re.compile(r'^제목에 번호$')),     # v2.0: 나눈 두 장 제목 끝에 ' (1/2)'·' (2/2)'
 ]
 
 
@@ -184,6 +186,23 @@ def parse(text):
                         prob('오류', cur['ln'], '새 슬라이드에 "본문:" 이 없다')
                     if any(o[0] == '메모 복사' for o in (cur['ops'] or [])):
                         prob('오류', cur['ln'], '메모 복사는 가져옴에서만 — 새 슬라이드(틀)에는 원작자 메모가 없다')
+            names = [o[0] for o in (cur['ops'] or [])]
+            if '나누기' in names:
+                mk = re.search(r'본문\s*(\d+)\s*문단\s*뒤', cur['note'] or '')
+                if cur['kind'] != 'screen':
+                    prob('오류', cur['ln'], '나누기는 기준 화면 구역에서만(새 슬라이드는 두 구역으로 쓴다)')
+                elif not mk:
+                    prob('오류', cur['ln'], '나누기 — 설명에 "본문 k 문단 뒤에서" 가 없다(예: 작업: 나누기 — 본문 5 문단 뒤에서)')
+                else:
+                    cur['split_k'] = int(mk.group(1))
+                if cur['split_script'] is None:
+                    prob('오류', cur['ln'], '나누기인데 "나눈 뒤(2/2) 대본:" 이 없다')
+                if '앞에 복제' in names or '삭제' in names:
+                    prob('오류', cur['ln'], '나누기는 앞에 복제·삭제와 같이 쓰지 않는다')
+            elif '제목에 번호' in names:
+                prob('오류', cur['ln'], '제목에 번호는 나누기와 함께만')
+            elif cur['split_script'] is not None:
+                prob('오류', cur['ln'], '"나눈 뒤(2/2) 대본:" 이 있는데 작업에 나누기가 없다')
             if any(o[0] == '앞에 복제' for o in (cur['ops'] or [])):
                 if cur['dup_script'] is None:
                     prob('오류', cur['ln'], '앞에 복제인데 "복제본(문제) 대본:" 이 없다')
@@ -201,7 +220,7 @@ def parse(text):
             cur = {'kind': 'screen' if m_scr else 'new', 'ln': i, 'no': int(m_scr.group(1)) if m_scr else None,
                    'title_h': (m_scr.group(2) if m_scr else re.sub(r'^\s*[—–-]\s*', '', m_new.group(1))).strip(), 'ops': None, 'note': '',
                    'script': None, 'tips': None, 'dup_script': None, 'title': None, 'body': None,
-                   'para': [], 'boxes': None}
+                   'para': [], 'boxes': None, 'split_k': None, 'split_script': None, 'split_tips': None, 'split_boxes': []}
             if m_scr:
                 if cur['no'] in doc['screens']:
                     prob('오류', i, '화면 %d 이 두 번 나온다' % cur['no'])
@@ -240,6 +259,24 @@ def parse(text):
             continue
         if l.startswith('제목:'):
             coll = None; cur['title'] = l[3:].strip(); continue
+        if l.startswith('나눈 뒤(2/2) 대본:'):          # v2.0 (발표 K11)
+            cur['split_script'] = []; coll = (cur['split_script'], '나눈 뒤 대본')
+            if l[len('나눈 뒤(2/2) 대본:'):].strip():
+                cur['split_script'].append(l[len('나눈 뒤(2/2) 대본:'):].strip())
+            continue
+        if l.startswith('나눈 뒤(2/2) 참고:'):
+            rest = l[len('나눈 뒤(2/2) 참고:'):].strip()
+            if rest == '없음':
+                cur['split_tips'] = 'NONE'; coll = None
+            else:
+                cur['split_tips'] = [rest] if rest else []; coll = (cur['split_tips'], '나눈 뒤 참고')
+            continue
+        if l.startswith('나눈 뒤(2/2) 상자 지우기:'):
+            coll = None
+            cur['split_boxes'] = re.findall(r'[“"]([^"”]+)[”"]', l)
+            if not cur['split_boxes']:
+                prob('오류', i, '나눈 뒤(2/2) 상자 지우기: 지울 글상자 글을 "…" 로')
+            continue
         if l.startswith('복제본(문제) 대본:'):
             cur['dup_script'] = []; coll = (cur['dup_script'], '복제본 대본')
             rest = l[len('복제본(문제) 대본:'):].strip()
@@ -408,6 +445,13 @@ def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout, ba
                     probs.append(('경고', fx['ln'], '본문 수정 화면 %d `%s` — 부분 일치로는 여러 번, 조각 전체로는 1번(whole 로 적용)' % (fx['screen'], fx['old'][:30])))
                 else:
                     probs.append(('오류', fx['ln'], '본문 수정 화면 %d `%s` — %s' % (fx['screen'], fx['old'][:30], r['reason'])))
+        for no, sc in sorted(doc['screens'].items()):   # v2.0 (발표 K11): 나누기 문단 수
+            if sc.get('split_k') and 1 <= no <= n:
+                nb = len(_body_paras_text(deck, order[no - 1]))
+                if not 0 < sc['split_k'] < nb:
+                    probs.append(('오류', sc['ln'], '화면 %d 나누기 — 본문 비어 있지 않은 문단이 %d개인데 %d 문단 뒤에서 나눌 수 없다' % (no, nb, sc['split_k'])))
+                elif sc['para']:
+                    probs.append(('경고', sc['ln'], '화면 %d 나누기 — 문단 작업이 먼저 적용된 뒤의 문단으로 센다(지금 %d개)' % (no, nb)))
         # v1.9 (발표 P1): 원작자 노트만 있는 덱(3부 구조가 어디에도 없음)에 대본을 쓰면 원작자 노트가 사라진다 — 기본은 멈춤
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         risk, structured = overwrite_risk(doc, deck)
@@ -493,6 +537,35 @@ def overwrite_risk(doc, deck):
     hit = [no for no, sc in sorted(doc['screens'].items()) if isinstance(sc['script'], list) and 1 <= no <= len(order)
            and not any(n == '삭제' for n, _ in (sc['ops'] or [])) and _raw_note(T, deck, order[no - 1])]
     return hit, _deck_has_structure(T, deck)
+
+
+def _body_paras_text(deck, sn):
+    """본문(제목이 아닌 첫 글 도형)의 비어 있지 않은 문단 글."""
+    try:
+        _, d, a, b = deck._body_span(sn)
+    except Exception:
+        return []
+    return [t for t in (_ptext(p) for p in re.findall(r'<a:p>.*?</a:p>', d[a:b], re.S)) if t.strip()]
+
+
+def _split_body(deck, sn, k, keep_first):
+    """본문 문단을 k 번째 비어 있지 않은 문단 뒤에서 자른다 — keep_first 면 앞쪽을, 아니면 뒤쪽(앞의 빈 문단 없이)을 남긴다."""
+    p, d, a, b = deck._body_span(sn)
+    region = d[a:b]
+    paras = list(re.finditer(r'<a:p>.*?</a:p>|<a:p/>', region, re.S))
+    seen, cut = 0, None
+    for j, m in enumerate(paras):
+        if _ptext(m.group(0)).strip():
+            seen += 1
+            if seen == k:
+                cut = j + 1; break
+    keep = paras[:cut] if keep_first else paras[cut:]
+    if not keep_first:
+        while keep and not _ptext(keep[0].group(0)).strip():
+            keep = keep[1:]
+    new_region = ''.join(m.group(0) for m in keep) or '<a:p/>'
+    lead = region[:paras[0].start()] if paras else ''
+    open(p, 'w', encoding='utf8').write(d[:a] + lead + new_region + d[b:])
 
 
 def content_hash(path):
@@ -1002,6 +1075,31 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
         rep['dup'].append((no, s, k, len(sc['boxes'] or [])))
     if rep['dup']:
         DONE('앞에 복제 %d' % len(rep['dup']))
+    # 5b. 나누기 (v2.0, 발표 K11) — 뒤에 복제(그림·글상자·원작자 메모 모두 — 사용자 09-27: 메모는 두 장 모두), 1/2 는 앞 k 문단,
+    #     2/2 는 나머지. 1/2 의 노트는 8단계(대본·참고), 2/2 는 '나눈 뒤(2/2) 대본·참고'. 나누기 전후 넘침 [심각] 을 보고
+    splits = [(no, sc) for no, sc in sorted(doc['screens'].items()) if sc.get('split_k')]
+    if splits:
+        import io as _io
+        sev = lambda lines, n: sum(1 for l in lines if l.startswith('[심각] slide%d:' % n))
+        before = T.check_text_overflow(D, stream=_io.StringIO())
+        rep['split'] = []
+        for no, sc in splits:
+            s1 = F[no - 1]
+            s2 = D.import_slide(D, s1, after=s1, pictures=True, copy_notes=True)
+            _split_body(D, s1, sc['split_k'], keep_first=True)
+            _split_body(D, s2, sc['split_k'], keep_first=False)
+            for box in sc['split_boxes'] or []:
+                _delete_box(D, s2, box)
+            if any(n == '제목에 번호' for n, _ in sc['ops']):
+                t0 = _title_text(D, s1)
+                _set_title_text(D, s1, t0 + ' (1/2)'); _set_title_text(D, s2, t0 + ' (2/2)')
+            tips2 = None if sc['split_tips'] in (None, 'NONE') else _tips_bullets(_plain_note(sc['split_tips']))
+            D.set_notes(s2, _plain_note(sc['split_script'] or []), tips2)
+            rep['split'].append({'no': no, 's1': s1, 's2': s2, 'k': sc['split_k'], 'before': sev(before, s1)})
+        after = T.check_text_overflow(D, stream=_io.StringIO())
+        for e in rep['split']:
+            e['after'] = (sev(after, e['s1']), sev(after, e['s2']))
+        DONE('나누기 %d' % len(splits))
     # 6. 이동 — 같은 자리 뒤로 가는 화면들은 원래 순서를 지킨다(v1.4, 발표 N2: 하나씩 같은 자리에 넣어 거꾸로 됐다)
     moves = {}
     for no, sc in sorted(doc['screens'].items()):
@@ -1081,6 +1179,8 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
         else:
             imp_bad.append(lb)
     rep['import_memo'] = (imp_ok, imp_bad)
+    for e in rep.get('split', []):
+        e['memo_same'] = e['s2'] in ro and R.notes_sections(e['s1'])[2] == R.notes_sections(e['s2'])[2]
     rep.pop('import_src', None)
     rep.update({'mapping': mapping, 'memo_ok': memo_ok, 'memo_bad': memo_bad, 'screens': len(ro),
                 'valid': (bool(T.validate(out_path, base_path)) if os.path.exists(VALIDATE_PY) else None),   # v1.6 (발표 K4): 없으면 '건너뜀'
@@ -1108,6 +1208,9 @@ def report(rep, stream=sys.stdout):
         w('| 가져옴 메모 대조 | 원천과 같음 %d%s |' % (ok, (' · **다름: %s**' % ', '.join(bad)) if bad else ''))
     if rep['dup']:
         w('| 앞에 복제 | %s |' % ', '.join('화면 %d → slide%d(빨강 %d 제거, 해설 상자 %d 삭제)' % d for d in rep['dup']))
+    for e in rep.get('split', []):
+        w('| 나누기 | 화면 %d → slide%d(1/2, 앞 %d문단) + slide%d(2/2) · 넘침 [심각] %d → %d + %d · 원작자 메모 두 장 %s |' % (
+            e['no'], e['s1'], e['k'], e['s2'], e['before'], e['after'][0], e['after'][1], '같음' if e.get('memo_same') else '**다름**'))
     if rep.get('dup_new'):
         w('| 앞에 복제(새·가져옴) | %s |' % ', '.join('"%s" → slide%d(빨강 %d 제거, 해설 상자 %d 삭제)' % d for d in rep['dup_new']))
     for lb, src, sn, mode, memo_n, sizes in rep.get('imports', []):

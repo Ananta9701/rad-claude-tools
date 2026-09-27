@@ -14,7 +14,7 @@ sys.path.insert(0, HERE)
 import handoff as H          # noqa: E402
 import deck_toolkit as T     # noqa: E402
 
-EXPECT_VERSION = '1.9'
+EXPECT_VERSION = '2.0'
 TMP = tempfile.mkdtemp(prefix='th_')
 # v2.26: validate.py(pptx 스킬)가 없는 환경(Cowork VM)에서는 보고가 '건너뜀'(None) — v2.25 가 이 환경에서 테스트 3개 실패
 VALID = True if os.path.exists(H.VALIDATE_PY) else None
@@ -530,6 +530,37 @@ def t_v19_raw_notes_stop_protect_scripts():
     out2 = os.path.join(TMP, 'p1_s.pptx'); rep2 = H.apply(d, base, out2, workdir=os.path.join(TMP, 'p1w2'), notes_mode='scripts')
     assert rep2['scripted_raw'] == 1 and any('--notes-are-scripts' in w for w in rep2['warn']), rep2
     buf = io.StringIO(); H.report(rep2, buf); assert '표지 없는 노트를 대본으로 덮은 화면 1' in buf.getvalue()
+
+
+def t_v20_split_slide():
+    base0 = _fixture_deck()
+    D0 = T.Deck.open(base0, os.path.join(TMP, 'sp0')); F0 = [x for x, _, _ in D0.order() if x]; n = len(F0)
+    p_, x_, a_, b_ = D0._body_span(F0[6])
+    open(p_, 'w', encoding='utf8').write(x_[:a_] + ''.join('<a:p><a:r><a:rPr lang="en-US"/><a:t>P%d line</a:t></a:r></a:p>' % k for k in range(1, 5)) + x_[b_:])
+    D0.set_notes(F0[6], ['원작자 메모 한 줄']); D0.protect_memo(F0[6])
+    base = os.path.join(TMP, 'sp_base.pptx'); D0.save(base)
+    D = T.Deck.open(base, os.path.join(TMP, 'sp1')); D.src_path = base; F = [x for x, _, _ in D.order() if x]
+    t7 = H._title_text(D, F[6])
+    sec = ('### 화면 7 — %s\n작업: 나누기 · 제목에 번호 — 본문 2 문단 뒤에서\n대본:\n앞 대본.\n참고: 없음\n'
+           '나눈 뒤(2/2) 대본:\n뒤 대본.\n나눈 뒤(2/2) 참고: 없음\n' % t7)
+    d = H.parse(doc(sec, n))
+    assert not errs(d) and d['screens'][7]['split_k'] == 2, d['problems']
+    assert H.check(d, D, stream=io.StringIO(), notes_mode='scripts')[0] == 0
+    bad = H.parse(doc(sec.replace('본문 2 문단', '본문 4 문단'), n))
+    assert H.check(bad, D, stream=io.StringIO(), notes_mode='scripts')[0] >= 1                  # 4문단 뒤는 나눌 수 없다
+    assert any('나눈 뒤(2/2) 대본' in p[2] for p in errs(H.parse(doc(sec.split('나눈 뒤(2/2) 대본:')[0], n))))
+    assert any('본문 k 문단' in p[2] for p in errs(H.parse(doc(sec.replace(' — 본문 2 문단 뒤에서', ''), n))))
+    out = os.path.join(TMP, 'sp_out.pptx')
+    rep = H.apply(d, base, out, workdir=os.path.join(TMP, 'spw'), notes_mode='scripts')
+    R = T.Deck.open(out, os.path.join(TMP, 'spr')); ro = [x for x, _, _ in R.order() if x]
+    e = rep['split'][0]; s1, s2 = e['s1'], e['s2']
+    assert ro.index(s2) == ro.index(s1) + 1 and len(ro) == n + 1
+    assert H._body_paras_text(R, s1) == ['P1 line', 'P2 line'] and H._body_paras_text(R, s2) == ['P3 line', 'P4 line']
+    assert H._title_text(R, s1) == t7 + ' (1/2)' and H._title_text(R, s2) == t7 + ' (2/2)'
+    assert R.notes_sections(s1)[0] == ['앞 대본.'] and R.notes_sections(s2)[0] == ['뒤 대본.']
+    assert R.notes_sections(s1)[2] == R.notes_sections(s2)[2] == ['원작자 메모 한 줄'] and e['memo_same']   # 메모는 두 장 모두(사용자)
+    buf = io.StringIO(); H.report(rep, buf)
+    assert '| 나누기 | 화면 7 →' in buf.getvalue() and '원작자 메모 두 장 같음' in buf.getvalue() and not rep['memo_bad'], buf.getvalue()
 
 
 def t_cli():

@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.30'
+EXPECT_VERSION = '16.31'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -1765,6 +1765,33 @@ def t_v1630_balance_and_own_size():
     assert T.balance_title_band(B, order[0], ref) == []                                # 기준 제목은 이미 규격·균형
     assert '23' in r4[0] and 'content' in open(B._slide(order[3]), encoding='utf8').read()
     B.save('/tmp/k10o.pptx'); assert T.validate('/tmp/k10o.pptx', path)
+
+
+def t_v1631_adopt_house_look():
+    d = T.Deck.open(SRC, wd('k12')); order = [x for x, _, _ in d.order() if x]
+    sn = order[6]; E = T.EMU_IN
+    x = open(d._slide(sn), encoding='utf8').read()
+    x = re.sub(r'<p:sp>(?:(?!<p:sp>).)*?type="(?:title|ctrTitle)"(?:(?!<p:sp>).)*?</p:sp>', '', x, flags=re.S)   # 제목 자리 표시자 없음(가져온 꼴)
+    def tb(i, nm, y, runs, fill=None):
+        f = '<a:solidFill><a:srgbClr val="%s"/></a:solidFill>' % fill if fill else '<a:noFill/>'
+        rr = ''.join('<a:r><a:rPr lang="en-US" sz="%d"><a:solidFill><a:srgbClr val="%s"/></a:solidFill></a:rPr><a:t>%s</a:t></a:r>' % r for r in runs)
+        return ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="%d" y="%d"/>'
+                '<a:ext cx="%d" cy="%d"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom>%s</p:spPr><p:txBody><a:bodyPr/><a:lstStyle/>'
+                '<a:p>%s</a:p></p:txBody></p:sp>' % (i, nm, int(0.5 * E), int(y * E), int(8 * E), int(0.8 * E), f, rr))
+    x = x.replace('</p:spTree>', tb(971, 'TextBox 1', 0.2, [(4000, 'FFFFFF', 'Endoleak')]) +
+                  tb(972, 'TextBox 2', 2.0, [(1800, 'FFFFFF', 'Type I '), (1800, 'FF0000', 'red emphasis')]) +
+                  tb(973, 'Dark box', 4.0, [(1800, 'FFFFFF', 'white on dark')], fill='1F1F1F') + '</p:spTree>')
+    open(d._slide(sn), 'w', encoding='utf8').write(x)
+    r = T.adopt_house_look(d, sn)
+    assert any('제목 글상자 "Endoleak"' in c for c in r) and any('밝은 글자색 1곳' in c for c in r), r
+    y = open(d._slide(sn), encoding='utf8').read()
+    ti = T._title_info(d, sn)
+    assert ti and ti['kind'] == 'ph' and ''.join(ti['paras']) == 'Endoleak' and 'name="TextBox 1"' not in y
+    b2 = re.search(r'name="TextBox 2".*?</p:sp>', y, re.S).group(0)
+    assert 'FFFFFF' not in b2 and 'FF0000' in b2                              # 흰 글자는 테마색으로, 빨강은 그대로
+    assert 'FFFFFF' in re.search(r'name="Dark box".*?</p:sp>', y, re.S).group(0)   # 어두운 상자 안 흰 글자는 그대로
+    assert T.adopt_house_look(d, order[1]) == [] or all(c.startswith('[참고]') or '밝은' in c for c in T.adopt_house_look(d, order[1], dry_run=True))
+    d.save('/tmp/k12.pptx'); assert T.validate('/tmp/k12.pptx', SRC)
 
 
 def t_v1619_da_after_vowel():

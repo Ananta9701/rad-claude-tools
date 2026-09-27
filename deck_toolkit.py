@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.30'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.31'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -3335,6 +3335,145 @@ def balance_title_band(deck, slide_no, prof, gap_in=0.1, min_ins_in=0.05, dry_ru
         (i['tIns'] or 0) / EMU_IN, (i['bIns'] or 0) / EMU_IN, ins / EMU_IN, ins / EMU_IN, lines, sz // 100)]
 
 
+def _theme_rgb(deck, slide_no):
+    """마스터의 테마 색표 {이름: 'RRGGBB'} — bg1/tx1/bg2/tx2 는 마스터 clrMap 으로 풀어 둔다."""
+    mp = _master_of(deck, slide_no)
+    if not mp or not os.path.exists(mp):
+        return {}
+    rel = os.path.join(os.path.dirname(mp), '_rels', os.path.basename(mp) + '.rels')
+    tm = re.search(r'Target="\.\./theme/(theme\d+\.xml)"', open(rel, encoding='utf8').read()) if os.path.exists(rel) else None
+    if not tm:
+        return {}
+    th = open(os.path.join(deck.dir, 'ppt/theme', tm.group(1)), encoding='utf8').read()
+    out = {}
+    for m in re.finditer(r'<a:(dk1|lt1|dk2|lt2|accent\d|hlink|folHlink)>(.*?)</a:\1>', th, re.S):
+        c = re.search(r'(?:srgbClr val|lastClr)="([0-9A-Fa-f]{6})"', m.group(2))
+        if c:
+            out[m.group(1)] = c.group(1).upper()
+    cm = re.search(r'<p:clrMap\b([^>]*)/>', open(mp, encoding='utf8').read())
+    amap = dict(re.findall(r'(\w+)="(\w+)"', cm.group(1))) if cm else {'bg1': 'lt1', 'tx1': 'dk1', 'bg2': 'lt2', 'tx2': 'dk2'}
+    for k in ('bg1', 'tx1', 'bg2', 'tx2'):
+        if amap.get(k) in out:
+            out[k] = out[amap[k]]
+    return out
+
+
+def _fill_rgb(xml, theme):
+    """solidFill 안의 srgbClr/schemeClr → 'RRGGBB' (못 풀면 None)."""
+    c = re.search(r'<a:srgbClr val="([0-9A-Fa-f]{6})"', xml or '')
+    if c:
+        return c.group(1).upper()
+    c = re.search(r'<a:schemeClr val="(\w+)"', xml or '')
+    return theme.get(c.group(1)) if c else None
+
+
+def _lum(rgb):
+    r, g, b = (int(rgb[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _slide_bg_rgb(deck, slide_no, theme):
+    """슬라이드 → 레이아웃 → 마스터 순서로 단색 배경. 그림·그라데이션이면 None, 어디에도 없으면 bg1."""
+    paths = [deck._slide(slide_no), os.path.join(deck.dir, 'ppt/slideLayouts', deck.layout_of(slide_no)), _master_of(deck, slide_no)]
+    for pth in paths:
+        if not pth or not os.path.exists(pth):
+            continue
+        bg = re.search(r'<p:bg>(.*?)</p:bg>', open(pth, encoding='utf8').read(), re.S)
+        if bg:
+            if re.search(r'<a:(?:blipFill|gradFill|pattFill)\b', bg.group(1)):
+                return None
+            return _fill_rgb(bg.group(1), theme)
+    return theme.get('bg1', 'FFFFFF')
+
+
+def adopt_house_look(deck, slide_no, dry_run=False, light_text=0.85, light_bg=0.6):
+    """v16.31 (발표 K12): 가져온 슬라이드를 기준 덱 모양으로 — ① 밝은 배경 위의 아주 밝은 글자색(흰색 등)을 지워 테마 글자색을
+    따르게(강조색·어두운 채움 상자 안의 흰 글자는 그대로), ② 제목 자리 표시자가 비었으면 위쪽의 제목 글상자(위 25% 안, 가장 큰
+    글자, 두 문단 이하·80자 이하)를 제목 자리 표시자로 옮긴다(글만 옮기고 글상자는 지운다 — 뒤에 titles/title-bands 규격을 받게).
+    그림·도형 색은 건드리지 않는다. 반환: 문자열 목록('[참고]' = 바꾸지 않은 까닭)."""
+    p = deck._slide(slide_no); x = open(p, encoding='utf8').read()
+    theme = _theme_rgb(deck, slide_no)
+    W, H = deck.slide_size()
+    out = []
+    # ② 제목
+    ti = _title_info(deck, slide_no)
+    has_title = bool(ti and ti['kind'] == 'ph' and ''.join(ti['paras']).strip())
+    if not has_title:
+        cands = []
+        for m in re.finditer(r'<p:sp>(?:(?!<p:sp>).)*?</p:sp>', x, re.S):
+            seg = m.group(0)
+            if '<p:ph' in seg or '<p:txBody>' not in seg:
+                continue
+            xf = re.search(r'<a:off x="(-?\d+)" y="(-?\d+)"', seg)
+            paras = [html.unescape(''.join(re.findall(r'<a:t>([^<]*)</a:t>', q))) for q in re.findall(r'<a:p>.*?</a:p>', seg, re.S)]
+            paras = [q for q in paras if q.strip()]
+            szs = [int(v) for v in re.findall(r'<a:rPr\b[^>]*\bsz="(\d+)"', seg)]
+            if xf and paras and int(xf.group(2)) < H * 0.25:
+                cands.append((max(szs) if szs else 0, m, seg, paras))
+        big = sorted(cands, key=lambda c: -c[0])
+        lay = os.path.join(deck.dir, 'ppt/slideLayouts', deck.layout_of(slide_no))
+        lay_has_title = os.path.exists(lay) and re.search(r'<p:ph\b[^>]*type="(?:title|ctrTitle)"', open(lay, encoding='utf8').read())
+        if not big:
+            out.append('[참고] 제목 자리 표시자가 비었는데 위쪽에 제목 글상자 후보가 없다')
+        elif len(big) > 1 and big[0][0] == big[1][0]:
+            out.append('[참고] 위쪽 글상자 중 가장 큰 글자가 둘 이상(%dpt) — 제목을 고르지 않음' % (big[0][0] // 100))
+        elif len(big[0][3]) > 2 or len(' '.join(big[0][3])) > 80:
+            out.append('[참고] 위쪽 가장 큰 글상자가 제목으로 보기에 길다 — 옮기지 않음: "%s"' % ' '.join(big[0][3])[:40])
+        elif not lay_has_title:
+            out.append('[참고] 레이아웃에 제목 자리 표시자가 없다 — 옮기지 않음')
+        else:
+            sz, m, seg, paras = big[0]
+            text = ' '.join(t.strip() for t in paras)
+            ids = [int(v) for v in re.findall(r'<p:cNvPr\b[^>]*\bid="(\d+)"', x)]
+            body = '<a:p><a:r><a:rPr lang="ko-KR" dirty="0"/><a:t>%s</a:t></a:r></a:p>' % html.escape(text, quote=False)
+            if ti and ti['kind'] == 'ph':      # 빈 제목 자리 표시자에 글을 넣는다
+                new_t = re.sub(r'(<p:txBody>.*?)(<a:p>.*</a:p>|<a:p/>)(\s*</p:txBody>)', lambda mm: mm.group(1) + body + mm.group(3), ti['seg'], 1, flags=re.S)
+                if '<p:txBody>' not in ti['seg']:
+                    new_t = ti['seg'].replace('</p:sp>', '<p:txBody><a:bodyPr/><a:lstStyle/>%s</p:txBody></p:sp>' % body)
+                x2 = x[:ti['start']] + new_t + x[ti['end']:]
+                x2 = x2.replace(seg, '', 1)
+            else:
+                sp = ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="제목 %d"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="title"/></p:nvPr>'
+                      '</p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>%s</p:txBody></p:sp>') % (max(ids + [1]) + 1, max(ids + [1]) + 1, body)
+                x2 = x.replace(seg, '', 1)
+                x2 = re.sub(r'(<p:grpSpPr\s*/>|<p:grpSpPr>.*?</p:grpSpPr>)', lambda mm: mm.group(1) + sp, x2, 1, flags=re.S)
+            x = x2
+            out.append('제목 글상자 "%s"(%dpt) → 제목 자리 표시자' % (text[:40], sz // 100))
+    # ① 글자색
+    bg = _slide_bg_rgb(deck, slide_no, theme)
+    if bg is None:
+        out.append('[참고] 배경이 그림·그라데이션 — 글자색 그대로')
+    elif _lum(bg) < light_bg:
+        out.append('[참고] 배경이 어둡다(#%s) — 글자색 그대로' % bg)
+    else:
+        n_runs = 0
+
+        def fix_shape(mm):
+            nonlocal n_runs
+            seg = mm.group(0)
+            sp = (re.search(r'<p:spPr\b.*?</p:spPr>', seg, re.S) or [''])[0]
+            own = _fill_rgb((re.search(r'<a:solidFill>.*?</a:solidFill>', re.sub(r'<a:ln\b.*?</a:ln>', '', sp, flags=re.S), re.S) or [''])[0], theme)
+            if own and _lum(own) < light_bg:
+                return seg                      # 어두운 채움 상자 안의 흰 글자는 그대로
+
+            def fix_rpr(rm):
+                nonlocal n_runs
+                inner = rm.group(0)
+                sf = re.search(r'<a:solidFill>(.*?)</a:solidFill>', inner, re.S)
+                c = _fill_rgb(sf.group(1), theme) if sf else None
+                if c and _lum(c) >= light_text:
+                    n_runs += 1
+                    return inner.replace(sf.group(0), '', 1)
+                return inner
+            return re.sub(r'<a:(?:rPr|endParaRPr)\b[^>]*>.*?</a:(?:rPr|endParaRPr)>', fix_rpr, seg, flags=re.S)
+        x = re.sub(r'<p:sp>(?:(?!<p:sp>).)*?</p:sp>', fix_shape, x, flags=re.S)
+        if n_runs:
+            out.append('밝은 글자색 %d곳을 지워 테마 글자색으로(배경 #%s)' % (n_runs, bg))
+    if not dry_run:
+        open(p, 'w', encoding='utf8').write(x)
+    return out
+
+
 def _shapes_below_title(deck, slide_no, title_start, title_end):
     """제목 말고 내용 도형들의 (이름, 위쪽 y). 날짜·바닥글·번호 placeholder 와 슬라이드 전체 배경 그림은 뺀다."""
     x = open(deck._slide(slide_no), encoding='utf8').read()
@@ -5035,6 +5174,8 @@ def main():
     po.add_argument('--font', default=DEFAULT_FONT, choices=list(FONT_PROFILES))
     po.add_argument('--audience', choices=('internal', 'external'), default=None, help='내부 발표는 환자 정보 검사 생략, 외부는 [!] (v16.9)')
     ex = sub.add_parser('handout'); ex.add_argument('pptx'); ex.add_argument('-o', required=True)
+    hl = sub.add_parser('adopt-house-look', help='가져온 슬라이드의 흰 글자·글상자 제목을 기준 덱 모양으로(v16.31, 발표 K12)')
+    hl.add_argument('pptx'); hl.add_argument('-o', required=True); hl.add_argument('--screens', required=True); hl.add_argument('--dry-run', action='store_true')
     tb = sub.add_parser('title-bands', help='제목 띠가 필요 높이보다 낮으면 키운다 — Google Slides 안전(v16.28, 발표 K8)')
     tb.add_argument('pptx'); tb.add_argument('-o', required=True); tb.add_argument('--screens', default=None); tb.add_argument('--dry-run', action='store_true')
     tb.add_argument('--shrink-bottom-inset', nargs='?', const=0.1, type=float, default=None,
@@ -5182,6 +5323,14 @@ def main():
         validate(args.o, args.pptx)
     elif args.cmd == 'handout':
         print(export_notes(Deck.open(args.pptx), args.o))
+    elif args.cmd == 'adopt-house-look':
+        dk = Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]
+        for pos in sorted(_parse_screens(args.screens, len(order))):
+            for c in adopt_house_look(dk, order[pos - 1], dry_run=args.dry_run):
+                print('화면 %d: %s' % (pos, c))
+        if not args.dry_run:
+            dk.save(args.o)
+        print('(dry-run — 저장 안 함)' if args.dry_run else '→ %s' % args.o)
     elif args.cmd == 'title-bands':
         dk = Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]
         want = _parse_screens(args.screens, len(order)) if args.screens else set(range(1, len(order) + 1))
