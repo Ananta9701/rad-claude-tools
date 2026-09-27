@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.29'
+EXPECT_VERSION = '16.30'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -1716,13 +1716,55 @@ def t_v1629_shrink_bottom_inset_and_joint_profile():
     # K8-b: 높이와 여백을 같은 제목에서 — 여백 큰 제목(1.22") 셋 + 여백 작은 제목(0.66") 여섯이면 여백 규격은 작은 것, 높이도 그 제목들의 0.66"
     p3 = mk(os.path.join(TMP, 'k8b.pptx'), [(1117331, 360000)] * 3 + [(605908, 45720)] * 6)
     B3 = T.Deck.open(p3, wd('k8b')); prof = T.title_profile(B3, like=1)
-    assert prof['ins'][2] == 45720 and prof['h_by_lines'][1] == 605908 and prof['excluded'] == 0, prof
+    # v16.30: 기준 제목(화면 1, 여백 0.39")의 무리에서만 배운다 — 수가 적어도 뒤집히지 않는다
+    assert prof['ins'][2] == 360000 and prof['h_by_lines'][1] == 1117331 and prof['groups'] == {0.39: 3, 0.05: 6}, prof
+    prof_b = T.title_profile(B3, like=4)
+    assert prof_b['ins'][2] == 45720 and prof_b['h_by_lines'][1] == 605908, prof_b
     p4 = mk(os.path.join(TMP, 'k8c.pptx'), [(1117331, 360000)] * 6 + [(605908, 45720)] * 3)
     prof4 = T.title_profile(T.Deck.open(p4, wd('k8c')), like=1)
     assert prof4['ins'][2] == 360000 and prof4['h_by_lines'][1] == 1117331, prof4              # 섞지 않는다
     r = subprocess.run([sys.executable, os.path.join(HERE, 'deck_toolkit.py'), 'titles', p4, '--like', '1'], capture_output=True, text=True,
                        env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
-    assert '1줄 제목 9개' in r.stdout and '안쪽 여백 규격' in r.stdout, r.stdout[-600:]
+    assert '1줄 제목 6개' in r.stdout and '안쪽 여백 규격' in r.stdout and '제목 무리' in r.stdout, r.stdout[-600:]
+
+
+def t_v1630_balance_and_own_size():
+    from pptx import Presentation
+    from pptx.util import Pt, Emu, Inches
+    from pptx.dml.color import RGBColor
+    prs = Presentation(); prs.slide_width, prs.slide_height = Inches(10), Inches(7.5)
+    def add(h, ins, sz, text, body_top=None):
+        sl = prs.slides.add_slide(prs.slide_layouts[5])
+        t = sl.shapes.title; t.left, t.top, t.width, t.height = Emu(0), Emu(0), Inches(10), Emu(h)
+        t.fill.solid(); t.fill.fore_color.rgb = RGBColor(0xD9, 0xD9, 0xD9)
+        t.text_frame.text = text; t.text_frame.margin_top = t.text_frame.margin_bottom = Emu(ins)
+        for r in t.text_frame.paragraphs[0].runs:
+            r.font.size = Pt(sz)
+        if body_top is not None:
+            b = sl.shapes.add_textbox(Inches(0.5), Inches(body_top), Inches(6), Inches(1)); b.name = 'Body'; b.text_frame.text = 'content'
+    for _ in range(3):
+        add(1117331, 360000, 28, 'Q. reference title')                         # 기준 무리(여백 0.39", 1줄 1.22")
+    long_t = 'Q. a title long enough to wrap only at the larger size xx'        # 28pt 로 세면 2줄, 23pt 면 1줄
+    add(605908, 45720, 23, long_t, body_top=1.08)                                # 4: 가져온 무리, 본문이 1.08" 에서
+    add(605908, 45720, 23, 'Q. no body below')                                   # 5: 아래 내용 없음
+    add(605908, 45720, 23, 'Q. body too close', body_top=0.45)                   # 6: 본문이 너무 가까움
+    path = os.path.join(TMP, 'k10.pptx'); prs.save(path)
+    B = T.Deck.open(path, wd('k10')); order = [x for x, _, _ in B.order() if x]
+    i4 = T._title_info(B, order[3])
+    assert T._title_lines(i4, 2800) == 2 and T._title_lines(i4, 2300) == 1, (T._title_lines(i4, 2800), T._title_lines(i4, 2300))
+    prof = T.title_profile(B, like=4)
+    assert prof['excluded'] == 0, prof['excluded_list']                          # 화면 6·7: 자기 크기(23pt)로 1줄 — 빼지 않는다
+    ref = T.title_profile(B, like=1)
+    r4 = T.balance_title_band(B, order[3], ref)
+    i4 = T._title_info(B, order[3])
+    assert r4 and '아래 "Body" 까지' in r4[0] and i4['tIns'] == i4['bIns'] and i4['y'] + i4['h'] == int(1.08 * T.EMU_IN) - int(0.1 * T.EMU_IN), (r4, i4['h'], i4['tIns'])
+    r5 = T.balance_title_band(B, order[4], ref)
+    i5 = T._title_info(B, order[4])
+    assert r5 and '(규격)' in r5[0] and i5['h'] == 1117331 and i5['tIns'] == i5['bIns'], (r5, i5['h'])
+    assert T.balance_title_band(B, order[5], ref)[0].startswith('[!]')                  # 0.45" − 0.1" 에 23pt 글이 안 들어감
+    assert T.balance_title_band(B, order[0], ref) == []                                # 기준 제목은 이미 규격·균형
+    assert '23' in r4[0] and 'content' in open(B._slide(order[3]), encoding='utf8').read()
+    B.save('/tmp/k10o.pptx'); assert T.validate('/tmp/k10o.pptx', path)
 
 
 def t_v1619_da_after_vowel():
