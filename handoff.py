@@ -16,7 +16,7 @@ import os
 import re
 import sys
 
-__version__ = '1.7'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
+__version__ = '1.8'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
 
 KEYS = ('작업:', '대본:', '참고:', '본문:', '제목:', '복제본(문제) 대본:')
 PARA_OP = re.compile(r'^문단 (교체|추가|삭제)\b')
@@ -343,7 +343,7 @@ def _title_text(D, sn):
     return _h.unescape(' '.join(''.join(re.findall(r'<a:t>([^<]*)</a:t>', p)) for p in re.findall(r'<a:p>.*?</a:p>', m.group(0), re.S))).strip()
 
 
-def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout):
+def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout, base_origin=None):
     """문법 문제 + (deck 가 있으면) 기준 덱 대조 → 보고서. 반환: (오류 수, 경고 수)."""
     probs = list(doc['problems'])
     w = lambda s='': print(s, file=stream)
@@ -358,13 +358,22 @@ def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout):
         n = len(order)
         if doc['screens_n'] and n != doc['screens_n']:
             probs.append(('오류', 0, '기준 덱 화면 수 %d ≠ 넘김 머리 %d화면 — 기준 판이 다르다' % (n, doc['screens_n'])))
-        if doc['base_sha'] and deck_path_sha(deck) and deck_path_sha(deck) != doc['base_sha']:
-            ch = content_hash(deck.src_path)
+        # v1.8 (Cowork 근골격 v1): 발표가 적용 전에 기준 덱을 정리(normalize-notes)하면 파일이 바뀐다 — 넘김의 기준 sha256 은
+        # 정리 전 원본(--base-origin)으로 대조하고, 화면 수·제목·문단 키는 적용할 덱으로 본다. 넘김 사본을 만들어 sha 줄을 지우지 않는다
+        ref_path = base_origin or getattr(deck, 'src_path', None)
+        ref_sha = hashlib.sha256(open(ref_path, 'rb').read()).hexdigest()[:16] if ref_path and os.path.exists(ref_path) else None
+        if base_origin and not os.path.exists(base_origin):
+            probs.append(('오류', 0, '--base-origin 파일이 없다: %s' % base_origin))
+        elif base_origin and not doc['base_sha']:
+            probs.append(('경고', 0, '--base-origin 을 줬지만 넘김 머리에 기준 sha256 이 없다 — 원본 대조를 하지 못했다'))
+        if doc['base_sha'] and ref_sha and ref_sha != doc['base_sha']:
+            ch = content_hash(ref_path)
             if ch == doc['base_sha']:   # v1.6 (발표 K1): 파일 sha 는 zip 안 시각·압축이 달라도 바뀐다 — 내용이 같으면 경고만
-                probs.append(('경고', 0, '기준 덱 파일 sha256 %s ≠ 넘김의 %s 이지만 **내용 해시가 같다** — 같은 판의 다른 사본(다시 압축됨)' % (deck_path_sha(deck), doc['base_sha'])))
+                probs.append(('경고', 0, '기준 덱 파일 sha256 %s ≠ 넘김의 %s 이지만 **내용 해시가 같다** — 같은 판의 다른 사본(다시 압축됨)' % (ref_sha, doc['base_sha'])))
             else:
-                probs.append(('오류', 0, '기준 덱 sha256 %s(내용 해시 %s) ≠ 넘김 머리의 기준 sha256 %s — 기준 판과 파일이 다르다. 다른 판이거나, '
-                              '사용자가 고쳐 저장했는지 확인(열어 저장만 해도 바뀐다)' % (deck_path_sha(deck), ch, doc['base_sha'])))
+                probs.append(('오류', 0, '기준 덱%s sha256 %s(내용 해시 %s) ≠ 넘김 머리의 기준 sha256 %s — 기준 판과 파일이 다르다. 다른 판이거나, '
+                              '사용자가 고쳐 저장했는지 확인(열어 저장만 해도 바뀐다). 적용 전에 덱을 정리했으면 --base-origin 정리 전 원본'
+                              % (' 원본' if base_origin else '', ref_sha, ch, doc['base_sha'])))
         bad_titles = []
         for no, sc in sorted(doc['screens'].items()):
             if no < 1 or no > n:
@@ -424,6 +433,9 @@ def check(doc, deck=None, doc_bytes=None, expect_sha=None, stream=sys.stdout):
     w('| 기준 | %s (%s화면)%s |' % (doc['base'], doc['screens_n'], (' · 덱 %d화면' % len(order)) if deck is not None else ''))
     if doc.get('range'):
         w('| 번호 연도 범위 | %s (넘김 머리 — 기준 덱 이름보다 먼저) |' % doc['range'])
+    if base_origin:
+        w('| 기준 대조 | 기준 sha256 은 원본 `%s` 로, 화면·제목·문단은 적용할 덱 `%s` 로 |' % (
+            os.path.basename(base_origin), os.path.basename(getattr(deck, 'src_path', '') or '')))
     w('| 화면 구역 | %d (새 슬라이드 %d) · 노트 바뀌는 화면 %d · 본문 수정 %d줄 |' % (len(doc['screens']), len(doc['new']), notes, len(doc['fixes'])))
     w('| 판정 | %s |' % ('**적용 가능**' if not errs else '**멈춤 — 오류 %d**' % len(errs)) + (' · 경고 %d' % len(warns) if warns else ''))
     if probs:
@@ -1176,10 +1188,12 @@ def main():
     sub = ap.add_subparsers(dest='cmd', required=True)
     c = sub.add_parser('check', help='문법 검사 + (--deck) 기준 덱 대조 미리보기')
     c.add_argument('md'); c.add_argument('--deck', default=None); c.add_argument('--sha', default=None, help='보낸 쪽이 적은 넘김 문서 sha256 앞 16자')
+    c.add_argument('--base-origin', default=None, help='적용 전에 정리한 덱이면 정리 전 원본 — 넘김의 기준 sha256 을 이것으로 대조(v1.8)')
     ap_ = sub.add_parser('apply', help='check 오류 0 일 때만 적용 + 보고서 (v1.2)')
     ap_.add_argument('md'); ap_.add_argument('--deck', required=True); ap_.add_argument('-o', '--out', required=True)
     ap_.add_argument('--sha', default=None); ap_.add_argument('--import', dest='imports', action='append', default=[], help='덱이름=경로 (가져옴)')
     ap_.add_argument('--report', default=None, help='보고서 md 도 파일로')
+    ap_.add_argument('--base-origin', default=None, help='--deck 이 정리본이면 정리 전 원본(기준 sha256 대조용, v1.8)')
     cp = sub.add_parser('compare', help='두 덱을 화면별로 비교(글·노트·숨김·배경) — 도구 적용본과 손 적용본 대조 (v1.2)')
     cp.add_argument('a'); cp.add_argument('b')
     a = ap.parse_args()
@@ -1191,7 +1205,7 @@ def main():
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         import deck_toolkit as T
         D = T.Deck.open(a.deck); D.src_path = a.deck
-        e, _ = check(doc, D, b, a.sha)
+        e, _ = check(doc, D, b, a.sha, base_origin=a.base_origin)
         if e:
             print('\n**적용하지 않았다 — 위 오류를 넘긴 쪽에 돌려보낸다**')
             sys.exit(1)
@@ -1217,7 +1231,7 @@ def main():
         import deck_toolkit as T
         D = T.Deck.open(a.deck)
         D.src_path = a.deck
-    e, _ = check(doc, D, b, a.sha)
+    e, _ = check(doc, D, b, a.sha, base_origin=a.base_origin)
     sys.exit(1 if e else 0)
 
 

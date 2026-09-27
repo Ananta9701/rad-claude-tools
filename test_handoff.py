@@ -14,7 +14,7 @@ sys.path.insert(0, HERE)
 import handoff as H          # noqa: E402
 import deck_toolkit as T     # noqa: E402
 
-EXPECT_VERSION = '1.7'
+EXPECT_VERSION = '1.8'
 TMP = tempfile.mkdtemp(prefix='th_')
 # v2.26: validate.py(pptx 스킬)가 없는 환경(Cowork VM)에서는 보고가 '건너뜀'(None) — v2.25 가 이 환경에서 테스트 3개 실패
 VALID = True if os.path.exists(H.VALIDATE_PY) else None
@@ -481,6 +481,29 @@ def t_v17_compare_resolves_inherited_size():
     C = os.path.join(TMP, 'n5_c.pptx'); D3.save(C)
     buf = io.StringIO(); H.compare(A, C, buf, os.path.join(TMP, 'n5e'))
     assert '서식' in buf.getvalue(), buf.getvalue()                              # 굵게는 여전히 다름
+
+
+def t_v18_base_origin_for_normalized_deck():
+    base = _fixture_deck()
+    D0 = T.Deck.open(base, os.path.join(TMP, 'bo0')); F0 = [x for x, _, _ in D0.order() if x]; n = len(F0)
+    D0.set_notes(F0[2], ['정리한 노트'])                                      # 적용 전 정리(normalize-notes 흉내) — 파일이 바뀐다
+    norm = os.path.join(TMP, 'bo_norm.pptx'); D0.save(norm)
+    sha0 = hashlib.sha256(open(base, 'rb').read()).hexdigest()[:16]
+    md = doc('### 화면 2 — %s\n작업: 없음\n대본:\n가\n참고: 없음\n' % H._title_text(D0, F0[1]), n)
+    md = md.replace('— 화면 번호는 v1 기준\n', '— 화면 번호는 v1 기준\n> 기준 sha256: `%s`\n' % sha0)
+    d = H.parse(md); assert d['base_sha'] == sha0
+    N = T.Deck.open(norm, os.path.join(TMP, 'bo1')); N.src_path = norm
+    assert H.check(d, N, stream=io.StringIO())[0] >= 1                        # 정리본만으로는 기준 sha 가 다르다
+    buf = io.StringIO(); e, _ = H.check(d, N, stream=buf, base_origin=base)
+    assert e == 0 and '기준 대조 | 기준 sha256 은 원본' in buf.getvalue(), buf.getvalue()
+    other = _src_deck()
+    assert H.check(d, N, stream=io.StringIO(), base_origin=other)[0] >= 1      # 원본이 다른 판이면 오류
+    assert H.check(d, N, stream=io.StringIO(), base_origin='/nonexistent.pptx')[0] >= 1
+    out = os.path.join(TMP, 'bo_out.pptx')
+    r = subprocess.run([sys.executable, os.path.join(HERE, 'handoff.py'), 'apply', os.path.join(TMP, 'bo.md'), '--deck', norm, '-o', out,
+                        '--base-origin', base], capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'),
+                       input=None) if open(os.path.join(TMP, 'bo.md'), 'w', encoding='utf8').write(md) else None
+    assert r.returncode == 0 and os.path.exists(out), (r.stdout[-500:], r.stderr[-500:])
 
 
 def t_cli():
