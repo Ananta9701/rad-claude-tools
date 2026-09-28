@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.34'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.35'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -3753,14 +3753,20 @@ def fit_layout(deck, slide_no, title_min=20, body_min=14, body_max=None, max_up=
     cand = [q for q in texts if q is not label and id(q) not in attached]
     body = max(cand, key=lambda q: q['geo'][2] * q['geo'][3], default=None)
     # 그림 바로 바깥(0.3" 이내)의 작은 글상자 = 그림 설명 — 그림과 같이 움직인다(자리 규칙은 뒤 단계)
+    cites = [q for q in texts if q is not body and q is not label and id(q) not in attached and _is_cite(txt(q))]
+    cap_notes = []
     for q in texts:
-        if q is body or q is label or id(q) in attached:
+        if q is body or q is label or id(q) in attached or q in cites:
             continue
         for p_ in pics:
             px, py, pw, ph_ = p_['geo']; g = int(0.3 * E)
             if q['geo'][2] * q['geo'][3] < 0.25 * pw * ph_ and _inter(q['geo'], (px - g, py - g, pw + 2 * g, ph_ + 2 * g)):
-                ann.setdefault(id(p_), []).append(q); attached.add(id(q)); break
-    fixed = [q for q in rest if q['geo'] and q not in pics and q is not body and q is not label and id(q) not in attached
+                ann.setdefault(id(p_), []).append(q); attached.add(id(q))
+                qx, qy, qw, qh = q['geo']
+                dist = max(0, max(px - (qx + qw), qx - (px + pw), py - (qy + qh), qy - (py + ph_)))
+                cap_notes.append('설명 판정: "%s" — 그림 "%s" 과 %.2f" · 넓이 %d%%' % (q['name'], p_['name'], dist / E, 100 * qw * qh // max(1, pw * ph_)))
+                break
+    fixed = [q for q in rest if q['geo'] and q not in pics and q is not body and q is not label and id(q) not in attached and q not in cites
              and not re.search(r'<p:ph\b[^>]*type="(?:dt|ftr|sldNum)"', q['seg'])]
     fp = _theme_body_font_file(deck, slide_no)
     # ① 제목
@@ -3833,7 +3839,13 @@ def fit_layout(deck, slide_no, title_min=20, body_min=14, body_max=None, max_up=
             n = _est_lines_font(t, ps, bw - l_ - r_, fp) if fp else _est_lines(t, ps, bw - l_ - r_)
             hh += max(1, n) * ps * LINE_FACTOR * 12700
         return int(hh * text_margin) + t_ + b_
-    obst0 = [q['geo'] for q in fixed if not any(_inter(q['geo'], p_['geo']) for p_ in pics)] + ([lab_box] if lab_box else [])
+    cite_boxes, cy_ = [], H - int(margin * E)
+    for q in sorted(cites, key=lambda q: -q['geo'][1]):          # 아래에 있던 것부터 우하단에 쌓는다(K19-2, §0)
+        qw, qh = min(q['geo'][2], W - 2 * int(margin * E)), q['geo'][3]
+        cy_ -= qh
+        cite_boxes.append((q, (W - int(margin * E) - qw, cy_, qw, qh)))
+        cy_ -= int(0.03 * E)
+    obst0 = [q['geo'] for q in fixed if not any(_inter(q['geo'], p_['geo']) for p_ in pics)] + ([lab_box] if lab_box else []) + [b for _, b in cite_boxes]
     side = bool(pics and body) and (arrange == 'side' or (arrange == 'auto' and all(
         p_['geo'][0] + p_['geo'][2] / 2.0 > body['geo'][0] + body['geo'][2] / 2.0 for p_ in pics)))
     groups = [(p_, ann.get(id(p_), [])) for p_ in pics]
@@ -3900,8 +3912,16 @@ def fit_layout(deck, slide_no, title_min=20, body_min=14, body_max=None, max_up=
             if best is None or area > best[0] * 1.001:
                 best = (area, {'body': (bb + (pt,)) if bb else None, 'pics': [(p_, k, a, d) for p_, k, a, d, _ in placed]})
         if best is None:
-            return ['[!] 본문 %dpt·그림 %d%% 하한에서도 겹침 없이 안 들어간다 — 바꾸지 않음(나누기 필요)' % (body_min, int(min_scale * 100))]
-        plan = best[1]
+            # v16.35 (발표 K19-1): 크기·위치 조정만 건너뛰고, 제목 빼기와 이름표(자리·맨 앞)는 적용한다
+            out = [o for o in out if o.startswith('제목') and '뺌' in o]
+            msg = '[!] 본문 %dpt·그림 %d%% 하한에서도 겹침 없이 안 들어간다 — 크기 조정 못 함%s(나누기 필요할 수 있음)' % (
+                body_min, int(min_scale * 100), ' · 제목 뺌·이름표만' if (drop_title or label) else '')
+            if not (drop_title or label):
+                return [msg]
+            edits = []
+            plan = {'body': None, 'pics': []}
+            cite_boxes = []
+            out.insert(0, msg)
     # 적용 — 본문
     if body and plan['body']:
         bx, by, bw, bh, pt = plan['body']
@@ -3929,11 +3949,23 @@ def fit_layout(deck, slide_no, title_min=20, body_min=14, body_max=None, max_up=
             return (int(AX + (X - AX) * k), int(AY + (Y - AY) * k), int(CX * k), int(CY * k))
         for q in [p_] + ann.get(id(p_), []):
             qx, qy, qw, qh = tf(q['geo'])
+            if q is not p_ and (qx < 0 or qy < 0 or qx + qw > W or qy + qh > H):
+                if qw > W or qh > H:
+                    out.append('[!] "%s" 이 그림과 같이 옮기면 슬라이드 밖 — 옮기지 않음' % q['name']); continue
+                qx, qy = min(max(qx, 0), W - qw), min(max(qy, 0), H - qh)
+                out.append('[참고] "%s" 이 슬라이드 밖으로 나가 안으로 들임' % q['name'])
             qs = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy="\d+"', '<a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"' % (qx, qy, qw, qh), q['seg'], 1)
             if q is not p_ and abs(k - 1) > 1e-3:
                 qs = re.sub(r'(<a:(?:rPr|endParaRPr)\b[^>]*?\bsz=")(\d+)"', lambda mm: '%s%d"' % (mm.group(1), max(800, int(int(mm.group(2)) * k))), qs)
             edits.append((q['start'], q['end'], qs))
         out.append('그림 "%s" %d%%%s' % (p_['name'], int(round(k * 100)), (' · 주석·설명 %d 같이' % len(ann.get(id(p_), []))) if ann.get(id(p_)) else ''))
+    # 적용 — 인용·출처 메모(우하단, 슬라이드 안)
+    for q, (cx_, cy2, cw, ch) in cite_boxes:
+        qs = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy="\d+"', '<a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"' % (cx_, cy2, cw, ch), q['seg'], 1)
+        if qs != q['seg']:
+            edits.append((q['start'], q['end'], qs))
+            out.append('인용·출처 "%s" → 우하단(%.2f", %.2f")' % (txt(q)[:24], cx_ / E, cy2 / E))
+    out += cap_notes
     # 적용 — 이름표(자리·맨 앞)
     lab_seg = None
     if label:
@@ -3953,6 +3985,17 @@ def fit_layout(deck, slide_no, title_min=20, body_min=14, body_max=None, max_up=
             x = x.replace('</p:spTree>', lab_seg + '</p:spTree>', 1)
         open(deck._slide(slide_no), 'w', encoding='utf8').write(x)
     return out
+
+
+CITE_RE = re.compile(r'et al|doi|\b(?:19|20)\d{2}\s*[;:]\s*\d|\b(?:19|20)\d{2}\b.*\b\d+\s*[-–]\s*\d+|'
+                     r'\b(?:Radiology|Radiol|AJR|Am J|Eur|J Vasc|Cardiovasc|Interv|Surg|Journal|JAMA|Lancet|NEJM)\b', re.I)
+MEMO_RE = re.compile(r'^\s*\d{6}\b|^\s*(?:출처|source|from)\b|^(?=.{0,60}$).*(?:발표|선생님|강의)', re.I | re.S)   # 날짜로 시작하거나, 60자 이하 짧은 발표·출처 메모만
+
+
+def _is_cite(text):
+    """v16.35 (발표 K19-2): 인용(학술지·해·권:쪽, et al, doi) 또는 출처·발표 메모(날짜 숫자 6자리, '발표' 등) — 그림 설명이 아니다."""
+    t = (text or '').strip()
+    return bool(t) and len(t) <= 300 and bool(CITE_RE.search(t) or MEMO_RE.search(t))
 
 
 def _label_spot(deck, slide_no):

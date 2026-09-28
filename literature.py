@@ -8,6 +8,7 @@
     python3 literature.py plan   지시.md --out 작업폴더 [--store 보관소]     # 받을 목록(DOI·PubMed 링크·저장 이름·이미 있음)
     python3 literature.py ingest 지시.md --inbox 받은폴더 --store 보관소 --out 작업폴더
     python3 literature.py locate 지시.md --store 보관소 --out 작업폴더 [--top 3]
+    python3 literature.py check  지시.md --inbox 받은폴더 [--out 작업폴더]     # v0.2: 받은 파일 검사(%PDF·쪽 수·DOI)
 """
 import argparse
 import datetime
@@ -18,7 +19,7 @@ import shutil
 import sys
 import unicodedata
 
-__version__ = '0.1'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.2'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
 
 DOI_RE = re.compile(r'\b(10\.\d{4,9}/[^\s"<>]+)', re.I)
 PMID_RE = re.compile(r'\bPMID:?\s*(\d{5,9})\b', re.I)
@@ -134,18 +135,20 @@ def plan(instr_path, out, store=None, stream=sys.stdout):
     os.makedirs(out, exist_ok=True)
     L = ['# %s — 받을 목록' % name, '',
          '> literature.py v%s plan · 참고문헌 %d · 확인할 주장 %d(원문이 필요한 문헌 %d). **한 편씩, 사이를 두고** 받는다 — '
-         'PMC(무료 원문)가 있으면 그것 먼저. 브라우저에 로봇 확인·접속 제한이 뜨면 멈추고 알린다(LITERATURE.md §2).' % (
+         '찾을 곳은 적힌 순서대로(doi.org 먼저). 쿠키 배너는 "필수만/거부" 로 먼저 닫고, PDF 가 안 뜨면 30–60 초 기다려 최대 3 번, '
+         '로봇 확인·접속 제한이 뜨면 멈추고 주소·화면·배너 처리를 적어 알린다(LITERATURE.md §2).' % (
              __version__, len(refs), len(claims), len(need)),
          '> 받은 PDF 는 아래 **저장 이름**으로 inbox 에. 이름이 달라도 DOI·제목으로 짝짓지만, 이름이 가장 확실하다.', '',
          '| 번호 | 첫 저자·해 | 주장 | DOI | 찾을 곳 | 저장 이름 | 보관소 |', '|---|---|---|---|---|---|---|']
     n_have = 0
     for r in refs:
         links = []
+        # v0.2 (리뷰어 09-28): doi.org(출판사)는 캡차 없이 열렸고 PubMed·PMC 는 캡차 — doi.org 먼저, PMC 는 그다음, PubMed 는 둘 다 없을 때만
         if r['doi']:
             links.append('https://doi.org/%s' % r['doi'])
         if r['pmc']:
-            links.append('https://www.ncbi.nlm.nih.gov/pmc/articles/%s/' % r['pmc'])
-        if r['pmid']:
+            links.append('(안 되면) https://www.ncbi.nlm.nih.gov/pmc/articles/%s/' % r['pmc'])
+        if r['pmid'] and not r['doi'] and not r['pmc']:
             links.append('https://pubmed.ncbi.nlm.nih.gov/%s/' % r['pmid'])
         if not links:
             links.append('PubMed 에서 제목으로: %s' % (r['title'][:60] or r['raw'][:60]))
@@ -179,6 +182,22 @@ def _pdf_pages(path):
             t = ''
         pages.append((k + 1, labels[k] if labels else None, t.strip()))
     return pages
+
+
+BOILER = [re.compile(p_, re.I | re.M) for p_ in (
+    r'^.*Downloaded from https?://\S+.*$',                       # Wiley 등 — 쪽마다 기관·날짜가 든 다운로드 안내
+    r'^.*See the Terms and Conditions.*$',
+    r'^.*Wiley Online Library for rules of use.*$',
+    r'^.*OA articles are governed by the applicable Creative Commons License.*$')]
+
+
+def _strip_boiler(t):
+    """v0.2 (문헌 Cowork 시험 v2): 쪽마다 붙는 출판사 다운로드 안내 줄을 뺀다(위치 찾기의 잡음, 기관 이름). 반환 (글, 뺀 줄 수)."""
+    n = 0
+    for p_ in BOILER:
+        t, k = p_.subn('', t)
+        n += k
+    return re.sub(r'\n{3,}', '\n\n', t).strip(), n
 
 
 def _tokens(s):
@@ -242,10 +261,13 @@ def ingest(instr_path, inbox, store, out, stream=sys.stdout):
             shutil.copyfile(path, os.path.join(dd, 'paper.pdf'))
             L = ['# %s' % (r['title'] or r['raw'][:80]), '',
                  '> 원문 PDF 의 글자층(literature.py v%s). 쪽 표지 `[p.PDF쪽 · 인쇄쪽]`. 인용 문구는 이 md 로 찾고, 표·그림은 `paper.pdf` 로 확인한다.' % __version__, '']
-            blank = 0
+            blank = boiler = 0
             for k, lab, t in pages:
+                t, nb = _strip_boiler(t); boiler += nb
                 L += ['[p.%d%s]' % (k, (' · %s' % lab) if lab and lab != str(k) else ''), '', t or '(글자층 없음 — 스캔 쪽)', '']
                 blank += not t
+            if boiler:
+                L.insert(3, '> 출판사 다운로드 안내 줄 %d개를 뺐다(쪽마다 붙는 기관·날짜 줄).' % boiler)
             md = '\n'.join(L) + '\n'
             open(os.path.join(dd, 'paper.md'), 'w', encoding='utf8').write(md)
             open(os.path.join(dd, 'meta.md'), 'w', encoding='utf8').write(
@@ -348,18 +370,74 @@ def locate(instr_path, store, out, top=3, stream=sys.stdout):
                     hit = [t for t, p in pats if p.search(flat)]
                     if hit:
                         cands.append((len(hit), mark, hit, flat))
+            # v0.2 (리뷰어 09-28): 원문 전체에서 한 번도 안 나온 말 — 원문 검증에서 가장 강한 신호
+            whole = re.sub(r'\s+', ' ', md)
+            zero = [t for t, p in pats if not p.search(whole)]
+            order = list(cands)
             cands.sort(key=lambda z: -z[0])
-            if not cands:
-                L += ['- 문헌 %d `%s`: 찾을 말이 든 문단 없음 — 원문을 직접 본다' % (n, key), '']; continue
             L.append('- 문헌 %d `%s/paper.md`:' % (n, key))
+            L.append('  - **원문 전체에서 0회: %s**' % (', '.join(zero) if zero else '없음(찾을 말이 모두 한 번 이상 나온다)'))
+            if not cands:
+                L += ['  - 찾을 말이 든 문단 없음 — 원문을 직접 본다', '']; continue
             for sc, mark, hit, flat in cands[:top]:
                 L.append('  - %s 맞은 말 %d/%d(%s): %s' % (mark, sc, len(pats), ', '.join(hit), flat[:400] + ('…' if len(flat) > 400 else '')))
+            # v0.2: 찾을 말마다 따로 — 여러 요소를 한 주장에 담으면 초록·결론만 위로 올라와 요소별 근거 자리가 밀린다
+            if len(pats) > 1:
+                L.append('  - 찾을 말별 첫 자리(요약 문단 편향을 피해 — 같은 문단이 여러 말에 걸리면 한 번만):')
+                shown = set()
+                for t, p in pats:
+                    first = next(((mark, flat) for _, mark, hit, flat in order if t in hit), None)
+                    if not first:
+                        continue
+                    if first[1] in shown:
+                        L.append('    - "%s" → 위와 같은 문단 %s' % (t, first[0])); continue
+                    shown.add(first[1])
+                    m_ = p.search(first[1]); a_ = max(0, m_.start() - 120)
+                    L.append('    - "%s" → %s …%s…' % (t, first[0], first[1][a_:m_.end() + 160]))
             L.append('')
     os.makedirs(out, exist_ok=True)
     fp = os.path.join(out, '%s_주장위치.md' % name)
     open(fp, 'w', encoding='utf8').write('\n'.join(L) + '\n')
     print('\n'.join(L), file=stream)
     return fp
+
+
+def check(instr_path, inbox, out=None, stream=sys.stdout):
+    """v0.2 (리뷰어 09-28 받기 규칙 5): 받은 파일 검사 — 첫 바이트 %PDF(HTML 을 PDF 이름으로 저장한 것 거르기), 쪽 수 > 1,
+    앞 두 쪽의 DOI 가 그 참고문헌(파일 이름 번호)의 DOI 와 같은지. 반환 [(파일, 결과, 까닭)]."""
+    text = _nfc(open(instr_path, encoding='utf8').read())
+    refs = parse_refs(text); name = manuscript_name(text, instr_path)
+    rows = []
+    for f in sorted(os.listdir(inbox)) if os.path.isdir(inbox) else []:
+        if f.startswith('.') or not f.lower().endswith('.pdf'):
+            continue
+        path = os.path.join(inbox, f)
+        head = open(path, 'rb').read(5)
+        if not head.startswith(b'%PDF'):
+            rows.append((f, '✗', 'PDF 가 아니다(첫 바이트 %r) — 뷰어·로그인 화면을 저장했을 수 있다' % head)); continue
+        try:
+            pages = _pdf_pages(path)
+        except Exception as e:
+            rows.append((f, '✗', '읽지 못함 %s' % type(e).__name__)); continue
+        if len(pages) <= 1:
+            rows.append((f, '✗', '쪽 수 %d — 초록·첫 쪽만 받았을 수 있다' % len(pages))); continue
+        r, how = match_pdf(f, pages, refs)          # v0.2: 사용자가 받은 이름(저장 이름이 아닌 것)도 DOI·제목으로
+        dois = {_clean_doi(d) for d in DOI_RE.findall(' '.join(t for _, _, t in pages[:2]))}
+        if not r:
+            rows.append((f, '△', '%d쪽 · 참고문헌과 짝짓지 못함(이름·DOI·제목) — 무슨 논문인지 확인' % len(pages))); continue
+        if r and r['doi'] and dois and r['doi'] not in dois:
+            rows.append((f, '△', '%d쪽 · 앞쪽 DOI %s ≠ 참고문헌 %d 의 %s — 다른 논문일 수 있다' % (len(pages), ', '.join(sorted(dois))[:60], r['n'], r['doi'])))
+        elif r and r['doi'] and not dois:
+            rows.append((f, '△', '%d쪽 · 앞쪽에 DOI 가 없다 — 제목으로 확인' % len(pages)))
+        else:
+            rows.append((f, '○', '%d쪽 · 참고문헌 %d(%s)%s' % (len(pages), r['n'], how, ' · DOI 맞음' if r['doi'] in dois else '')))
+    L = ['# %s — 받은 파일 검사' % name, '', '| 파일 | 결과 | 까닭 |', '|---|---|---|'] + ['| `%s` | %s | %s |' % r_ for r_ in rows]
+    L += ['', '○ %d · △ %d · ✗ %d' % tuple(sum(1 for r_ in rows if r_[1] == k) for k in '○△✗'), '']
+    if out:
+        os.makedirs(out, exist_ok=True)
+        open(os.path.join(out, '%s_받은파일검사.md' % name), 'w', encoding='utf8').write('\n'.join(L))
+    print('\n'.join(L), file=stream)
+    return rows
 
 
 if __name__ == '__main__':
@@ -370,10 +448,14 @@ if __name__ == '__main__':
     g.add_argument('--out', required=True)
     l_ = sub.add_parser('locate'); l_.add_argument('instr'); l_.add_argument('--store', required=True); l_.add_argument('--out', required=True)
     l_.add_argument('--top', type=int, default=3)
+    c_ = sub.add_parser('check'); c_.add_argument('instr'); c_.add_argument('--inbox', required=True); c_.add_argument('--out', default=None)
     a = ap.parse_args()
     if a.cmd == 'plan':
         plan(a.instr, a.out, a.store)
     elif a.cmd == 'ingest':
         ingest(a.instr, a.inbox, a.store, a.out)
+    elif a.cmd == 'check':
+        rows = check(a.instr, a.inbox, a.out)
+        sys.exit(1 if any(r[1] == '✗' for r in rows) else 0)
     else:
         locate(a.instr, a.store, a.out, a.top)

@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.34'
+EXPECT_VERSION = '16.35'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -1992,6 +1992,45 @@ def t_v1634_fit_layout_stage2():
         assert bh < int(3.23 * E) and 'sz="1400"' not in x and max(int(v) for v in re.findall(r'sz="(\d+)"', re.search(r'name="TextBox 4".*?</p:sp>', x, re.S).group(0))) <= 2400
         assert not T._inter((bx, by, bw, bh), (px, py, pw, ph)) and not T._inter((lx, ly, lw, lh), (px, py, pw, ph))
     assert T.validate(out, path)
+
+
+def t_v1635_fail_still_drops_title_and_cites():
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    from PIL import Image
+    E = T.EMU_IN
+    img = os.path.join(TMP, 'k19.png'); Image.new('RGB', (400, 300), 'gray').save(img)
+    prs = Presentation(); prs.slide_width, prs.slide_height = Inches(10), Inches(7.5)
+    for k in range(2):
+        sl = prs.slides.add_slide(prs.slide_layouts[5]); sl.shapes.title.text_frame.text = 'Same title'
+        b = sl.shapes.add_textbox(Inches(0.3), Inches(0.43), Inches(6), Inches(3)); b.name = 'TextBox 4'
+        b.text_frame.word_wrap = True
+        b.text_frame.text = ' '.join(['very long text'] * (500 if k == 1 else 10))            # 둘째 장은 어떻게 해도 안 들어간다
+        pic = sl.shapes.add_picture(img, Inches(6.5), Inches(1.5), Inches(3.3), Inches(2.5)); pic.name = 'Pic 1'
+        lab = sl.shapes.add_textbox(Inches(7.0), Inches(3.0), Inches(1.4), Inches(0.3)); lab.name = 'Label'; lab.text_frame.text = '(R4 name)'
+        cite = sl.shapes.add_textbox(Inches(6.5), Inches(4.05), Inches(4.4), Inches(0.27)); cite.name = 'Cite'
+        cite.text_frame.text = 'Smith J et al. Cardiovasc Intervent Radiol. 2019;42:1-9'
+        memo = sl.shapes.add_textbox(Inches(6.6), Inches(4.35), Inches(3.0), Inches(0.3)); memo.name = 'Memo'
+        memo.text_frame.text = '221122 BR 발표 자료'
+    path = os.path.join(TMP, 'k19.pptx'); prs.save(path)
+    out = os.path.join(TMP, 'k19o.pptx')
+    r = subprocess.run([sys.executable, os.path.join(HERE, 'deck_toolkit.py'), 'fit-layout', path, '-o', out, '--screens', '1-2',
+                        '--drop-repeat-titles', 'all', '--like', '1'], capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    assert r.returncode == 0 and '화면 2: [!]' in r.stdout and '크기 조정 못 함 · 제목 뺌·이름표만' in r.stdout, r.stdout[-900:]
+    D = T.Deck.open(out, wd('k19')); o = [x for x, _, _ in D.order() if x]
+    x2 = open(D._slide(o[1]), encoding='utf8').read()
+    assert not re.search(r'type="title"', x2) and x2.index('name="Label"') > x2.index('name="Pic 1"')      # K19-1: 제목 뺌·이름표 맨 앞
+    assert 'sz=' not in re.search(r'name="TextBox 4".*?</p:sp>', x2, re.S).group(0)                        # 크기 조정은 안 함
+    x1 = open(D._slide(o[0]), encoding='utf8').read()
+    assert '주석·설명' not in r.stdout.split('화면 2')[0] and 'Cite' in x1                                    # K19-2: 인용·메모는 그림 설명이 아니다
+    W, H = int(10 * E), int(7.5 * E)
+    for nm in ('Cite', 'Memo', 'Pic 1', 'Label'):
+        gx, gy, gw, gh = (int(v) for v in re.search(r'name="%s".*?<a:off x="(-?\d+)" y="(-?\d+)"/><a:ext cx="(\d+)" cy="(\d+)"' % nm, x1, re.S).groups())
+        assert gx >= 0 and gy >= 0 and gx + gw <= W and gy + gh <= H, (nm, gx, gy, gw, gh)                 # 슬라이드 안
+    cg = tuple(int(v) for v in re.search(r'name="Cite".*?<a:off x="(-?\d+)" y="(-?\d+)"/><a:ext cx="(\d+)" cy="(\d+)"', x1, re.S).groups())
+    assert cg[0] + cg[2] >= W - int(0.1 * E) and cg[1] + cg[3] >= H - int(0.5 * E), cg                      # 우하단
+    assert T._is_cite('Smith J et al. Radiology 2020;295:1-9') and T._is_cite('221122 BR 발표') and not T._is_cite('Arrow points to the leak')
+    assert not T._is_cite('이 소견은 발표 자료에서 흔히 보이는 모양이지만 실제 임상에서는 다른 원인이 더 많아 감별 진단에 넣어야 한다고 설명한다')   # 긴 본문 속 '발표' 는 메모 아님
 
 
 def t_v1619_da_after_vowel():

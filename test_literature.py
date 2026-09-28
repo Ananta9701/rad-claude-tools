@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.1'
+EXPECT_VERSION = '0.2'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 
@@ -101,7 +101,8 @@ def t_plan_ingest_locate():
     store, out = os.path.join(d, 'store'), os.path.join(d, 'out')
     fp = LT.plan(instr, out, store, stream=io.StringIO())
     p = open(fp, encoding='utf8').read()
-    assert 'https://doi.org/10.1000/abc123' in p and 'https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1234567/' in p
+    assert 'https://doi.org/10.1000/abc123' in p and '(안 되면) https://www.ncbi.nlm.nih.gov/pmc/articles/PMC1234567/' in p
+    assert 'pubmed.ncbi.nlm.nih.gov/31234567' not in p                   # v0.2: DOI 가 있으면 PubMed 로 보내지 않는다(캡차)
     assert '`001_Smith_2020.pdf`' in p and 'PubMed 에서 제목으로: Machine learning' in p and '받을 것: 4편' in p
     got, unmatched = LT.ingest(instr, os.path.join(d, 'inbox'), store, out, stream=io.StringIO())
     assert got[1][1] == '파일 이름' and got[2][1] == 'DOI' and got[3][1].startswith('제목') and 4 not in got, got
@@ -124,8 +125,43 @@ def t_plan_ingest_locate():
     fp = LT.locate(instr, store, out, stream=io.StringIO())
     loc = open(fp, encoding='utf8').read()
     assert '[p.2] 맞은 말 2/2(sensitivity, 92%)' in loc, loc                # '92 %' 도 띄어쓰기 무시로
+    assert '**원문 전체에서 0회: 없음' in loc and '"sensitivity" → [p.2]' in loc and '"92%" → 위와 같은 문단 [p.2]' in loc, loc
+    assert re.search(r'문헌 3 `nodoi_[0-9a-f]+/paper.md`:\n  - \*\*원문 전체에서 0회: 없음', loc), loc
     assert '문헌 4: **원문 없음**' in loc and re.search(r'문헌 3 `nodoi_[0-9a-f]+/paper.md`', loc), loc
     assert '판정은 리뷰어가' in loc
+
+
+def t_v02_zero_terms_and_check():
+    d, instr = _fixture()
+    store, out = os.path.join(d, 'store'), os.path.join(d, 'out')
+    LT.ingest(instr, os.path.join(d, 'inbox'), store, out, stream=io.StringIO())
+    ins2 = _write(os.path.join(d, 'i2.md'), INSTR.replace('| C1 | 1 | DWI 민감도 92% | sensitivity, 92% |', '| C1 | 1 | DWI 민감도 97% | sensitivity, 97%, PPV |'))
+    loc = open(LT.locate(ins2, store, out, stream=io.StringIO()), encoding='utf8').read()
+    assert '**원문 전체에서 0회: 97%, PPV**' in loc, loc                      # 원고의 말이 원문에 없다 — 가장 강한 신호
+    ib = os.path.join(d, 'inbox'); open(os.path.join(ib, '004_Jones_1998.pdf'), 'w').write('<html>viewer</html>')
+    make_pdf(os.path.join(ib, '002_Park_2019.pdf'), [['Other paper', 'doi: 10.9999/other'], ['x']])
+    make_pdf(os.path.join(ib, '003_Chen_2021.pdf'), [['single page only']])
+    rows = {f: (r, why) for f, r, why in LT.check(instr, ib, out, stream=io.StringIO())}
+    assert rows['004_Jones_1998.pdf'][0] == '✗' and 'PDF 가 아니다' in rows['004_Jones_1998.pdf'][1]
+    assert rows['003_Chen_2021.pdf'][0] == '✗' and '쪽 수 1' in rows['003_Chen_2021.pdf'][1]
+    assert rows['002_Park_2019.pdf'][0] == '△' and '다른 논문' in rows['002_Park_2019.pdf'][1]
+    assert rows['001_Smith_2020.pdf'][0] == '△' and 'DOI 가 없다' in rows['001_Smith_2020.pdf'][1], rows   # 앞쪽에 DOI 없는 논문
+    assert rows['download (3).pdf'][0] == '○' and '참고문헌 2(DOI)' in rows['download (3).pdf'][1], rows        # 사용자가 받은 이름도 DOI 로
+    assert rows['unrelated.pdf'][0] == '△' and '짝짓지 못함' in rows['unrelated.pdf'][1]
+    assert os.path.exists(os.path.join(out, '시험_원고_v1_받은파일검사.md'))
+
+
+def t_v02_strip_publisher_boiler():
+    d = os.path.join(TMP, 'bp'); os.makedirs(os.path.join(d, 'inbox'))
+    instr = _write(os.path.join(d, 'i.md'), INSTR)
+    notice = 'Downloaded from https://onlinelibrary.wiley.com/doi/10.1000/xyz456 by Some Institution, Wiley Online Library on [01/01/2026].'
+    make_pdf(os.path.join(d, 'inbox', 'NMR - 2019 - Park - Contrast enhanced ultrasound.pdf'), [
+        ['Contrast enhanced ultrasound in renal masses', notice, 'See the Terms and Conditions (https://example) on Wiley Online Library for rules of use'],
+        ['Results were good.', notice]])
+    got, _ = LT.ingest(instr, os.path.join(d, 'inbox'), os.path.join(d, 's'), os.path.join(d, 'o'), stream=io.StringIO())
+    assert got[2][1] == 'DOI', got                                             # 이름이 달라도 안내 줄의 DOI 로
+    md = open(os.path.join(d, 's', got[2][0], 'paper.md'), encoding='utf8').read()
+    assert 'Downloaded from' not in md and 'Some Institution' not in md and 'Results were good.' in md and '안내 줄 3개를 뺐다' in md, md
 
 
 def t_cli():
