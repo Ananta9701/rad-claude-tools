@@ -1,4 +1,4 @@
-# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.37)
+# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.38)
 
 영상의학과 발표자 — quiz / case review / journal review 공용
 

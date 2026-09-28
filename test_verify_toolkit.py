@@ -23,7 +23,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '1.3.5'
+EXPECT_VERSION = '1.3.6'
 TMP = os.environ.get('VT_TMP', '/tmp/vt_test')
 shutil.rmtree(TMP, ignore_errors=True)
 os.makedirs(TMP, exist_ok=True)
@@ -456,6 +456,26 @@ def t_v135_track_changes_broken_input_stops():
     except SystemExit as e:
         assert '온전하지 않다' in str(e), e
     assert not os.path.exists(out), '깨진 결과 파일이 남았다'
+
+
+def t_v136_track_changes_moves_stop():
+    # 사용자 09-28: 이동 표지(moveFrom·moveTo)는 처리하지 않고 멈춰 "Word 에서 직접 적용" 을 알린다
+    src = _patch_xml(_docx('tc7_src.docx', ['Stay.', 'Moved here.']), 'tc7.docx', lambda s: s.replace(
+        '<w:t>Stay.</w:t></w:r>', '<w:t>Stay.</w:t></w:r><w:moveFrom w:id="20"%s><w:r><w:t> gone</w:t></w:r></w:moveFrom>' % _TC).replace(
+        '<w:t>Moved here.</w:t></w:r>', '<w:t>Moved here.</w:t></w:r><w:moveTo w:id="21"%s><w:r><w:t> gone</w:t></w:r></w:moveTo>' % _TC))
+    r, out_txt = _quiet(V.scan_track_changes, src)
+    assert r.get('moves') == 2 and '이동' in out_txt, (r, out_txt)
+    out = os.path.join(TMP, 'tc7_clean.docx')
+    try:
+        _quiet(V.accept_or_reject_changes, src, out); assert False, '멈추지 않았다'
+    except SystemExit as e:
+        assert 'Word' in str(e) and '이동' in str(e), e
+    assert not os.path.exists(out)
+    # 성공 길: 이동이 없는 문서는 전처럼 처리
+    src2 = _with_track_changes('tc8'); out2 = os.path.join(TMP, 'tc8_clean.docx')
+    _quiet(V.accept_or_reject_changes, src2, out2)
+    r2, _ = _quiet(V.scan_track_changes, out2)
+    assert os.path.exists(out2) and r2['ins'] == 0 and r2['del'] == 0 and r2.get('moves') == 0, r2
 
 
 def t_fix_zoom_bug():

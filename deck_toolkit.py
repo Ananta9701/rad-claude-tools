@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.37'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.38'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -546,8 +546,12 @@ class Deck:
         rid2slide = {m.group(1): int(m.group(2)) for m in
                      re.finditer(r'Id="(rId\d+)"[^>]*Target="slides/slide(\d+)\.xml"', rels)}
         out = []
-        for m in re.finditer(r'<p:sldId id="(\d+)" r:id="(rId\d+)"/>', lst):
-            out.append((rid2slide.get(m.group(2)), m.group(1), m.group(2)))
+        tags = re.findall(r'<p:sldId\b[^>]*>', lst)
+        for tag in tags:   # v16.38 (코드 리뷰 09-28): 속성 순서·공백과 무관하게 — 전에는 `" />"` 하나로 0장이 되고 오류도 없었다
+            i, r = re.search(r'\bid="(\d+)"', tag), re.search(r'\br:id="(rId\d+)"', tag)
+            if not (i and r):
+                raise ValueError('presentation.xml 의 sldId 를 읽지 못했다: %s — 슬라이드 순서를 믿을 수 없어 멈춘다' % tag[:120])
+            out.append((rid2slide.get(r.group(1)), i.group(1), r.group(1)))
         return out
 
     def notes_no(self, slide_no):
@@ -5507,6 +5511,16 @@ def make_fixture(path, slides=14, widescreen=False):
     return path
 
 
+def validate_path():
+    """validate.py 자리 — handoff 와 같은 환경변수(HANDOFF_VALIDATE_PY)를 따른다(v16.38 — 전에는 deck 만 고정 경로라 둘이 달랐다)."""
+    return os.environ.get('HANDOFF_VALIDATE_PY', '/mnt/skills/public/pptx/scripts/office/validate.py')
+
+
+def vword(r):
+    """validate 결과 → 말. None 은 '통과' 가 아니다."""
+    return {True: '통과', False: '실패', None: '검증 못 함(validate.py 없음)'}[r]
+
+
 def validate(pptx, original=None):
     """검증. **original 을 반드시 넘긴다.**
 
@@ -5514,10 +5528,10 @@ def validate(pptx, original=None):
     (예: ppt/revisionInfo.xml)까지 실패로 잡혀 위양성이 난다.
     --original 을 주면 '원본 대비 새로 생긴 오류'만 본다.
     """
-    v = '/mnt/skills/public/pptx/scripts/office/validate.py'
-    if not os.path.exists(v):
-        print('validate.py 없음 — 건너뜀')
-        return True
+    v = validate_path()
+    if not os.path.exists(v):   # v16.38 (코드 리뷰 09-28): 전에는 True('통과') — 없으면 None 과 '검증 못 함'
+        print('검증 못 함 — validate.py 없음(%s). 통과가 아니다' % v)
+        return None
     if original is None:
         print('[주의] original 미지정 — 원본에 있던 오류까지 잡힐 수 있음')
     cmd = [sys.executable, v, pptx]
@@ -6068,13 +6082,13 @@ def main():
         for k in scr:
             print('화면 %d: 자동 맞춤 비율을 적어 넣은 상자 %d개' % (k, dk.bake_autofit(order[k - 1])))
         out = args.o or _default_out(args.pptx, '_baked'); dk.save(out)
-        print('저장: %s / verify --original: %s' % (out, '통과' if validate(out, args.pptx) else '실패'))
+        print('저장: %s / verify --original: %s' % (out, vword(validate(out, args.pptx))))
     elif args.cmd == 'apply-fixes':
         dk = Deck.open(args.pptx)
         res = apply_fixes(dk, parse_fixes(args.fixes), dry_run=args.dry_run)
         if not args.dry_run:
             out = args.o or _default_out(args.pptx, '_fixed'); dk.save(out)
-            print('저장: %s / verify --original: %s' % (out, '통과' if validate(out, args.pptx) else '실패'))
+            print('저장: %s / verify --original: %s' % (out, vword(validate(out, args.pptx))))
         sys.exit(0 if all(r[3] == '적용' for r in res) else 1)
     elif args.cmd == 'normalize-notes':
         dk = Deck.open(args.pptx); tot = {'moved': 0, 'sep': 0}; shown = 0
@@ -6088,7 +6102,7 @@ def main():
         print('낭독 부분에 남은 태그: %s' % (left[:10] or '없음'))
         if not args.dry_run:
             out = args.o or _default_out(args.pptx, '_notes'); dk.save(out)
-            print('저장: %s / verify --original: %s' % (out, '통과' if validate(out, args.pptx) else '실패'))
+            print('저장: %s / verify --original: %s' % (out, vword(validate(out, args.pptx))))
     elif args.cmd == 'restore-memo':
         E = Deck.open(args.edited); O = Deck.open(args.original, tempfile_dir('rmo'))
         srcs = {k: Deck.open(v, tempfile_dir('rms')) for k, v in ((x.split('=', 1) if '=' in x else (x, x)) for x in args.src)}
@@ -6106,16 +6120,16 @@ def main():
         restore_memo(E, O, pairs)
         E.save(args.o)
         if args.match_text:
-            print('verify --original: %s' % ('통과' if validate(args.o, args.edited) else '실패'))
+            print('verify --original: %s' % (vword(validate(args.o, args.edited))))
             sys.exit(0)
         r = diff_decks(args.original, args.o, mapping=parse_screen_map(args.map) if args.map else None,
                        sources={k: v for k, v in (x.split('=', 1) for x in args.src)})
-        print('verify --original: %s' % ('통과' if validate(args.o, args.edited) else '실패'))
+        print('verify --original: %s' % (vword(validate(args.o, args.edited))))
         sys.exit(1 if any(g for _, _, g in r['notes'].values()) else 0)
     elif args.cmd == 'verify':
         ok = validate(args.pptx, args.original)
-        print('verify%s: %s' % (' --original' if args.original else '', '통과' if ok else '실패'))   # v16.9.2 (Y3)
-        sys.exit(0 if ok else 1)
+        print('verify%s: %s' % (' --original' if args.original else '', vword(ok)))   # v16.9.2 (Y3) · v16.38 None = 검증 못 함
+        sys.exit(1 if ok is False else 0)
     elif args.cmd == 'lint':
         lint(Deck.open(args.pptx, theme=args.theme), deck_kind_override=args.deck_kind)
     elif args.cmd == 'restyle':
@@ -6256,7 +6270,7 @@ def main():
         print('이름표 넓힘 %d · 건너뜀 %d%s' % (n_ch, n_sk, ' (dry-run — 저장 안 함)' if args.dry_run else ' → %s' % args.o))
     elif args.cmd == 'purge':
         dk = Deck.open(args.pptx); r = dk.purge_orphans(); dk.save(args.o)
-        print('제거: 슬라이드 %d · 노트 %d · 미디어 %d → %s / verify: %s' % (r['slides'], r['notes'], r['media'], args.o, '통과' if validate(args.o) else '실패'))
+        print('제거: 슬라이드 %d · 노트 %d · 미디어 %d → %s / verify: %s' % (r['slides'], r['notes'], r['media'], args.o, vword(validate(args.o))))
     elif args.cmd == 'titles':
         dk = Deck.open(args.pptx)
         prof = None
@@ -6298,7 +6312,7 @@ def main():
             out = args.o or _default_out(args.pptx, '_titles')
             dk.save(out)
             print('다시 점검:'); rest = check_title_template(dk, prof, screens=scr)
-            print('저장: %s / verify --original: %s' % (out, '통과' if validate(out, args.pptx) else '실패'))
+            print('저장: %s / verify --original: %s' % (out, vword(validate(out, args.pptx))))
             sys.exit(1 if any(x.startswith('[!]') for v in rest.values() for x in v) else 0)
         sys.exit(1 if any(x.startswith('[!]') for v in bad.values() for x in v) else 0)
     elif args.cmd == 'settext':
@@ -6312,8 +6326,8 @@ def main():
             out = args.o or _default_out(args.pptx, '_edit')
             dk.save(out)
             ok = validate(out, args.pptx)
-            print('저장: %s / verify --original: %s' % (out, '통과' if ok else '실패'))
-            sys.exit(0 if ok else 1)
+            print('저장: %s / verify --original: %s' % (out, vword(ok)))
+            sys.exit(1 if ok is False else 0)
     elif args.cmd == 'crosscheck':
         crosscheck(Deck.open(args.pptx), args.sources, notes=args.notes)
     elif args.cmd == 'locate':

@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.37'
+EXPECT_VERSION = '16.38'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -49,6 +49,8 @@ def _fixture(name, **kw):
 
 
 SRC = os.environ.get('TK_DECK') or _fixture('fixture43.pptx')
+# v16.38: validate.py 가 없는 곳(Cowork)에서는 CLI 가 '통과' 대신 '검증 못 함' 을 말한다
+VOK = T.vword(True if os.path.exists(T.validate_path()) else None)
 CHEST = os.environ.get('TK_DECK169') or _fixture('fixture169.pptx', widescreen=True)
 DECK4 = os.environ.get('TK_DECK4')
 DOCS = [s for s in os.environ.get('TK_DOCS', '').split(',') if s]
@@ -93,7 +95,7 @@ def t_roundtrip():
     d = T.Deck.open(SRC, wd('rt')); o = out('rt.pptx'); d.save(o)
     a = set(zipfile.ZipFile(SRC).namelist()); b = set(zipfile.ZipFile(o).namelist())
     assert a == b, 'part 불일치: %s' % (a ^ b)
-    assert T.validate(o, SRC)
+    assert T.validate(o, SRC) is not False
 
 def t_audit():
     d = T.Deck.open(SRC, wd('au')); probs = d.audit(io.StringIO())
@@ -106,7 +108,7 @@ def t_edit():
     b = (T.Body().header('H1').line('a ', ('b', T.C.KEY), ' c')
          .gap().line(('x', T.C.FLAG)).ref('Ref A, et al. J. 2020;1(1):1-2.'))
     d.set_body(7, b); d.set_title(7, 'New title'); d.set_notes(7, ['[노트]', '', '본문'])
-    o = out('ed.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('ed.pptx'); d.save(o); assert T.validate(o, SRC) is not False
     d2 = T.Deck.open(o, wd('ed2'))
     assert d2.texts(7)[0] == 'New title', d2.texts(7)[:3]
     assert 'b' in d2.texts(7) and '[노트]' in d2.notes(7)
@@ -118,13 +120,13 @@ def t_body_single_tuple():
 
 def t_title_multiline():
     d = T.Deck.open(SRC, wd('tm')); d.set_title(7, ['Line one', 'Line two'])
-    o = out('tm.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('tm.pptx'); d.save(o); assert T.validate(o, SRC) is not False
     d2 = T.Deck.open(o, wd('tm2')); assert 'Line one' in d2.texts(7) and 'Line two' in d2.texts(7)
 
 def t_escape():
     d = T.Deck.open(SRC, wd('es'), theme='cud')
     d.set_body(7, T.Body().line('A & B < C > D "q"')); d.set_notes(7, ['a & b < c'])
-    o = out('es.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('es.pptx'); d.save(o); assert T.validate(o, SRC) is not False
 
 def t_save_guards():
     d = T.Deck.open(SRC, wd('sg'))
@@ -141,13 +143,13 @@ def t_add_slide():
     after = [x[0] for x in d.order()]
     assert after.index(n) == after.index(6) + 1, after
     assert before == [x for x in after if x != n], '기존 순서가 바뀜'
-    o = out('as.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('as.pptx'); d.save(o); assert T.validate(o, SRC) is not False
     assert T.Deck.open(o, wd('as2')).notes(n) == ['n1']
 
 def t_add_slide_x3():
     d = T.Deck.open(SRC, wd('a3'), theme='cud')
     ns = [d.add_slide(after=a, title='F%d' % a, body=T.Body().line('z'), notes=['x']) for a in (6, 10, 12)]
-    o = out('a3.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('a3.pptx'); d.save(o); assert T.validate(o, SRC) is not False
     ordr = [x[0] for x in d.order()]
     assert len(set(ordr)) == len(ordr) and all(n in ordr for n in ns)
 
@@ -156,7 +158,7 @@ def t_add_slide_169():
     assert abs(w / h - 16 / 9) < 0.02, '16:9 fixture 가 아님'
     n = d.add_slide(after=2, title='T', body=T.Body().line('a'), notes=['n'])
     assert 'cx="%d"' % w in open(d._slide(n), encoding='utf8').read(), '제목 너비가 슬라이드 폭과 다름'
-    o = out('w9.pptx'); d.save(o); assert T.validate(o, CHEST)
+    o = out('w9.pptx'); d.save(o); assert T.validate(o, CHEST) is not False
 
 # ---------------------------------------------------------------- clrMap (§14)
 def _invert(d):
@@ -178,7 +180,7 @@ def t_clrmap_inverted():
     s2 = open(d._slide(2), encoding='utf8').read(); sn = open(d._slide(n), encoding='utf8').read()
     assert 'schemeClr val="bg1"/>' not in s2.split('<p:txBody>', 1)[1], '본문에 bg1(=검정) 잔존'
     assert '<a:schemeClr val="bg1"><a:lumMod' in sn, '새 슬라이드 배경이 어두운 쪽을 안 씀'
-    o = out('cm1.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('cm1.pptx'); d.save(o); assert T.validate(o, SRC) is not False
 
 # ---------------------------------------------------------------- lint / restyle / plan
 def t_lint():
@@ -196,7 +198,7 @@ def t_lint_ref_exempt():
 
 def t_restyle():
     d = T.Deck.open(SRC, wd('rs'), theme='cud'); T.restyle(d, stream=io.StringIO())
-    o = out('rs.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('rs.pptx'); d.save(o); assert T.validate(o, SRC) is not False
     assert 'val="FFC000"' not in open(d._slide(7), encoding='utf8').read()
 
 def t_restyle_keeps_ref():
@@ -260,7 +262,7 @@ def t_set_fonts():
     d = T.Deck.open(SRC, wd('sf')); n, f = T.set_fonts(d, 'safe')
     x = open(d._slide(7), encoding='utf8').read()
     assert 'typeface="Arial"' in x and 'typeface="맑은 고딕"' in x and n > 0
-    o = out('sf.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('sf.pptx'); d.save(o); assert T.validate(o, SRC) is not False
 
 def t_set_fonts_edge_runs():
     """채움 없는 rPr, solidFill 뒤 effectLst, hlinkClick 앞 순서, rPr 없는 run."""
@@ -283,24 +285,24 @@ def t_set_fonts_edge_runs():
 def t_font_profiles():
     d = T.Deck.open(SRC, wd('fp')); T.set_fonts(d, 'office')
     assert 'typeface="Calibri"' in open(d._slide(7), encoding='utf8').read()
-    o = out('fp.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('fp.pptx'); d.save(o); assert T.validate(o, SRC) is not False
 
 def t_merge_runs():
     d = T.Deck.open(SRC, wd('mr')); before = sum(len(d.texts(s)) for s in d.slide_numbers())
     joined_b = ''.join(''.join(d.texts(s)) for s in d.slide_numbers())
     T.merge_runs(d); after = sum(len(d.texts(s)) for s in d.slide_numbers())
     assert after <= before
-    o = out('mr.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('mr.pptx'); d.save(o); assert T.validate(o, SRC) is not False
     d2 = T.Deck.open(o, wd('mr2'))
     assert ''.join(''.join(d2.texts(s)) for s in d2.slide_numbers()) == joined_b, '병합으로 글자가 바뀜'
 
 def t_clean_placeholders():
     d = T.Deck.open(SRC, wd('cp')); assert T.clean_placeholders(d) >= 0
-    o = out('cp.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('cp.pptx'); d.save(o); assert T.validate(o, SRC) is not False
 
 def t_autofit():
     d = T.Deck.open(SRC, wd('af')); T.force_autofit(d)
-    o = out('af.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('af.pptx'); d.save(o); assert T.validate(o, SRC) is not False
 
 def t_phi():
     d = T.Deck.open(SRC, wd('ph')); d.set_notes(2, ['환자번호 12345678 확인'])
@@ -320,7 +322,7 @@ def t_handout():
 
 def t_polish_full():
     d = T.Deck.open(SRC, wd('pf')); r = T.polish(d, 'safe', io.StringIO())
-    o = out('pf.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('pf.pptx'); d.save(o); assert T.validate(o, SRC) is not False
     assert isinstance(r['bounds'], list) and isinstance(r['phi'], list) and isinstance(r['overflow'], list)
 
 # ---------------------------------------------------------------- 교차검증 계열
@@ -546,7 +548,7 @@ def t_import_slide_roundtrip():
     order1 = [s for s, _, _ in dst.order()]
     assert len(order1) == n0 + 1 and order1[1] == new and order1[0] == order0[0], (order0, order1)
     assert ''.join(dst.texts(new)) == ''.join(src.texts(2))
-    dst.save('/tmp/imp.pptx'); assert T.validate('/tmp/imp.pptx', SRC)
+    dst.save('/tmp/imp.pptx'); assert T.validate('/tmp/imp.pptx', SRC) is not False
     d2 = T.Deck.open('/tmp/imp.pptx', wd('imp_re'))
     assert len(d2.slide_numbers()) == n0 + 1
     dst.remove_slide(new)
@@ -631,7 +633,7 @@ def t_settext_rules():
     r = d.settext(7, 'alpha again', '', delete_para=True); assert r['ok'] and 'again' not in ''.join(d.texts(7))
     d.set_notes(7, ['note line one', 'note line two'])
     r = d.settext(7, 'line two', 'LINE 2', notes=True); assert r['ok'] and any('LINE 2' in t for t in d.notes(7))
-    d.save('/tmp/stx.pptx'); assert T.validate('/tmp/stx.pptx', SRC)
+    d.save('/tmp/stx.pptx'); assert T.validate('/tmp/stx.pptx', SRC) is not False
     r = cli('settext', SRC, '--slide', '7', '--old', 'nonexistent', '--new', 'x', '--dry-run'); assert r.returncode == 1 and '거부' in r.stdout
 
 def t_strip_color_and_fix_title_box():
@@ -646,7 +648,7 @@ def t_strip_color_and_fix_title_box():
     x = open(fp, encoding='utf8').read()
     if ok:
         assert 'cy="1505129"' in x and '<a:normAutofit' in x
-    d.save('/tmp/sc.pptx'); assert T.validate('/tmp/sc.pptx', SRC)
+    d.save('/tmp/sc.pptx'); assert T.validate('/tmp/sc.pptx', SRC) is not False
 
 def t_group_frame_transform():
     """v16.6: 그룹 안 텍스트 상자는 chOff/chExt 좌표계 — 그룹 프레임으로 변환해야 카드·슬라이드 경계 비교가 맞다."""
@@ -724,7 +726,7 @@ def t_purge_orphans():
     r = d.purge_orphans()
     assert r['slides'] == 1 and removed not in d.slide_numbers() and len(d.slide_numbers()) == n0 - 1, r
     assert 'slide%d.xml' % removed not in open(os.path.join(d.dir, '[Content_Types].xml'), encoding='utf8').read()
-    d.save('/tmp/purge.pptx'); assert T.validate('/tmp/purge.pptx')
+    d.save('/tmp/purge.pptx'); assert T.validate('/tmp/purge.pptx') is not False
     d2 = T.Deck.open('/tmp/purge.pptx', wd('purge2')); assert len(d2.order()) == n0 - 1
     r = cli('purge', SRC, '-o', '/tmp/purge_cli.pptx'); assert r.returncode == 0 and '제거: 슬라이드 0' in r.stdout
 
@@ -768,7 +770,7 @@ def t_move_slide():
     d.move_slide(o[2], after=o[0]); o2 = [s for s, _, _ in d.order()]
     assert o2[:3] == [o[0], o[2], o[1]] and sorted(o2) == sorted(o), (o, o2)
     d.move_slide(o[2], after=0); assert [s for s, _, _ in d.order()][0] == o[2]
-    d.save('/tmp/mv.pptx'); assert T.validate('/tmp/mv.pptx', SRC)
+    d.save('/tmp/mv.pptx'); assert T.validate('/tmp/mv.pptx', SRC) is not False
 
 def t_sldid_sites_and_conversion():
     d = T.Deck.open(SRC, wd('sid'), theme='cud')
@@ -793,7 +795,7 @@ def t_clear_pictures_and_import_without_pictures():
     new = d.import_slide(src, with_pic, after=with_pic, pictures=False)
     assert d.images(new) == [] and '<p:pic>' not in open(d._slide(new), encoding='utf8').read()
     n = d.clear_pictures(with_pic); assert n >= 1 and d.images(with_pic) == []
-    d.save('/tmp/cp.pptx'); assert T.validate('/tmp/cp.pptx')
+    d.save('/tmp/cp.pptx'); assert T.validate('/tmp/cp.pptx') is not False
 
 def t_replace_insert_delete_paragraph():
     d = T.Deck.open(SRC, wd('rp'), theme='cud')
@@ -807,7 +809,7 @@ def t_replace_insert_delete_paragraph():
     except ValueError as e:
         assert '0회' in str(e)
     d.delete_paragraph(7, 'alpha'); assert 'alpha' not in ''.join(d.texts(7))
-    d.save('/tmp/rp.pptx'); assert T.validate('/tmp/rp.pptx', SRC)
+    d.save('/tmp/rp.pptx'); assert T.validate('/tmp/rp.pptx', SRC) is not False
 
 def t_set_cite_and_image_grid():
     d = T.Deck.open(SRC, wd('cite'), theme='cud')
@@ -819,7 +821,7 @@ def t_set_cite_and_image_grid():
     x = open(d._slide(7), encoding='utf8').read()
     assert n == 3 and x.count('ImagePlaceholder') == 3 and x.count('SeqLabel') == 3 and '[넣을 영상] MIP' in x
     ids = re.findall(r'<p:cNvPr id="(\d+)"', x); assert len(ids) == len(set(ids)), '도형 id 중복'
-    d.save('/tmp/cite.pptx'); assert T.validate('/tmp/cite.pptx', SRC)
+    d.save('/tmp/cite.pptx'); assert T.validate('/tmp/cite.pptx', SRC) is not False
     assert not [p for p in T.check_text_overflow(d, stream=io.StringIO()) if 'CiteBox' in p and p.startswith('[심각]')]
 
 def t_audit_residue_table_dash_and_bullet_para():
@@ -858,7 +860,7 @@ def t_clear_pictures_with_labels():
     i = x.rindex('</p:spTree>'); open(fp, 'w', encoding='utf8').write(x[:i] + lab + far + x[i:])
     d.clear_pictures(sn, labels=True)
     t = ''.join(d.texts(sn)); assert 'T1 TSE SAG' not in t and 'far away' in t, t
-    d.save('/tmp/cpl.pptx'); assert T.validate('/tmp/cpl.pptx')
+    d.save('/tmp/cpl.pptx'); assert T.validate('/tmp/cpl.pptx') is not False
 
 def t_move_slide_after_pos():
     d = T.Deck.open(SRC, wd('mvp'))
@@ -962,7 +964,7 @@ def t_set_notes_roundtrip_preserves_protected_memo():
     t = d.notes(sn)
     assert t.index('대본 첫 줄') < t.index(T.NOTES_SEP) < t.index(T.NOTES_SEP_MEMO) < t.index('두번째 메모'), t   # 대본 → 참고 → 기존 메모
     assert T._spoken_notes(d.notes(sn)) == ['대본 첫 줄', 'second']
-    d.save('/tmp/n2.pptx'); assert T.validate('/tmp/n2.pptx', SRC)
+    d.save('/tmp/n2.pptx'); assert T.validate('/tmp/n2.pptx', SRC) is not False
 
 def t_note_paragraph_edit_api_guards_memo():
     d = T.Deck.open(SRC, wd('n3'))
@@ -990,7 +992,7 @@ def t_copy_note_paragraphs_remaps_hyperlink_and_diff():
     rels = open(os.path.join(ed.dir, 'ppt/notesSlides/_rels/notesSlide%d.xml.rels' % ed.notes_no(sn)), encoding='utf8').read()
     rid = re.search(r'hlinkClick r:id="(rId\d+)"', x).group(1)
     assert 'Id="%s"' % rid in rels and 'example.org' in rels
-    ed.save('/tmp/n4_ed.pptx'); assert T.validate('/tmp/n4_ed.pptx', '/tmp/n4_orig.pptx')
+    ed.save('/tmp/n4_ed.pptx'); assert T.validate('/tmp/n4_ed.pptx', '/tmp/n4_orig.pptx') is not False
     r = T.diff_decks('/tmp/n4_orig.pptx', '/tmp/n4_ed.pptx', io.StringIO())
     k, f, g = r['notes'][pos]; assert g == 0 and k + f == 2, r['notes'][pos]     # rId 가 바뀐 문단은 '서식 변경'으로 잡힌다
     assert r['sldnum_lost'] == []                                                  # set_notes 는 body 만 바꾸므로 sldNum 자리는 남는다
@@ -1087,7 +1089,7 @@ def t_title_template_learn_check_conform():
     x = open(B._slide(n1), encoding='utf8').read()
     assert 'cy="1505129"' in x and 'sz="2800"' in x and '맑은 고딕' in x and 'Arial' not in x and '25-11' in x
     assert all(open(B._slide(sn), encoding='utf8').read() == v for sn, v in base_before.items())   # 베이스 슬라이드는 그대로
-    B.save('/tmp/tb_merged.pptx'); assert T.validate('/tmp/tb_merged.pptx', base)
+    B.save('/tmp/tb_merged.pptx'); assert T.validate('/tmp/tb_merged.pptx', base) is not False
 
 def t_conform_title_fits_font_when_band_would_cover_content():
     # 실물 전평 덱 재현(2026-09-24): 새 연도 슬라이드는 얇은 띠 바로 아래 본문이 있어 규격 띠로 키우면 본문을 덮는다 →
@@ -1102,7 +1104,7 @@ def t_conform_title_fits_font_when_band_would_cover_content():
     assert ch[0].startswith('[!]') and '겹쳐' in ch[0] and '24pt 밑으로' in ch[0], ch
     x = open(B._slide(n1), encoding='utf8').read()
     assert 'cy="603504"' in x and body_before in x                        # 띠 높이·본문 그대로
-    B.save('/tmp/tb_fit.pptx'); assert T.validate('/tmp/tb_fit.pptx', base)
+    B.save('/tmp/tb_fit.pptx'); assert T.validate('/tmp/tb_fit.pptx', base) is not False
 
 def t_import_slide_maps_layout_by_name_and_keeps_positions():
     # 실물 전평 덱(마스터 7개) 재현: 레이아웃 파일 이름이 같아도 뜻이 달라 본문이 그림 위로 올라갔다
@@ -1120,7 +1122,7 @@ def t_titles_cli():
     r = cli('titles', '/tmp/tb_hand.pptx'); assert r.returncode == 1 and '띠를 넘친다' in r.stdout, r.stdout
     r = cli('titles', '/tmp/tb_hand.pptx', '--apply'); assert r.returncode != 0
     r = cli('titles', '/tmp/tb_hand.pptx', '--like', '1', '--screens', '9', '--apply', '-o', '/tmp/tb_hand_fixed.pptx')
-    assert r.returncode == 0 and 'verify --original: 통과' in r.stdout, r.stdout
+    assert r.returncode == 0 and 'verify --original: ' + VOK in r.stdout, r.stdout
 
 def t_notes_on_deck_without_notes_master():
     # v16.9 에서 발견: 노트가 하나도 없던 덱에 노트를 만들면 없는 notesMaster1.xml 을 가리켜 파일이 깨졌다
@@ -1129,7 +1131,7 @@ def t_notes_on_deck_without_notes_master():
     sn = [s for s, _, _ in B.order()][0]
     B.set_notes(sn, ['script'], tips=['tip'])
     assert B.notes(sn)[0] == 'script'
-    B.save('/tmp/nm0.pptx'); assert T.validate('/tmp/nm0.pptx', base)
+    B.save('/tmp/nm0.pptx'); assert T.validate('/tmp/nm0.pptx', base) is not False
 
 def t_import_slide_keeps_body_font_size():
     # 영상의학 회신 09-24: 받는 덱 마스터의 큰 본문 글자를 입어 25-11 정답 보기 ㉣ 가 그림 뒤로 가려졌다 → 원천 크기를 적어 넣는다
@@ -1181,7 +1183,7 @@ def t_restore_memo_old_separator():
     r = T.diff_decks('/tmp/rm_orig.pptx', '/tmp/rm_ed.pptx', io.StringIO()); pos = E.screen_no(sn)
     assert r['notes'][pos][0] == 0, r['notes'][pos]                                    # 서식 잃음
     rr = cli('restore-memo', '/tmp/rm_ed.pptx', '--original', '/tmp/rm_orig.pptx', '-o', '/tmp/rm_fixed.pptx')
-    assert rr.returncode == 0 and '사라짐 0' in rr.stdout and 'verify --original: 통과' in rr.stdout, rr.stdout
+    assert rr.returncode == 0 and '사라짐 0' in rr.stdout and 'verify --original: ' + VOK in rr.stdout, rr.stdout
     F = T.Deck.open('/tmp/rm_fixed.pptx', wd('rm_f'))
     assert F.notes(sn)[0] == '대본 한 줄' and '────── 기존 메모 ──────' in F.notes(sn)
     r = T.diff_decks('/tmp/rm_orig.pptx', '/tmp/rm_fixed.pptx', io.StringIO())
@@ -1203,7 +1205,7 @@ def t_normalize_notes_moves_tags_and_separator():
     assert '- [색인] H&N_index.md 12쪽' in t and '────── 기존 메모 ──────' not in t
     assert memo in open(d._notes_path(sn), encoding='utf8').read()          # 메모 바이트 그대로
     assert T.normalize_notes(d, sn) == {'moved': 0, 'sep': 0, 'samples': []}   # 두 번 돌려도 그대로
-    d.save('/tmp/nn.pptx'); assert T.validate('/tmp/nn.pptx', SRC)
+    d.save('/tmp/nn.pptx'); assert T.validate('/tmp/nn.pptx', SRC) is not False
     r = cli('normalize-notes', '/tmp/nn.pptx', '--dry-run'); assert r.returncode == 0 and '낭독 부분에 남은 태그: 없음' in r.stdout, r.stdout
 
 def t_restore_memo_match_text_multi_source():
@@ -1217,7 +1219,7 @@ def t_restore_memo_match_text_multi_source():
     pairs, miss = T.match_sources_by_text(T.Deck.open('/tmp/mt_e.pptx', wd('mt_e2')), [T.Deck.open('/tmp/mt_a.pptx', wd('mt_a2')), T.Deck.open(new, wd('mt_y2'))])
     assert not miss and len(pairs) == len(E.order()), (miss, len(pairs))
     r = cli('restore-memo', '/tmp/mt_e.pptx', '--original', '/tmp/mt_a.pptx', '--src', new, '--match-text', '-o', '/tmp/mt_fixed.pptx')
-    assert r.returncode == 0 and '짝 없음 0화면' in r.stdout and 'verify --original: 통과' in r.stdout, r.stdout
+    assert r.returncode == 0 and '짝 없음 0화면' in r.stdout and 'verify --original: ' + VOK in r.stdout, r.stdout
     F = T.Deck.open('/tmp/mt_fixed.pptx', wd('mt_f')); assert 'CT -> 조영 & 비교link' in F.notes(sn) and 'plain memo' not in F.notes(sn)
 
 def t_apply_fixes_table():
@@ -1230,7 +1232,7 @@ def t_apply_fixes_table():
         '| %d | Parathyoid | Parathyroid | 오기 |\n| %d | membran rupture | membrane rupture | 오기 |\n| %d | dup word | x | |\n' % (scr, scr, scr))
     assert T.parse_fixes(fx)[0] == (scr, 'Parathyoid', 'Parathyroid')
     r = cli('apply-fixes', '/tmp/af.pptx', '--fixes', fx, '-o', '/tmp/af_fixed.pptx')
-    assert r.returncode == 1 and '적용 2 / 거부 1' in r.stdout and '매치 2회' in r.stdout and 'verify --original: 통과' in r.stdout, r.stdout
+    assert r.returncode == 1 and '적용 2 / 거부 1' in r.stdout and '매치 2회' in r.stdout and 'verify --original: ' + VOK in r.stdout, r.stdout
     t = ' '.join(T.Deck.open('/tmp/af_fixed.pptx', wd('af3')).texts(7))
     assert 'Parathyroid adenoma' in t and 'tympanic membrane rupture' in t
 
@@ -1245,7 +1247,7 @@ def t_v1692_temp_cleanup_protect_memo_verify_eomi_memo_only():
     d.set_notes(sn, ['우리 대본'], tips=['참고'])
     assert d.protect_memo(sn) is False and T.NOTES_SEP_MEMO not in d.notes(sn)
     # Y3: verify 통과 출력
-    r = cli('verify', SRC); assert r.returncode == 0 and 'verify: 통과' in r.stdout, r.stdout
+    r = cli('verify', SRC); assert r.returncode == 0 and 'verify: ' + VOK in r.stdout, r.stdout
     # X2: '영어 동사 + 됩니다' 는 치환 흔적이 아니다
     d.set_notes(7, ['병변이 enhance됩니다. resorption됩니다. deposition됐다.'])
     assert not [x for x in T.check_note_substitution(d) if 'slide7' in x]
@@ -1290,12 +1292,12 @@ def t_v1610_open_tmp_numcol_bake_bg_memo_only():
     assert 'fontScale' not in bb and 'lnSpcReduction' not in bb and '<a:normAutofit/>' in bb
     assert int(re.findall(r'<a:rPr\b[^>]*\bsz="(\d+)"', bb)[0]) == int(szs[0] * 0.7), (szs, bb[:300])
     assert '<a:lnSpc><a:spcPct val="80000"/></a:lnSpc>' in bb
-    d.save('/tmp/bake.pptx'); assert T.validate('/tmp/bake.pptx', SRC)
+    d.save('/tmp/bake.pptx'); assert T.validate('/tmp/bake.pptx', SRC) is not False
     assert T.no_autofit_copy('/tmp/bake.pptx', '/tmp/bake_na.pptx') >= 1
     # W3: 배경
     assert d.set_background(7, rgb='D2F6F6') is False and 'srgbClr val="D2F6F6"' in open(fp, encoding='utf8').read()
     assert d.set_background(7) is True and '<p:bg>' not in open(fp, encoding='utf8').read()
-    d.save('/tmp/bg.pptx'); assert T.validate('/tmp/bg.pptx', SRC)
+    d.save('/tmp/bg.pptx'); assert T.validate('/tmp/bg.pptx', SRC) is not False
 
 def t_v1610_import_drops_bg_on_theme_mismatch_and_ambiguous_match():
     import glob
@@ -1331,7 +1333,7 @@ def t_v1610_set_body_like_notation():
     assert 'lvl="1"' in ps[1] and 'buChar' in ps[1] and 'b="1"' not in ps[1]
     assert 'tabLst' in ps[2] and 'val="C00000"' in ps[2] and '\t' in ps[2] and re.search(r'b="1"[^>]*>(?:(?!</a:r>).)*Pleomorphic', ps[2], re.S)
     assert 'lvl="2"' in ps[3]
-    d.save('/tmp/bl.pptx'); assert T.validate('/tmp/bl.pptx', SRC)
+    d.save('/tmp/bl.pptx'); assert T.validate('/tmp/bl.pptx', SRC) is not False
 
 def t_v1611_replace_paragraph_like_and_body_notation():
     d = T.Deck.open(SRC, wd('rpl'), theme='cud')
@@ -1361,7 +1363,7 @@ def t_v1611_replace_paragraph_like_and_body_notation():
     assert re.search(r'b="0"[^>]*>(?:(?!</a:r>).)*16-13', pp, re.S)                   # 보통 run 은 원래 b="0" 그대로
     d.delete_paragraph(7, 'Mylohyoid')
     assert d.body_notation(7)[1] == 'L1 **Floor of mouth muscles (M-H-G)**⇥ {r:[짤]24-15}, 19-14, 16-13', d.body_notation(7)
-    d.save('/tmp/rpl.pptx'); assert T.validate('/tmp/rpl.pptx', SRC)
+    d.save('/tmp/rpl.pptx'); assert T.validate('/tmp/rpl.pptx', SRC) is not False
 
 def t_v1612_split_notes_excludes_memo_roundtrip():
     # 발표 U1 (급함): split_notes 가 메모 구역을 참고로 돌려줘 set_notes(n, *split_notes(n)) 가 메모를 두 번 넣었다
@@ -1451,7 +1453,7 @@ def t_v1614_layout_insert_like_spacing_bold():
     n2 = d.import_slide(s, src_no, after=o[0], layout=d.layout_of(o[0])); assert d.layout_of(n2) == d.layout_of(o[0])
     old = d.set_layout(n, d.layout_of(o[0])); assert old == s.layout_of(src_no) and d.layout_of(n) == d.layout_of(o[0])
     assert all(T._GEO.search(m.group(0)) for m in re.finditer(r'<p:sp>(?:(?!</p:sp>).)*?<p:ph\b(?![^>]*type="(?:dt|ftr|sldNum)").*?</p:sp>', open(d._slide(n), encoding='utf8').read(), re.S))
-    d.save('/tmp/s1.pptx'); assert T.validate('/tmp/s1.pptx', SRC)
+    d.save('/tmp/s1.pptx'); assert T.validate('/tmp/s1.pptx', SRC) is not False
     # T1: 이웃 문단 서식으로 넣기 — 다른 문단 바이트 그대로
     e = T.Deck.open(SRC, wd('t1'))
     body = ('<a:p><a:pPr lvl="1"><a:spcBef><a:spcPts val="600"/></a:spcBef><a:buChar char="-"/></a:pPr><a:r><a:rPr lang="en-US" sz="1600" b="1"/><a:t>Item A</a:t></a:r><a:r><a:rPr lang="en-US" sz="1600"/><a:t> 22-01</a:t></a:r></a:p>'
@@ -1472,7 +1474,7 @@ def t_v1614_layout_insert_like_spacing_bold():
         ppr = re.search(r'<a:pPr\b.*?</a:pPr>', q, re.S).group(0)
         assert '<a:spcPts val="300"/>' in ppr and '<a:spcPct val="90000"/>' in ppr and ppr.count('spcBef>') == 2, ppr
         assert ppr.index('lnSpc') < ppr.index('spcBef') and (('buChar' not in ppr) or ppr.index('spcBef') < ppr.index('buChar'))
-    e.save('/tmp/t2.pptx'); assert T.validate('/tmp/t2.pptx', SRC)
+    e.save('/tmp/t2.pptx'); assert T.validate('/tmp/t2.pptx', SRC) is not False
     # 굵은 run 은 굵은 글꼴로 — DejaVu Bold 는 Regular 보다 넓다
     reg = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
     assert T._bold_sibling(reg) and 'Bold' in T._bold_sibling(reg)
@@ -1508,7 +1510,7 @@ def t_v1615_lead_space_whole_strict_sldnum_eomi():
     if os.path.exists(nm) and 'type="sldNum"' in open(nm, encoding='utf8').read():
         n = e.import_slide(T.Deck.open(SRC, wd('r3s')), 2, after=1)
         assert 'type="sldNum"' in open(e._notes_path(n), encoding='utf8').read()
-        e.save('/tmp/r3.pptx'); assert T.validate('/tmp/r3.pptx', SRC)
+        e.save('/tmp/r3.pptx'); assert T.validate('/tmp/r3.pptx', SRC) is not False
     # R4
     e.set_notes(7, ['tumor뿐 아니라 MRF째로 침범'])
     assert not [q for q in T.check_note_substitution(e) if 'slide7' in q]
@@ -1541,7 +1543,7 @@ def t_v1617_hidden_zone_eomi_keep_format():
     d = T.Deck.open(SRC, wd('h1')); o = [s for s, _, _ in d.order()]
     assert not d.is_hidden(o[3]) and d.set_hidden(o[3]) is False and d.is_hidden(o[3]) and d.hidden_slides() == [4]
     assert d.set_hidden(o[3], False) is True and not d.is_hidden(o[3]) and d.hidden_slides() == []
-    d.set_hidden(o[3]); d.save('/tmp/h1.pptx'); assert T.validate('/tmp/h1.pptx', SRC)
+    d.set_hidden(o[3]); d.save('/tmp/h1.pptx'); assert T.validate('/tmp/h1.pptx', SRC) is not False
     # H2: 노트의 메모 구역만
     sn = o[2]; _memo_notes(d, sn); d.protect_memo(sn)
     d.set_notes(sn, ['대본'], tips=['참고에도 두번째 메모 라는 말'])
@@ -1592,7 +1594,7 @@ def t_v1618_delete_shape():
     if px.count('name="%s"' % nm) == 1 and px.count('r:embed="%s"' % rid) == 1:
         d.delete_shape(pic_slide, T.html.unescape(nm))
         assert 'Id="%s"' % rid not in open(d._slide_rels(pic_slide), encoding='utf8').read()
-    d.save('/tmp/c1.pptx'); assert T.validate('/tmp/c1.pptx', SRC)
+    d.save('/tmp/c1.pptx'); assert T.validate('/tmp/c1.pptx', SRC) is not False
 
 def t_v1626_widen_label():
     d = T.Deck.open(SRC, wd('k6'))
@@ -1617,7 +1619,7 @@ def t_v1626_widen_label():
     s2 = re.search(r'name="이름표 2".*?<a:off x="(\d+)" y="100"/>', y, re.S)
     assert int(s2.group(1)) == int(0.5 * E)                                                                                          # 왼쪽 끝 고정
     assert '(R3 가나다)' in y and 'sz="1800"' in y
-    d.save('/tmp/k6.pptx'); assert T.validate('/tmp/k6.pptx', SRC)
+    d.save('/tmp/k6.pptx'); assert T.validate('/tmp/k6.pptx', SRC) is not False
 
 
 def t_v1627_fit_corner_boxes_and_protect_memo():
@@ -1644,7 +1646,7 @@ def t_v1627_fit_corner_boxes_and_protect_memo():
     assert '이웃 상자' in q['overlap'], q
     y = open(d._slide(7), encoding='utf8').read()
     assert long_txt in y and 'sz="1000"' in y and 'wrap="none"' in y
-    d.save('/tmp/k7.pptx'); assert T.validate('/tmp/k7.pptx', SRC)
+    d.save('/tmp/k7.pptx'); assert T.validate('/tmp/k7.pptx', SRC) is not False
     # protect-memo CLI
     d2 = T.Deck.open(SRC, wd('p2')); order = [sn for sn, _, _ in d2.order() if sn]
     d2.set_notes(order[1], ['원작자 노트 한 줄']); d2.set_notes(order[2], ['대본'], ['· 참고']); d2.save('/tmp/p2_in.pptx')
@@ -1683,7 +1685,7 @@ def t_v1628_title_need_height():
     r = T.raise_title_band(B, order[8])                                                    # Google 안전: 0.66" → 필요 높이
     assert r and r[0].startswith('띠 0.66"'), r
     assert T.raise_title_band(B, order[0]) == []                                          # 1.22" 는 그대로
-    B.save('/tmp/k8o.pptx'); assert T.validate('/tmp/k8o.pptx', path)
+    B.save('/tmp/k8o.pptx'); assert T.validate('/tmp/k8o.pptx', path) is not False
 
 
 def t_v1629_shrink_bottom_inset_and_joint_profile():
@@ -1764,7 +1766,7 @@ def t_v1630_balance_and_own_size():
     assert T.balance_title_band(B, order[5], ref)[0].startswith('[!]')                  # 0.45" − 0.1" 에 23pt 글이 안 들어감
     assert T.balance_title_band(B, order[0], ref) == []                                # 기준 제목은 이미 규격·균형
     assert '23' in r4[0] and 'content' in open(B._slide(order[3]), encoding='utf8').read()
-    B.save('/tmp/k10o.pptx'); assert T.validate('/tmp/k10o.pptx', path)
+    B.save('/tmp/k10o.pptx'); assert T.validate('/tmp/k10o.pptx', path) is not False
 
 
 def t_v1631_adopt_house_look():
@@ -1791,7 +1793,7 @@ def t_v1631_adopt_house_look():
     assert 'FFFFFF' not in b2 and 'FF0000' in b2                              # 흰 글자는 테마색으로, 빨강은 그대로
     assert 'FFFFFF' in re.search(r'name="Dark box".*?</p:sp>', y, re.S).group(0)   # 어두운 상자 안 흰 글자는 그대로
     assert T.adopt_house_look(d, order[1]) == [] or all(c.startswith('[참고]') or '밝은' in c for c in T.adopt_house_look(d, order[1], dry_run=True))
-    d.save('/tmp/k12.pptx'); assert T.validate('/tmp/k12.pptx', SRC)
+    d.save('/tmp/k12.pptx'); assert T.validate('/tmp/k12.pptx', SRC) is not False
 
 
 def t_v1632_inherited_title_diff_boxes_bake_pts():
@@ -1815,7 +1817,7 @@ def t_v1632_inherited_title_diff_boxes_bake_pts():
     assert open(lay, encoding='utf8').read() == lx                                        # 레이아웃은 고치지 않는다
     rb = T.balance_title_band(d, order[1], {'h_by_lines': {1: int(1.22 * T.EMU_IN)}, 'ins': (91440, 91440, 45720, 45720), 'est_sz': 4400})
     assert rb and rb[0].startswith('물려받던 제목 — 적어 넣음 · ') and T._title_info(d, order[1])['tIns'] == T._title_info(d, order[1])['bIns'], rb
-    d.save('/tmp/k13o.pptx'); assert T.validate('/tmp/k13o.pptx', path)
+    d.save('/tmp/k13o.pptx'); assert T.validate('/tmp/k13o.pptx', path) is not False
     # D1: 상자 순서만 바뀌고 한 상자 글 조각이 합쳐진 화면은 '의도하지 않은 글 변경' 이 아니다
     A = T.Deck.open(SRC, wd('d1a')); sa = [x for x, _, _ in A.order() if x][6]
     def tbx(i, nm, runs):
@@ -1845,7 +1847,7 @@ def t_v1632_inherited_title_diff_boxes_bake_pts():
     assert E.bake_autofit(se, shape='Google Shape;439;p42') == 1
     q = re.search(r'name="Google Shape;439;p42".*?</p:sp>', open(E._slide(se), encoding='utf8').read(), re.S).group(0)
     assert q.count('<a:lnSpc>') == 6 and q.count('spcPts val="2160"') == 6 and 'sz="990"' in q, q[:600]
-    E.save('/tmp/d2o.pptx'); assert T.validate('/tmp/d2o.pptx', SRC)
+    E.save('/tmp/d2o.pptx'); assert T.validate('/tmp/d2o.pptx', SRC) is not False
 
 
 def t_v1632_title_block_k14():
@@ -1876,7 +1878,7 @@ def t_v1632_title_block_k14():
     assert 'Rule 18' not in x and '92D050' not in x and 'FF0000' in x
     assert re.search(r'name="Label".*?<a:off x="\d+" y="(\d+)"', x, re.S).group(1) == str(int(7.1 * T.EMU_IN))   # 아래 이름표는 그대로
     assert i['tIns'] == i['bIns']
-    d.save('/tmp/k14o.pptx'); assert T.validate('/tmp/k14o.pptx', path)
+    d.save('/tmp/k14o.pptx'); assert T.validate('/tmp/k14o.pptx', path) is not False
 
 
 def t_v1633_colors_band_fit_layout():
@@ -1917,7 +1919,7 @@ def t_v1633_colors_band_fit_layout():
     assert int(bnd[2]) == ti['h'] == int(1.8 * E) and int(bnd[1]) == ti['y'] == -18288, (bnd, ti['y'], ti['h'])
     body = re.search(r'<p:sp>(?:(?!<p:sp>).)*?idx="1"(?:(?!<p:sp>).)*?</p:sp>', xb, re.S).group(0)
     assert int(re.search(r'<a:off x="-?\d+" y="(-?\d+)"', body).group(1)) == -18288 + int(1.8 * E) + int(0.1 * E), body[:300]
-    B.save('/tmp/k153o.pptx'); assert T.validate('/tmp/k153o.pptx', path)
+    B.save('/tmp/k153o.pptx'); assert T.validate('/tmp/k153o.pptx', path) is not False
     # K16 1단계: 밀집 화면 — 제목 띠 촘촘히, 그림+주석 비율, 본문 글과 안 겹침, 이름표 그대로
     prs = Presentation(); prs.slide_width, prs.slide_height = Inches(10), Inches(7.5)
     sl = prs.slides.add_slide(prs.slide_layouts[5]); sl.shapes.title.text_frame.text = 'Endoleak type II'
@@ -1944,7 +1946,7 @@ def t_v1633_colors_band_fit_layout():
     assert pg[0] >= bg[0] + bg[2] or pg[1] >= bg[1] + int(0.5 * E), (pg, bg)                   # 본문과 옆으로 갈라섬(글과 안 겹침)
     assert pg[0] <= ag[0] and ag[0] + ag[2] <= pg[0] + pg[2] and pg[1] <= ag[1] <= pg[1] + pg[3], (pg, ag)   # 주석은 그림 안에 그대로
     assert lg == (int(0.2 * E), int(7.1 * E), int(1.4 * E), int(0.3 * E))                     # 이름표 그대로
-    F.save('/tmp/k16o.pptx'); assert T.validate('/tmp/k16o.pptx', path)
+    F.save('/tmp/k16o.pptx'); assert T.validate('/tmp/k16o.pptx', path) is not False
     many = T.Deck.open(path, wd('k16b')); sm = [x for x, _, _ in many.order() if x][0]
     xm = open(many._slide(sm), encoding='utf8').read()
     xm = xm.replace('point 0 with some explanatory words here', ' '.join(['very long text'] * 400))
@@ -1991,7 +1993,7 @@ def t_v1634_fit_layout_stage2():
         assert bx + bw <= px and by < int(0.3 * E), (bx, bw, px, by)                          # 옆 배치: 글 왼쪽·그림 오른쪽, 제목 뺀 자리까지 위로
         assert bh < int(3.23 * E) and 'sz="1400"' not in x and max(int(v) for v in re.findall(r'sz="(\d+)"', re.search(r'name="TextBox 4".*?</p:sp>', x, re.S).group(0))) <= 2400
         assert not T._inter((bx, by, bw, bh), (px, py, pw, ph)) and not T._inter((lx, ly, lw, lh), (px, py, pw, ph))
-    assert T.validate(out, path)
+    assert T.validate(out, path) is not False
 
 
 def t_v1635_fail_still_drops_title_and_cites():
@@ -2060,7 +2062,7 @@ def t_v1636_keep_arrangement_success_regression():
     assert re.search(r'type="title"', x)                                         # 제목은 남는다
     bh = int(re.search(r'name="Body".*?<a:ext cx="\d+" cy="(\d+)"', x, re.S).group(1))
     assert bh < int(3.5 * E), bh                                                 # 본문 상자 높이가 글 높이로 줄었다
-    d.save('/tmp/k20o.pptx'); assert T.validate('/tmp/k20o.pptx', path)
+    d.save('/tmp/k20o.pptx'); assert T.validate('/tmp/k20o.pptx', path) is not False
 
 
 def t_v1637_box_to_memo_side_decision_wrap():
@@ -2104,7 +2106,7 @@ def t_v1637_box_to_memo_side_decision_wrap():
         d.box_to_memo(sn, 'no such text'); assert False                          # 맞는 상자가 없으면 거부
     except ValueError:
         pass
-    d.save('/tmp/k22o.pptx'); assert T.validate('/tmp/k22o.pptx', path)
+    d.save('/tmp/k22o.pptx'); assert T.validate('/tmp/k22o.pptx', path) is not False
 
 
 def t_v1619_da_after_vowel():
@@ -2142,7 +2144,7 @@ def t_title_box_not_placeholder():
     assert any('글상자' in i for i in bad.get(sn, [])), bad
     ch = T.conform_title(B, sn, prof); assert ch[0].startswith('[참고] 글상자'), ch
     ch = T.conform_title(B, sn, prof, adopt_box=True); assert '글상자 → title placeholder' in ch, ch
-    B.save('/tmp/tb_box.pptx'); assert T.validate('/tmp/tb_box.pptx', base)
+    B.save('/tmp/tb_box.pptx'); assert T.validate('/tmp/tb_box.pptx', base) is not False
 
 # ---------------------------------------------------------------- CLI
 def t_cli():
@@ -2177,7 +2179,7 @@ def t_create_notes_when_missing():
     os.remove(os.path.join(d.dir, 'ppt/notesSlides/_rels', m.group(1) + '.rels'))
     assert d.notes_no(sn) is None
     d.set_notes(sn, ['new note']); assert d.notes(sn) == ['new note']
-    o = out('cn.pptx'); d.save(o); assert T.validate(o, SRC)
+    o = out('cn.pptx'); d.save(o); assert T.validate(o, SRC) is not False
 
 # ---------------------------------------------------------------- 주장 관계도 / 의존 그래프
 CLAIMS = [{'id': 'c1', 'statement': 't', 'sites': ['slide:7'], 'keys': ['New title'], 'forbidden': ['철회된표현']}]
@@ -2189,6 +2191,43 @@ def t_mapcheck_ok():
 def t_mapcheck_detects_missing():
     d = T.Deck.open(SRC, wd('mm')); d.set_title(7, 'Something else')
     probs, _ = T.mapcheck(d, CLAIMS, io.StringIO()); assert any('반영되지 않음' in p for p in probs), probs
+
+def t_v1638_order_tolerant_and_strict():
+    # 코드 리뷰 09-28 [결함]: sldId 를 속성 순서·공백까지 정확히 맞춰야 읽었다 — `" />"` 하나로 슬라이드 0장, 오류 없음
+    d = T.Deck.open(SRC, os.path.join(TMP, 'ord_ws'))
+    n = len(d.order()); assert n > 0
+    pp = os.path.join(d.dir, 'ppt/presentation.xml'); x = open(pp, encoding='utf8').read()
+    y = re.sub(r'<p:sldId id="(\d+)" r:id="(rId\d+)"/>', r'<p:sldId r:id="\2"  id="\1" />', x)
+    assert y != x; open(pp, 'w', encoding='utf8').write(y)
+    assert len(d.order()) == n, d.order()                       # 성공 길: 순서·공백이 달라도 같은 수
+    open(pp, 'w', encoding='utf8').write(y.replace('<p:sldId r:id="rId', '<p:sldId r:xid="rId', 1))   # 슬라이드 하나의 r:id 를 망가뜨림
+    try:                                                        # 실패 길: 읽지 못한 sldId 가 있으면 조용히 빼지 않고 멈춘다
+        d.order(); assert False, '멈추지 않았다'
+    except ValueError as e:
+        assert 'sldId' in str(e), e
+
+
+def t_v1638_validate_missing_is_not_pass():
+    # 코드 리뷰 09-28 [결함]: validate.py 가 없으면 '통과'(True) — Cowork 의 '통과' 는 '검사 안 함' 이었다
+    import contextlib
+    real = os.environ.get('HANDOFF_VALIDATE_PY')
+    os.environ['HANDOFF_VALIDATE_PY'] = '/nonexistent/validate.py'
+    try:
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            r = T.validate(SRC, SRC)
+        assert r is None and '검증 못 함' in buf.getvalue(), (r, buf.getvalue())
+        cp = subprocess.run([sys.executable, os.path.join(HERE, 'deck_toolkit.py'), 'verify', SRC, '--original', SRC],
+                            capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+        assert '통과' not in cp.stdout.splitlines()[-1] and '검증 못 함' in cp.stdout, cp.stdout
+    finally:
+        if real is None:
+            os.environ.pop('HANDOFF_VALIDATE_PY', None)
+        else:
+            os.environ['HANDOFF_VALIDATE_PY'] = real
+    if os.path.exists(T.validate_path()):                       # 성공 길: 있으면 전처럼 True
+        assert T.validate(SRC, SRC) is True
+
 
 def t_mapcheck_detects_forbidden():
     d = T.Deck.open(SRC, wd('mf')); d.set_title(7, 'New title'); d.set_body(7, T.Body().line('철회된표현 이 남아 있다'))

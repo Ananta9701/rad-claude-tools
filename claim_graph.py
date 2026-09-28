@@ -42,7 +42,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '15.8.2'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '15.8.3'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -1104,8 +1104,10 @@ def selfcheck(folder, run_tests=False, stream=sys.stdout, role=None, compare=Non
     if os.path.exists(rel):
         m = re.search(r'manifest v([\d.]+)', open(rel, encoding='utf8').readline())
         rv = m.group(1) if m else None
-    s1 = rv == mver
-    if not s1:
+    s1 = rv == mver and mver is not None
+    if mver is None:   # v15.8.3 (코드 리뷰 09-28): 판 없음 = 판 없음 으로 '통과' 하던 것
+        problems.append('1단계: TOOLS_MANIFEST.md 의 manifest 판을 읽지 못했다 — 깨졌거나 다른 파일')
+    elif not s1:
         problems.append('1단계: manifest 판 v%s ≠ RELEASE 첫 줄 v%s' % (mver, rv))
     lines.append('| ① manifest 판 | v%s / RELEASE v%s | %s |' % (mver, rv, '○' if s1 else '✗'))
     # v15.8: git clone 으로 받은 세트면 커밋 해시 — 받은 판을 회신에서 확정한다(tarball 은 판 식별자가 없다)

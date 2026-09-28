@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '15.8.2'
+EXPECT_VERSION = '15.8.3'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -423,6 +423,16 @@ def t_selfcheck_code_only_release_hash():
     assert not r['ok'] and any('②′ claim_graph.py' in p for p in r['problems']), r['problems']
     assert not any(('②′ %s' % f) in p for f in code_only for p in r['problems']), r['problems']
     assert tuple(CGm.CODE_ONLY) == code_only, CGm.CODE_ONLY
+
+def t_v1583_selfcheck_unreadable_manifest_fails():
+    # 코드 리뷰 09-28 [결함]: 판을 읽을 수 없는 manifest(판 없음 = 판 없음)로 '통과 — 작업 시작 가능' 이 나왔다
+    import tempfile
+    d = tempfile.mkdtemp()
+    open(os.path.join(d, 'TOOLS_MANIFEST.md'), 'w', encoding='utf8').write('garbage\n')
+    buf = io.StringIO(); r = CGm.selfcheck(d, stream=buf)
+    assert not r['ok'] and any('판을 읽지 못했다' in p for p in r['problems']), (r, buf.getvalue())
+    assert '통과 — 작업 시작 가능' not in buf.getvalue()
+
 
 def t_claim_graph_cli():
     p = '/tmp/cg_cli.json'

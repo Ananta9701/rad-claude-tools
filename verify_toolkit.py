@@ -39,7 +39,7 @@ import zipfile
 import os
 import shutil
 
-__version__ = '1.3.5'   # TOOLS_MANIFEST 와 대조. 판이 오르면 test_verify_toolkit.EXPECT_VERSION 도 함께
+__version__ = '1.3.6'   # TOOLS_MANIFEST 와 대조. 판이 오르면 test_verify_toolkit.EXPECT_VERSION 도 함께
 
 # ══════════════════════════════════════════════════════════════
 # PAPER-SPECIFIC CONFIG — 논문·학술지가 바뀌면 여기만 수정
@@ -63,6 +63,7 @@ PVALUE_DECIMALS = 3
 _INS_OPEN = r'<w:ins\b[^>]*(?<!/)>'
 _DEL_OPEN = r'<w:del\b[^>]*(?<!/)>'
 _MARK = r'<w:(?:ins|del)\b[^>]*/>'
+_MOVE = r'<w:move(?:From|To)\b'
 
 
 # ---------- 1. 추적 변경(Track Changes) 감지 ----------
@@ -74,6 +75,7 @@ def scan_track_changes(path):
     ins_blocks = re.findall(_INS_OPEN + r'(.*?)</w:ins>', doc, re.S)
     del_blocks = re.findall(_DEL_OPEN + r'(.*?)</w:del>', doc, re.S)
     marks = len(re.findall(_MARK, doc))   # v1.3.5: 문단 표지 변경(스스로 닫는 <w:ins/>·<w:del/>)은 따로 센다
+    moves = len(re.findall(_MOVE, doc))   # v1.3.6: 이동(moveFrom·moveTo) — 정리 도구는 다루지 않는다
 
     def texts(blocks, tag='w:t'):
         out = []
@@ -91,13 +93,15 @@ def scan_track_changes(path):
     print(f"  <w:ins> 삽입 블록: {len(ins_blocks)}개 (텍스트 있는 것 {len(ins_texts)}개)")
     print(f"  <w:del> 삭제 블록: {len(del_blocks)}개 (텍스트 있는 것 {len(del_texts)}개)")
     print(f"  문단 표지 변경(<w:ins/>·<w:del/>): {marks}개")
+    if moves:
+        print(f"  이동(moveFrom·moveTo): {moves}개 — accept_or_reject_changes 는 처리하지 않는다. Word 에서 직접 적용")
     print(f"  한글 포함 삽입(=저자 지시문 가능성): {len(kor_ins)}개")
     for t in kor_ins[:10]:
         print(f"    • {t[:100]}")
-    if ins_blocks or del_blocks or marks:
+    if ins_blocks or del_blocks or marks or moves:
         print("  ⚠ 이 파일은 추적 변경 상태입니다. p.text만 읽으면 이 내용을 놓칩니다.")
         print("    저자의 실제 수정(ins)과 지시문을 구분해서 처리하세요.")
-    return {'ins': len(ins_blocks), 'del': len(del_blocks), 'marks': marks, 'korean_ins': kor_ins}
+    return {'ins': len(ins_blocks), 'del': len(del_blocks), 'marks': marks, 'moves': moves, 'korean_ins': kor_ins}
 
 
 def accept_or_reject_changes(src, out, keep_korean_as_note=True):
@@ -109,6 +113,10 @@ def accept_or_reject_changes(src, out, keep_korean_as_note=True):
         data = zin.read(item)
         if item == 'word/document.xml':
             s = data.decode('utf-8')
+            if re.search(_MOVE, s):     # v1.3.6 (사용자 09-28): 이동은 다루지 않는다 — 쓰지 않고 멈춘다
+                zout.close(); zin.close(); os.remove(out)
+                raise SystemExit('[멈춤] 이동 표지(moveFrom·moveTo)가 있다 — 이 도구는 이동을 처리하지 않는다. 파일을 쓰지 않았다. '
+                                 'Word 에서 직접 "모든 변경 내용 적용" 을 쓴다')
             s = re.sub(_MARK, '', s)    # v1.3.5: 문단 표지 변경 표지는 먼저 뺀다(문단·글은 그대로 남는다)
             s = re.sub(_DEL_OPEN + r'.*?</w:del>', '', s, flags=re.S)
 
