@@ -39,7 +39,7 @@ import zipfile
 import os
 import shutil
 
-__version__ = '1.3.4'   # TOOLS_MANIFEST 와 대조. 판이 오르면 test_verify_toolkit.EXPECT_VERSION 도 함께
+__version__ = '1.3.5'   # TOOLS_MANIFEST 와 대조. 판이 오르면 test_verify_toolkit.EXPECT_VERSION 도 함께
 
 # ══════════════════════════════════════════════════════════════
 # PAPER-SPECIFIC CONFIG — 논문·학술지가 바뀌면 여기만 수정
@@ -58,14 +58,22 @@ PVALUE_DECIMALS = 3
 # ══════════════════════════════════════════════════════════════
 
 
+# v1.3.5 (코드 리뷰 09-28): 여는 태그만 잡는다 — 전에는 `<w:ins [^>]*>` 가 스스로 닫는 `<w:ins …/>`(문단 표지 변경, rPr 안)까지 잡아
+# 다음 `</w:ins>` 까지 한 덩어리로 지우거나 풀어 XML 을 깨뜨렸다
+_INS_OPEN = r'<w:ins\b[^>]*(?<!/)>'
+_DEL_OPEN = r'<w:del\b[^>]*(?<!/)>'
+_MARK = r'<w:(?:ins|del)\b[^>]*/>'
+
+
 # ---------- 1. 추적 변경(Track Changes) 감지 ----------
 def scan_track_changes(path):
     """python-docx가 못 읽는 <w:ins>/<w:del>을 XML 레벨로 직접 찾는다.
     저자가 Word 추적변경으로 편집한 파일을 받았을 때 반드시 먼저 실행."""
     z = zipfile.ZipFile(path)
     doc = z.read('word/document.xml').decode('utf-8')
-    ins_blocks = re.findall(r'<w:ins [^>]*>(.*?)</w:ins>', doc, re.S)
-    del_blocks = re.findall(r'<w:del [^>]*>(.*?)</w:del>', doc, re.S)
+    ins_blocks = re.findall(_INS_OPEN + r'(.*?)</w:ins>', doc, re.S)
+    del_blocks = re.findall(_DEL_OPEN + r'(.*?)</w:del>', doc, re.S)
+    marks = len(re.findall(_MARK, doc))   # v1.3.5: 문단 표지 변경(스스로 닫는 <w:ins/>·<w:del/>)은 따로 센다
 
     def texts(blocks, tag='w:t'):
         out = []
@@ -82,13 +90,14 @@ def scan_track_changes(path):
     print(f"=== 추적 변경 스캔: {path} ===")
     print(f"  <w:ins> 삽입 블록: {len(ins_blocks)}개 (텍스트 있는 것 {len(ins_texts)}개)")
     print(f"  <w:del> 삭제 블록: {len(del_blocks)}개 (텍스트 있는 것 {len(del_texts)}개)")
+    print(f"  문단 표지 변경(<w:ins/>·<w:del/>): {marks}개")
     print(f"  한글 포함 삽입(=저자 지시문 가능성): {len(kor_ins)}개")
     for t in kor_ins[:10]:
         print(f"    • {t[:100]}")
-    if ins_blocks or del_blocks:
+    if ins_blocks or del_blocks or marks:
         print("  ⚠ 이 파일은 추적 변경 상태입니다. p.text만 읽으면 이 내용을 놓칩니다.")
         print("    저자의 실제 수정(ins)과 지시문을 구분해서 처리하세요.")
-    return {'ins': len(ins_blocks), 'del': len(del_blocks), 'korean_ins': kor_ins}
+    return {'ins': len(ins_blocks), 'del': len(del_blocks), 'marks': marks, 'korean_ins': kor_ins}
 
 
 def accept_or_reject_changes(src, out, keep_korean_as_note=True):
@@ -100,7 +109,8 @@ def accept_or_reject_changes(src, out, keep_korean_as_note=True):
         data = zin.read(item)
         if item == 'word/document.xml':
             s = data.decode('utf-8')
-            s = re.sub(r'<w:del [^>]*>.*?</w:del>', '', s, flags=re.S)
+            s = re.sub(_MARK, '', s)    # v1.3.5: 문단 표지 변경 표지는 먼저 뺀다(문단·글은 그대로 남는다)
+            s = re.sub(_DEL_OPEN + r'.*?</w:del>', '', s, flags=re.S)
 
             def handle_ins(m):
                 inner = m.group(1)
@@ -108,8 +118,15 @@ def accept_or_reject_changes(src, out, keep_korean_as_note=True):
                 if keep_korean_as_note and re.search(r'[가-힣]', txt):
                     return ''  # 한글 지시문 → 제거
                 return inner  # 저자의 실제 수정 → 수용
-            s = re.sub(r'<w:ins [^>]*>(.*?)</w:ins>', handle_ins, s, flags=re.S)
+            s = re.sub(_INS_OPEN + r'(.*?)</w:ins>', handle_ins, s, flags=re.S)
             s = s.replace('<w:delText', '<w:t').replace('</w:delText>', '</w:t>')
+            try:                        # v1.3.5: 결과가 온전한 XML 인지 확인 — 아니면 쓰지 않고 멈춘다
+                import xml.dom.minidom
+                xml.dom.minidom.parseString(s.encode('utf-8'))
+            except Exception as e:
+                zout.close(); zin.close(); os.remove(out)
+                raise SystemExit('[멈춤] 추적변경 정리 결과 document.xml 이 온전하지 않다(%s) — 파일을 쓰지 않았다. '
+                                 'Word 에서 직접 "모든 변경 내용 적용" 을 쓴다' % str(e)[:80])
             data = s.encode('utf-8')
         zout.writestr(item, data)
     zin.close()

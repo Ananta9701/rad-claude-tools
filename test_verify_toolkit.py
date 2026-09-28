@@ -23,7 +23,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '1.3.4'
+EXPECT_VERSION = '1.3.5'
 TMP = os.environ.get('VT_TMP', '/tmp/vt_test')
 shutil.rmtree(TMP, ignore_errors=True)
 os.makedirs(TMP, exist_ok=True)
@@ -410,6 +410,52 @@ def t_accept_or_reject_changes():
     assert r['ins'] == 0 and r['del'] == 0, r
     txt = ' '.join(p.text for p in Document(out).paragraphs)
     assert 'added English' in txt and '한글 지시문' not in txt and 'removed' not in txt, txt
+
+
+_TC = ' w:author="A" w:date="2026-01-01T00:00:00Z"'
+
+
+def _with_mark_changes(name):
+    """문단 표지에 붙는 스스로 닫는 추적 변경 표지(<w:ins/>·<w:del/> in rPr) + 보통 ins/del. v1.3.5 재현용(코드 리뷰 09-28)."""
+    src = _docx(name + '_src.docx', ['Keep one.', 'Keep two.', 'Keep 셋.', 'Keep four.'])
+    def fn(s):
+        s = re.sub(r'<w:p>(<w:r><w:t>Keep one\.)', r'<w:p><w:pPr><w:rPr><w:ins w:id="10"%s/></w:rPr></w:pPr>\1' % _TC, s)
+        s = re.sub(r'<w:p>(<w:r><w:t>Keep two\.)', r'<w:p><w:pPr><w:rPr><w:del w:id="11"%s/></w:rPr></w:pPr>\1' % _TC, s)
+        s = s.replace('<w:t>Keep four.</w:t></w:r>', '<w:t>Keep four.</w:t></w:r>'
+                      '<w:ins w:id="12"%s><w:r><w:t> new text</w:t></w:r></w:ins>'
+                      '<w:del w:id="13"%s><w:r><w:delText> old text</w:delText></w:r></w:del>' % (_TC, _TC))
+        assert s.count('w:id="1') == 4, s   # 표지 넷이 다 들어갔는지(fixture 자체 점검)
+        return s
+    return _patch_xml(src, name + '.docx', fn)
+
+
+def t_v135_track_changes_self_closing_marks():
+    # 코드 리뷰 09-28 [결함]: 스스로 닫는 <w:ins/>·<w:del/> 표지를 여는 태그로 잡아 다음 </w:ins>·</w:del> 까지 한 덩어리로 —
+    # XML 이 깨지거나 남길 문단이 지워지고, 사이에 한글이 있으면 덩어리째 지워졌다
+    import xml.dom.minidom
+    src = _with_mark_changes('tc5')
+    r, _ = _quiet(V.scan_track_changes, src)
+    assert r['ins'] == 1 and r['del'] == 1 and r.get('marks') == 2, r        # 보통 변경만 세고 문단 표지는 따로
+    out = os.path.join(TMP, 'tc5_clean.docx')
+    _quiet(V.accept_or_reject_changes, src, out)
+    xml.dom.minidom.parseString(zipfile.ZipFile(out).read('word/document.xml'))   # 깨지지 않았다
+    txt = ' | '.join(p.text for p in Document(out).paragraphs)
+    for keep in ('Keep one.', 'Keep two.', 'Keep 셋.', 'Keep four. new text'):
+        assert keep in txt, (keep, txt)
+    assert 'old text' not in txt, txt
+    r2, _ = _quiet(V.scan_track_changes, out)
+    assert r2['ins'] == 0 and r2['del'] == 0 and r2.get('marks') == 0, r2
+
+
+def t_v135_track_changes_broken_input_stops():
+    # 실패 길: 결과 XML 이 온전하지 않으면 파일을 쓰지 않고 멈춘다(깨진 docx 를 조용히 내지 않는다)
+    src = _patch_xml(_docx('tc6_src.docx', ['Base.']), 'tc6.docx', lambda s: s.replace('</w:body>', '<w:p></w:body>'))
+    out = os.path.join(TMP, 'tc6_clean.docx')
+    try:
+        _quiet(V.accept_or_reject_changes, src, out); assert False, '멈추지 않았다'
+    except SystemExit as e:
+        assert '온전하지 않다' in str(e), e
+    assert not os.path.exists(out), '깨진 결과 파일이 남았다'
 
 
 def t_fix_zoom_bug():
