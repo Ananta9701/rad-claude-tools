@@ -27,7 +27,7 @@ import time
 import unicodedata
 from collections import Counter
 
-__version__ = '0.5'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.6'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
 
 TOC_WORDS = re.compile(r'차\s*[례려레]|목\s*차|c\s*o\s*n\s*t\s*e\s*n\s*t\s*s', re.I)   # v0.2: OCR '차려'·'C O N T E N T S'
 NUM_LINE = re.compile(r'^\s*[-–—]?\s*(\d{1,4})\s*[-–—]?\s*$')
@@ -835,9 +835,49 @@ def printed_to_pdf(index_md, printed):
 MIN_IMG = 32      # v0.5 (Cowork split 7-1): 이보다 작은 이미지(스캔 PDF 의 1×1 마스크 등)는 건너뛴다
 
 
-def page_images(folder, book, out, pdf_page=None, printed=None, split_dir=None, recursive=False, fmt='jpg', stream=sys.stdout):
+PNG_MODES = ('1', 'L', 'LA', 'I', 'I;16', 'P', 'RGB', 'RGBA')
+
+
+def _fit(pic, max_px):
+    """v0.6: 긴 변을 max_px 이하로(비율 그대로). 작으면 그대로."""
+    if max_px and max(pic.size) > max_px:
+        from PIL import Image
+        r = max_px / float(max(pic.size))
+        pic = pic.resize((max(1, round(pic.size[0] * r)), max(1, round(pic.size[1] * r))), Image.LANCZOS)
+    return pic
+
+
+def _render(pdf_path, pdf_page, dpi, stream):
+    """v0.6: 쪽 전체를 그림으로 — pdftoppm(poppler) 에 맡긴다. pypdf 는 쪽을 그리지 못한다. PyMuPDF 는 쓰지 않는다(사용자 09-28)."""
+    import shutil, tempfile
+    exe = shutil.which('pdftoppm')
+    if not exe:
+        raise SystemExit('[멈춤] pdftoppm 이 없다 — --render 는 poppler 의 pdftoppm 이 있어야 한다(Mac: brew install poppler). '
+                         '없으면 --render 없이 쪽 안의 그림만 뽑는다')
+    from PIL import Image
+    tmp = tempfile.mkdtemp(prefix='tb_render_')
+    try:
+        r = subprocess.run([exe, '-f', str(pdf_page), '-l', str(pdf_page), '-r', str(dpi), '-png', pdf_path, os.path.join(tmp, 'p')],
+                           capture_output=True, text=True, timeout=300)
+        made = sorted(f for f in os.listdir(tmp) if f.endswith('.png'))
+        if r.returncode != 0 or not made:
+            raise SystemExit('[멈춤] pdftoppm 실패(rc=%s): %s' % (r.returncode, (r.stderr or '').strip()[:200]))
+        pic = Image.open(os.path.join(tmp, made[0])); pic.load()
+        return pic
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def page_images(folder, book, out, pdf_page=None, printed=None, split_dir=None, recursive=False, fmt='jpg', stream=sys.stdout,
+                render=False, dpi=150, max_px=None, name=None):
     """쪽 그림 뽑기 — 그 쪽에 든 이미지(스캔본이면 쪽 전체 그림)를 JPEG(기본, 품질 90) 또는 PNG 로. 반환: 쓴 파일 목록.
-    v0.5: 기본 JPEG — 스캔 쪽 PNG 가 한 장 14.8 MB 였다. 작은 이미지는 건너뛴다."""
+    v0.5: 기본 JPEG — 스캔 쪽 PNG 가 한 장 14.8 MB 였다. 작은 이미지는 건너뛴다.
+    v0.6: render=True 면 쪽 전체를 dpi 로 그려 한 장(글자·캡션·표지 포함 — 전자책). max_px 는 긴 변 상한,
+    name 은 파일 이름 틀 — {printed}(인쇄 쪽)·{pdf}(PDF 쪽), 예: 'Book_p{printed:03d}'."""
+    if max_px is not None and max_px < 16:
+        raise SystemExit('[멈춤] --max-px 는 16 이상')
+    if not 36 <= dpi <= 600:
+        raise SystemExit('[멈춤] --dpi 는 36–600')
     k, b = _book_pick(folder, book, recursive)
     if pdf_page is None and printed is not None:
         preflight(folder, [b])
@@ -857,36 +897,51 @@ def page_images(folder, book, out, pdf_page=None, printed=None, split_dir=None, 
     reader = load_pypdf().PdfReader(os.path.join(folder, b), strict=False)
     if not 1 <= pdf_page <= len(reader.pages):
         raise SystemExit('[멈춤] PDF %d쪽 없음(1–%d)' % (pdf_page, len(reader.pages)))
-    os.makedirs(out, exist_ok=True)
-    stem = '%s_%s' % (short_name(b).replace(' ', '_'), ('p%d' % printed) if printed else 'PDF%d' % pdf_page)
-    got, pics, small = [], [], 0
-    try:
-        imgs = list(reader.pages[pdf_page - 1].images)
-    except Exception as e:
-        raise SystemExit('[멈춤] 이미지를 읽지 못했다: %s: %s' % (type(e).__name__, str(e)[:120]))
-    for i, im in enumerate(imgs, 1):
+    if name:
+        if '{printed' in name and printed is None:
+            raise SystemExit('[멈춤] --name 에 {printed} 가 있는데 인쇄 쪽을 모른다 — --printed N 으로 주거나 {pdf} 를 쓴다')
         try:
-            pic = im.image
+            stem = name.format(printed=printed, pdf=pdf_page)
+        except (KeyError, IndexError, ValueError) as e:
+            raise SystemExit('[멈춤] --name 틀을 못 읽었다(쓸 수 있는 것: {printed}, {pdf}): %s' % e)
+        if not stem or os.sep in stem or '/' in stem:
+            raise SystemExit('[멈춤] --name 은 폴더 없이 파일 이름만')
+    else:
+        stem = '%s_%s' % (short_name(b).replace(' ', '_'), ('p%d' % printed) if printed else 'PDF%d' % pdf_page)
+    print('[쪽] 인쇄 %s · PDF %d%s' % (printed if printed is not None else '—', pdf_page, ' · 쪽 전체 %d dpi' % dpi if render else ''), file=stream)
+    got, pics, small, imgs = [], [], 0, []
+    if render:
+        pics.append(_render(os.path.join(folder, b), pdf_page, dpi, stream))
+    else:
+        try:
+            imgs = list(reader.pages[pdf_page - 1].images)
         except Exception as e:
-            print('[참고] 이미지 %d 풀기 실패: %s' % (i, type(e).__name__), file=stream); continue
-        if min(pic.size) < MIN_IMG:
-            small += 1; continue
-        pics.append(pic)
+            raise SystemExit('[멈춤] 이미지를 읽지 못했다: %s: %s' % (type(e).__name__, str(e)[:120]))
+        for i, im in enumerate(imgs, 1):
+            try:
+                pic = im.image
+            except Exception as e:
+                print('[참고] 이미지 %d 풀기 실패: %s' % (i, type(e).__name__), file=stream); continue
+            if min(pic.size) < MIN_IMG:
+                small += 1; continue
+            pics.append(pic)
+    os.makedirs(out, exist_ok=True)
     ext = 'jpg' if fmt == 'jpg' else 'png'
     for i, pic in enumerate(pics, 1):
         fp = os.path.join(out, '%s%s.%s' % (stem, ('_%d' % i) if len(pics) > 1 else '', ext))
         try:
+            pic = _fit(pic, max_px)
             if ext == 'jpg':
                 (pic if pic.mode in ('RGB', 'L') else pic.convert('RGB')).save(fp, 'JPEG', quality=90)
-            else:
-                pic.save(fp)
+            else:   # v0.5.1: PNG 가 못 쓰는 모드(CMYK 등 — Cowork 09-28 전자책 PDF 74)는 RGB 로. 색은 pypdf 가 /Decode 까지 푼 값 그대로
+                (pic if pic.mode in PNG_MODES else pic.convert('RGB')).save(fp, 'PNG')
             got.append(fp)
         except Exception as e:
             print('[참고] 이미지 %d 저장 실패: %s' % (i, type(e).__name__), file=stream)
     if small:
         print('[참고] %d×%d 픽셀보다 작은 이미지 %d개는 건너뛰었다' % (MIN_IMG, MIN_IMG, small), file=stream)
-    if not imgs:
-        print('[참고] PDF %d쪽에 이미지가 없다(글·벡터 그림) — 원본을 그 쪽으로 열어 본다' % pdf_page, file=stream)
+    if not render and not imgs:
+        print('[참고] PDF %d쪽에 이미지가 없다(글·벡터 그림) — --render 로 쪽 전체를 그린다' % pdf_page, file=stream)
     for fp in got:
         print(fp, file=stream)
     return got
@@ -946,10 +1001,13 @@ if __name__ == '__main__':
     sp.add_argument('--out', required=True); sp.add_argument('--only', default=None); sp.add_argument('--skip', action='append', default=[])
     sp.add_argument('--recursive', action='store_true'); sp.add_argument('--budget', type=float, default=120)
     sp.add_argument('--part', type=int, default=PART, help='장 파일 한 개의 쪽 수 한도(기본 30)')
-    pg = sub.add_parser('page', help='쪽 그림 뽑기 → PNG')
+    pg = sub.add_parser('page', help='쪽 그림 뽑기 → JPEG/PNG (--render 는 쪽 전체)')
     pg.add_argument('folder'); pg.add_argument('--book', required=True); pg.add_argument('--out', required=True)
     pg.add_argument('--pdf', type=int, default=None); pg.add_argument('--printed', type=int, default=None); pg.add_argument('--split', default=None)
     pg.add_argument('--recursive', action='store_true'); pg.add_argument('--png', action='store_true', help='JPEG 대신 PNG')
+    pg.add_argument('--render', action='store_true', help='쪽 전체를 그림으로(pdftoppm) — 글자·캡션 포함')
+    pg.add_argument('--dpi', type=int, default=150); pg.add_argument('--max-px', type=int, default=None, help='긴 변 상한(픽셀)')
+    pg.add_argument('--name', default=None, help="파일 이름 틀 — {printed}·{pdf}, 예: 'Book_p{printed:03d}'")
     se = sub.add_parser('search', help='분할 md 에서 낱말 찾기(띄어쓰기 무시)')
     se.add_argument('split_dir'); se.add_argument('term'); se.add_argument('--book', default=None); se.add_argument('--max', type=int, default=40)
     so = sub.add_parser('_split_one', help=argparse.SUPPRESS)
@@ -968,7 +1026,9 @@ if __name__ == '__main__':
     elif a.cmd == 'split':
         split(a.folder, a.plan_dir, a.plan_name, a.out, a.only, a.skip, a.recursive, a.budget, a.part)
     elif a.cmd == 'page':
-        page_images(a.folder, a.book, a.out, a.pdf, a.printed, a.split, a.recursive, 'png' if a.png else 'jpg')
+        if not page_images(a.folder, a.book, a.out, a.pdf, a.printed, a.split, a.recursive, 'png' if a.png else 'jpg',
+                           render=a.render, dpi=a.dpi, max_px=a.max_px, name=a.name):
+            raise SystemExit('[멈춤] 저장한 그림이 없다 — 위 [참고] 를 본다')   # v0.5.1: 0개인데 rc=0 이던 것(Cowork 09-28)
     elif a.cmd == 'search':
         search(a.split_dir, a.term, a.book, a.max)
     elif a.cmd == 'probe':

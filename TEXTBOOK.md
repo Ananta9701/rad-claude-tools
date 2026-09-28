@@ -1,4 +1,4 @@
-# TEXTBOOK — 교과서 분할·색인 도구 규약 (textbook.py v0.5)
+# TEXTBOOK — 교과서 분할·색인 도구 규약 (textbook.py v0.6)
 
 > 교과서 원본(스캔 PDF)은 Drive 에 그대로 둔다. 분할본·색인은 Cowork 가 Mac 의 Google Drive 동기화 폴더에서 만들고,
 > 대화창은 색인 → 필요한 장 파일만 Drive 연결로 읽는다. 외부 AI(Gemini 등)의 조사 결과는 위치 안내일 뿐이고, 장 파일에서
@@ -103,7 +103,16 @@ python3 ~/rct/textbook.py split "<교과서 폴더>" --plan-dir "<to코드>" --p
 ```bash
 python3 ~/rct/textbook.py page "<교과서 폴더>" --book 부인과 --printed 60 --split "<교과서 분할>" --out "<보낼 폴더>"   # 또는 --pdf 61
 ```
-그 쪽에 든 이미지를 **JPEG(품질 90, v0.5 기본 — 스캔 쪽 PNG 가 14.8 MB 였다)** 로, `--png` 면 PNG 로(스캔본은 쪽 전체 그림, 전자책은 그 쪽의 그림들). 32×32 픽셀보다 작은 이미지(스캔 PDF 의 1×1 마스크)는 건너뛴다. 이미지가 없는 쪽(글·벡터 그림)은 알리고 멈춘다.
+그 쪽에 든 이미지를 **JPEG(품질 90, v0.5 기본 — 스캔 쪽 PNG 가 14.8 MB 였다)** 로, `--png` 면 PNG 로(스캔본은 쪽 전체 그림, 전자책은 그 쪽의 그림들). 32×32 픽셀보다 작은 이미지(스캔 PDF 의 1×1 마스크)는 건너뛴다. CMYK 등 PNG 가 못 쓰는 그림은 RGB 로 바꿔 저장한다(v0.5.1). **하나도 저장하지 못하면 `[멈춤]`, 종료 코드 0 이 아니다**(이미지가 없는 쪽·모두 작은 이미지 포함).
+
+**쪽 전체 그림** (v0.6) — 전자책은 그림 뽑기로는 사진 조각만 나오고 그림 번호·캡션·화살표 같은 글자가 빠진다. 쪽을 보이는 그대로 한 장으로:
+```bash
+python3 ~/rct/textbook.py page "<교과서 폴더>" --book <책> --printed 56 --split "<교과서 분할>" --render --dpi 150 --max-px 1600 --png --name "<책약칭>_p{printed:03d}" --out "<보낼 폴더>"
+```
+- `--render` 는 poppler 의 `pdftoppm` 이 그린다(Mac VM 에 있음). 없으면 멈춘다 — pypdf 는 쪽을 그리지 못하고, PyMuPDF 는 쓰지 않는다(사용자 09-28).
+- `--dpi` 기본 150(36–600). `--max-px` 는 긴 변 상한 — 그림 뽑기 길에도 쓴다.
+- `--name` 이름 틀: `{printed}`(인쇄 쪽)·`{pdf}`(PDF 쪽), 예 `Book_p{printed:03d}` → `Book_p056`. `{printed}` 는 `--printed` 로 줄 때만. 한 쪽에서 그림이 여러 장이면 뒤에 `_1`·`_2`.
+- 출력 첫 줄 `[쪽] 인쇄 N · PDF M` — INDEX 를 쓸 때 그대로 옮긴다.
 
 **낱말 찾기** — 대화창은 Drive 검색(`교과서 분할` 폴더 안 `fullText contains '…'` — 되는지는 첫 분할 뒤 확인)으로, Cowork 는:
 ```bash

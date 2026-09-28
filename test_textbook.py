@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import textbook as TB          # noqa: E402
 
-EXPECT_VERSION = '0.5'
+EXPECT_VERSION = '0.6'
 TMP = tempfile.mkdtemp(prefix='ttb_')
 
 
@@ -405,6 +405,96 @@ def t_page_images():
         except SystemExit:
             pass
     buf = io.StringIO(); assert TB.page_images(d, 'other', out, pdf_page=1, stream=buf) == [] and '이미지가 없다' in buf.getvalue()
+
+
+def _cmyk_pdf(path, decode):
+    """CMYK JPEG(Adobe 표지 — 뒤집힌 값) 한 장이 든 PDF. decode=True 면 출판 프로그램처럼 /Decode [1 0 …] 로 되돌린다."""
+    from PIL import Image
+    from pypdf import PdfWriter
+    from pypdf.generic import NameObject, NumberObject, StreamObject, DictionaryObject, ArrayObject
+    im = Image.new('CMYK', (200, 200), (0, 255, 255, 0)); im.paste((255, 255, 0, 0), (0, 100, 200, 200))   # 위 빨강 · 아래 파랑
+    b = io.BytesIO(); im.save(b, 'JPEG', quality=95)
+    w = PdfWriter(); pg = w.add_blank_page(200, 200)
+    x = StreamObject(); x._data = b.getvalue()
+    x.update({NameObject('/Type'): NameObject('/XObject'), NameObject('/Subtype'): NameObject('/Image'),
+              NameObject('/Width'): NumberObject(200), NameObject('/Height'): NumberObject(200),
+              NameObject('/ColorSpace'): NameObject('/DeviceCMYK'), NameObject('/BitsPerComponent'): NumberObject(8),
+              NameObject('/Filter'): NameObject('/DCTDecode')})
+    if decode:
+        x[NameObject('/Decode')] = ArrayObject([NumberObject(v) for v in (1, 0, 1, 0, 1, 0, 1, 0)])
+    c = StreamObject(); c._data = b'q 200 0 0 200 0 0 cm /Im0 Do Q'
+    pg[NameObject('/Resources')] = DictionaryObject({NameObject('/XObject'): DictionaryObject({NameObject('/Im0'): w._add_object(x)})})
+    pg[NameObject('/Contents')] = w._add_object(c)
+    w.write(path)
+
+
+def t_v051_page_cmyk_png_and_rc():
+    # Cowork 09-28 [결함]: 전자책 PDF 74 의 CMYK JPEG 3장이 --png 에서 모두 OSError, 파일 0개인데 rc=0
+    from PIL import Image
+    d = os.path.join(TMP, 'cmyk'); os.makedirs(d)
+    Image.new('CMYK', (200, 200), (0, 255, 255, 0)).save(os.path.join(d, 'pil cmyk.pdf'), 'PDF')
+    _cmyk_pdf(os.path.join(d, 'adobe cmyk.pdf'), decode=True)
+    _cmyk_pdf(os.path.join(d, 'raw cmyk.pdf'), decode=False)
+    Image.new('RGB', (1, 1)).save(os.path.join(d, 'tiny.pdf'), 'PDF')
+    out = os.path.join(TMP, 'cmyk_out')
+    near = lambda px, want: all(abs(a - b) < 40 for a, b in zip(px, want))
+    # 성공 길: PNG 도 RGB 로 바꿔 저장, 색은 뷰어(MuPDF 로 확인)와 같게 — 빨강·파랑
+    for book, fmt in (('pil cmyk', 'png'), ('adobe cmyk', 'png'), ('adobe cmyk', 'jpg')):
+        buf = io.StringIO(); got = TB.page_images(d, book, out, pdf_page=1, fmt=fmt, stream=buf)
+        assert len(got) == 1 and got[0].endswith('.' + fmt) and '실패' not in buf.getvalue(), (book, fmt, got, buf.getvalue())
+        im = Image.open(got[0]); assert im.mode == 'RGB', im.mode
+        assert near(im.getpixel((10, 10)), (255, 0, 0)), (book, fmt, im.getpixel((10, 10)))
+        if book == 'adobe cmyk':
+            assert near(im.getpixel((10, 150)), (0, 0, 255)), (book, fmt, im.getpixel((10, 150)))
+    # /Decode 없는 Adobe JPEG 는 뷰어도 뒤집어 그린다(MuPDF 로 확인) — 도구가 따로 되돌리지 않는다
+    got = TB.page_images(d, 'raw cmyk', out, pdf_page=1, fmt='png', stream=io.StringIO())
+    assert len(got) == 1 and not near(Image.open(got[0]).getpixel((10, 10)), (255, 0, 0)), got
+    # 종료 코드: 저장했으면 0, 하나도 못 저장했으면 0 이 아니다
+    cli = lambda book: subprocess.run([sys.executable, os.path.join(HERE, 'textbook.py'), 'page', d, '--book', book, '--pdf', '1', '--png', '--out', out],
+                                      capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    r = cli('adobe cmyk'); assert r.returncode == 0 and r.stdout.strip().endswith('.png'), (r.returncode, r.stdout, r.stderr)
+    r = cli('tiny'); assert r.returncode != 0 and '저장한 그림이 없다' in r.stderr, (r.returncode, r.stdout, r.stderr)
+
+
+def t_v06_page_render_maxpx_name():
+    # v0.6 (Cowork 09-28 제안, 사용자 결정): --render 쪽 전체(pdftoppm) · --max-px 긴 변 상한 · --name 이름 틀
+    import shutil
+    from PIL import Image
+    d = os.path.join(TMP, 'render'); os.makedirs(d)
+    im = Image.new('RGB', (300, 400), 'white'); im.paste((0, 0, 0), (50, 50, 250, 350)); im.save(os.path.join(d, 'pic book.pdf'), 'PDF')
+    _heads_book(os.path.join(d, 'text book.pdf'))
+    out = os.path.join(TMP, 'render_out')
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
+    cli = lambda *a, **kw: subprocess.run([sys.executable, os.path.join(HERE, 'textbook.py'), 'page', d, '--out', out] + list(a),
+                                          capture_output=True, text=True, env=kw.get('env', env))
+    # --max-px · --name (그림 뽑기 길): 300×400 → 긴 변 100, 이름 틀 {pdf}
+    got = TB.page_images(d, 'pic book', out, pdf_page=1, fmt='png', max_px=100, name='PB_q{pdf:03d}', stream=io.StringIO())
+    assert [os.path.basename(g) for g in got] == ['PB_q001.png'] and Image.open(got[0]).size == (75, 100), (got, Image.open(got[0]).size)
+    got = TB.page_images(d, 'pic book', out, pdf_page=1, fmt='png', max_px=1000, stream=io.StringIO())   # 상한보다 작으면 그대로
+    assert Image.open(got[0]).size == (300, 400), Image.open(got[0]).size
+    # 이름 틀 실패 길: 인쇄 쪽을 모르는데 {printed}, 모르는 칸, 폴더 포함, --max-px 너무 작음
+    for kw in (dict(name='X_p{printed:03d}'), dict(name='X_{zzz}'), dict(name='a/b_{pdf}'), dict(max_px=4), dict(render=True, dpi=5)):
+        try:
+            TB.page_images(d, 'pic book', out, pdf_page=1, fmt='png', stream=io.StringIO(), **kw); assert False, kw
+        except SystemExit as e:
+            assert '[멈춤]' in str(e), (kw, e)
+    # --render 실패 길: pdftoppm 이 없으면 멈춘다(종료 코드 0 아님)
+    bare = os.path.join(TMP, 'bare_path'); os.makedirs(bare, exist_ok=True)
+    r = cli('--book', 'text book', '--pdf', '3', '--render', '--png', env=dict(env, PATH=bare))
+    assert r.returncode != 0 and 'pdftoppm 이 없다' in r.stderr, (r.returncode, r.stdout, r.stderr)
+    if not shutil.which('pdftoppm'):
+        return   # 성공 길은 pdftoppm 이 있는 곳(빌드·Cowork Mac)에서
+    # --render 성공 길: 글만 있는 쪽 — 그림 뽑기는 0개로 멈추지만 쪽 전체 그림은 한 장, 글자가 찍힌다
+    r = cli('--book', 'text book', '--pdf', '3', '--png')
+    assert r.returncode != 0 and '저장한 그림이 없다' in r.stderr, (r.returncode, r.stderr)
+    r = cli('--book', 'text book', '--pdf', '3', '--render', '--png', '--dpi', '100', '--max-px', '600', '--name', 'TB_{pdf:03d}')
+    assert r.returncode == 0 and r.stdout.strip().endswith('TB_003.png') and '쪽 전체 100 dpi' in r.stdout, (r.returncode, r.stdout, r.stderr)
+    pic = Image.open(os.path.join(out, 'TB_003.png'))
+    assert pic.mode == 'RGB' and max(pic.size) <= 600 and pic.convert('L').getextrema()[0] < 128, (pic.mode, pic.size, pic.convert('L').getextrema())
+    # 그림 쪽 render: 가운데 검정 · 가장자리 흰색 (쪽 300×400 pt, 72 dpi → 300×400 px)
+    got = TB.page_images(d, 'pic book', out, pdf_page=1, fmt='jpg', render=True, dpi=72, stream=io.StringIO())
+    pic = Image.open(got[0]); assert abs(pic.size[0] - 300) <= 2 and abs(pic.size[1] - 400) <= 2, pic.size
+    assert sum(pic.getpixel((150, 200))) < 60 and sum(pic.getpixel((10, 10))) > 700, (pic.getpixel((150, 200)), pic.getpixel((10, 10)))
 
 
 def t_v04_opener_first_tail_warning_units():
