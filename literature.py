@@ -20,7 +20,7 @@ import shutil
 import sys
 import unicodedata
 
-__version__ = '0.4'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.5'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
 
 DOI_RE = re.compile(r'\b(10\.\d{4,9}/[^\s"<>]+)', re.I)
 PMID_RE = re.compile(r'\bPMID:?\s*(\d{5,9})\b', re.I)
@@ -484,6 +484,47 @@ def _get(url, timeout=30):
         return r.read()
 
 
+def _span(c, name):
+    try:
+        return max(1, int(c.get(name, '1')))
+    except ValueError:
+        return 1
+
+
+def _jats_table_rows(tw, txt):
+    """v0.5 (코드 09-28 oa 첫 실시험): 표를 ' | ' 행으로. 세로 병합(rowspan)은 아래 행마다 같은 값을 채우고, 가로 병합(colspan)은
+    빈 칸으로 열 수를 맞춘다 — 전에는 병합 뒤 행이 한 칸씩 밀렸다. 칸 안 줄바꿈(<break/>)은 ' / ' (전에는 'p = 0.076Adj p' 처럼 붙었다).
+    병합은 그 표 안에서만 이어진다."""
+    out, carry = [], {}                      # carry: 열 번호 → [남은 행 수, 값]
+    for tr in tw.iter('tr'):
+        row, col = [], 0
+        def fill():
+            nonlocal col
+            while col in carry:
+                left, val = carry[col]
+                row.append(val)
+                if left <= 1:
+                    del carry[col]
+                else:
+                    carry[col][0] = left - 1
+                col += 1
+        for c in tr:
+            if c.tag not in ('td', 'th'):
+                continue
+            fill()
+            for b in c.iter('break'):
+                b.text = ' / '
+            val, rs, cs = txt(c), _span(c, 'rowspan'), _span(c, 'colspan')
+            for k in range(cs):
+                row.append(val if k == 0 else '')
+                if rs > 1:
+                    carry[col] = [rs - 1, val if k == 0 else '']
+                col += 1
+        fill()
+        out.append('| ' + ' | '.join(row) + ' |')
+    return out
+
+
 def jats_to_md(xml_bytes):
     """Europe PMC 전문 XML(JATS) → md: 제목·초록·절 표지 `[§ 절 이름]`·문단·표(행마다 칸을 ' | ' 로)·그림 설명. 수식은 [수식]."""
     import xml.etree.ElementTree as ET
@@ -507,8 +548,7 @@ def jats_to_md(xml_bytes):
                 walk(ch, depth + 1)
             elif ch.tag == 'table-wrap':
                 L.append('표 %s — %s' % (txt(ch.find('label')), txt(ch.find('caption'))))
-                for tr in ch.iter('tr'):
-                    L.append('| ' + ' | '.join(txt(c) for c in tr if c.tag in ('td', 'th')) + ' |')
+                L.extend(_jats_table_rows(ch, txt))
                 L.append('')
             elif ch.tag == 'fig':
                 L.extend(['그림 %s — %s' % (txt(ch.find('label')), txt(ch.find('caption'))), ''])

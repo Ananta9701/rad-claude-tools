@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.4'
+EXPECT_VERSION = '0.5'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 
@@ -221,6 +221,39 @@ def t_v04_oa_api_and_zero_loose_and_mathfont():
     assert 'F_ISF(표기 차이로 0회일 수 있음 — 밑줄·하이픈·공백 무시하면 1회)' in loc, loc
     # 수식 글꼴 치환 표시
     assert LT.mathfont_count('a ¼ b þ c ðxÞ') == 4
+
+
+JATS_TABLE = (b'<article><front><article-meta><title-group><article-title>T</article-title></title-group></article-meta></front><body>'
+              b'<sec><title>Results</title><table-wrap><label>Table 2</label><caption><p>c</p></caption><table>'
+              b'<thead><tr><th rowspan="2">Region</th><th rowspan="2">Side</th><th colspan="2">Variables</th></tr>'
+              b'<tr><th>Age</th><th>X</th></tr></thead><tbody>'
+              b'<tr><td rowspan="2">Region A</td><td>Lt</td><td>b = 0.1</td><td>p = 0.076<break/>Adj p = 0.319</td></tr>'
+              b'<tr><td>Rt</td><td>b = 0.2</td><td>p = 0.417<break/>Adj p = 0.683</td></tr>'
+              b'<tr><td>Region B</td><td>Lt</td><td>b = &#x2212;0.3</td><td>p = 0.8</td></tr>'
+              b'</tbody></table></table-wrap>'
+              b'<table-wrap><label>Table 3</label><table><tr><td rowspan="9">Z</td><td>1</td></tr><tr><td>2</td></tr></table></table-wrap>'
+              b'<table-wrap><label>Table 4</label><table><tr><td rowspan="x">Q</td><td>a</td></tr><tr><td>b</td><td>c</td></tr></table></table-wrap>'
+              b'</sec></body></article>')
+
+
+def t_v05_jats_table_spans_and_breaks():
+    # v0.5 (코드 09-28 oa 첫 실시험): 세로 병합 칸 뒤 행이 한 칸씩 밀림 · 칸 안 줄바꿈(<break/>)이 붙어 버림(p = 0.076Adj p)
+    md = LT.jats_to_md(JATS_TABLE)
+    rows = [l for l in md.splitlines() if l.startswith('| ')]
+    cells = lambda l: [c.strip() for c in l.strip().strip('|').split('|')]
+    t2 = rows[:5]
+    # 성공 길: 세로 병합은 행마다 값을 채우고, 가로 병합은 빈 칸으로 열 수를 맞춘다 — 모든 행이 4칸
+    assert [len(cells(l)) for l in t2] == [4, 4, 4, 4, 4], t2
+    assert cells(t2[0]) == ['Region', 'Side', 'Variables', ''], t2[0]
+    assert cells(t2[1]) == ['Region', 'Side', 'Age', 'X'], t2[1]
+    assert cells(t2[2]) == ['Region A', 'Lt', 'b = 0.1', 'p = 0.076 / Adj p = 0.319'], t2[2]
+    assert cells(t2[3]) == ['Region A', 'Rt', 'b = 0.2', 'p = 0.417 / Adj p = 0.683'], t2[3]
+    assert cells(t2[4]) == ['Region B', 'Lt', 'b = \u22120.3', 'p = 0.8'], t2[4]
+    assert '0.076Adj' not in md
+    # 실패 길: 표보다 긴 rowspan 은 그 표 안에서 끝나고 다음 표로 새지 않는다, 숫자가 아닌 rowspan 은 1 로 본다
+    assert cells(rows[5]) == ['Z', '1'] and cells(rows[6]) == ['Z', '2'], rows[5:7]
+    assert cells(rows[7]) == ['Q', 'a'] and cells(rows[8]) == ['b', 'c'], rows[7:9]
+    assert len(rows) == 9, rows
 
 
 def t_cli():

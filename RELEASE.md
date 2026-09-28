@@ -1,23 +1,21 @@
-# RELEASE v2.44 — manifest v64 — 2026-09-28
+# RELEASE v2.45 — manifest v65 — 2026-09-28
 
-> **v2.44** — `textbook.py` 0.6. Cowork 도구회신(09-28, Jacobson 어깨 그림): `page --png` 가 전자책의 CMYK 그림 3장을 모두 저장하지 못했는데 종료 코드가 0 이었다(결함 2). 고쳤고, 전자책은 그림 조각만 나와 캡션·그림 번호가 빠지므로 쪽 전체를 그리는 `--render`, 크기 상한 `--max-px`, 이름 틀 `--name` 을 더했다(사용자 결정). 이전 판 내용은 `HISTORY.md`.
+> **v2.45** — `literature.py` 0.5. `oa --fetch` 첫 실시험(코드 세션, 09-28 — 네트워크 허용 뒤)에서 찾은 표 결함 2개: Europe PMC 전문 XML 의 표에서 **세로로 합쳐진 칸 뒤 행이 한 칸씩 밀렸고**(표 수치를 다른 열로 읽을 위험), **칸 안 줄바꿈이 붙어 버렸다**(`p = 0.076Adj p`). 이전 판 내용은 `HISTORY.md`.
 
 ## 1. 바뀐 것
 
 | 도구 | 판 | 내용 |
 |---|---|---|
-| `textbook.py` | 0.6 | `page --png`: CMYK 등 PNG 가 못 쓰는 모드는 RGB 로 바꿔 저장(색은 PDF 뷰어와 같게 — `/Decode` 있는 Adobe CMYK JPEG 확인). 하나도 저장하지 못하면 `[멈춤]`·종료 코드 0 아님. `--render [--dpi 150]` 쪽 전체 그림(pdftoppm — 없으면 멈춤), `--max-px N` 긴 변 상한, `--name '틀_p{printed:03d}'`(`{printed}`·`{pdf}`), 출력 첫 줄 `[쪽] 인쇄 N · PDF M` |
-| `TEXTBOOK.md` | 0.6 | 쪽 그림 뽑기 절에 위 내용 |
-| `test_textbook.py` | 0.6 | 시험 2개(CMYK PNG 저장·종료 코드, render·max-px·name) — 성공·실패 길 모두. pdftoppm 이 없는 곳에서는 render 성공 길만 빼고 돈다 |
+| `literature.py` | 0.5 | `oa` 의 JATS 표 → md: 세로 병합(rowspan)은 아래 행마다 값을 채움, 가로 병합(colspan)은 빈 칸으로 열 수를 맞춤, 칸 안 `<break/>` 는 ` / `. 병합은 그 표 안에서만 이어지고, 숫자가 아닌 span 은 1 로 본다 |
+| `LITERATURE.md` | 0.5 | `oa` 표 한 줄 |
+| `test_literature.py` | 0.5 | 시험 1개(성공: 병합·줄바꿈 표가 모든 행 같은 칸 수 · 실패: 표보다 긴 rowspan 이 다음 표로 새지 않음, 숫자 아닌 span) |
 
 ## 2. 회신 항목별 답
 
 | 항목 | 반영 |
 |---|---|
-| Cowork 09-28 [결함] `page --png` CMYK 저장 실패(OSError) | 재현(고치기 전 코드에서 같은 OSError) → RGB 로 바꿔 저장 |
-| Cowork 09-28 [결함] 파일 0개인데 rc=0 | 0 이 아닌 종료 코드와 `[멈춤] 저장한 그림이 없다` |
-| Cowork 09-28 제안 `--render --dpi N` | 사용자 결정: 만든다 · pdftoppm 만(PyMuPDF 쓰지 않음) · `--max-px`·`--name` 도 |
-| Cowork 09-28 제안 Adobe CMYK 색 확인 | 시험 PDF 3종을 MuPDF·pdftoppm 과 대조: `/Decode` 있는 것은 제 색, 없는 것은 뷰어도 뒤집어 그린다 — 도구가 따로 되돌리지 않는다 |
+| 코드 09-28 `oa --fetch` 첫 실시험 — 결함 후보 2(병합 칸 밀림, 줄바꿈 붙음) | 재현(고치기 전 코드에서 Rt 행 3칸·`0.076Adj`) → 고침. 같은 논문의 실제 Europe PMC XML 로 다시 확인: 표마다 행의 칸 수가 한결같다(5칸 13행·8칸 40행) |
+| 사용자 09-28: 병합 칸은 행마다 값을 채우고 줄바꿈은 공백이나 ` / ` | ` / ` 로 |
 
 ## 3. 받을 파일
 
@@ -32,8 +30,8 @@
 | `CLAIM_GRAPH.md` | v15.8.2 | `a2d9f4dd1749` | — |
 | `verify_toolkit.py` | v1.3.4 | `e703af6d5418` | — |
 | `test_verify_toolkit.py` | v1.3.4 | `aba65de39d87` | — |
-| `TOOLS_MANIFEST.md` | v64 | `3cb69427beaa` | ○ |
-| `RELEASE.md` | v2.44 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v65 | `f85af79a86dd` | ○ |
+| `RELEASE.md` | v2.45 | — | 이 문서 |
 
 ### 발표 (11)
 | 파일 | 판 | 해시 | 변경 |
@@ -47,8 +45,8 @@
 | `handoff.py` | v2.0 | `642269d51cc5` | — |
 | `test_handoff.py` | v2.0 | `3c660a5a654c` | — |
 | `HANDOFF_FORMAT.md` | v2.0 | `577b9f35e9d9` | — |
-| `TOOLS_MANIFEST.md` | v64 | `3cb69427beaa` | ○ |
-| `RELEASE.md` | v2.44 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v65 | `f85af79a86dd` | ○ |
+| `RELEASE.md` | v2.45 | — | 이 문서 |
 
 ### 리뷰어 (6)
 | 파일 | 판 | 해시 | 변경 |
@@ -57,26 +55,26 @@
 | `test_claim_graph.py` | v15.8.2 | `bd5f5c99691a` | — |
 | `CLAIM_GRAPH.md` | v15.8.2 | `a2d9f4dd1749` | — |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v64 | `3cb69427beaa` | ○ |
-| `RELEASE.md` | v2.44 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v65 | `f85af79a86dd` | ○ |
+| `RELEASE.md` | v2.45 | — | 이 문서 |
 
 ### 교과서 (5)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `textbook.py` | v0.6 | `505e14289fd2` | ○ |
-| `test_textbook.py` | v0.6 | `29298da49346` | ○ |
-| `TEXTBOOK.md` | v0.6 | `f8dd10b4611d` | ○ |
-| `TOOLS_MANIFEST.md` | v64 | `3cb69427beaa` | ○ |
-| `RELEASE.md` | v2.44 | — | 이 문서 |
+| `textbook.py` | v0.6 | `505e14289fd2` | — |
+| `test_textbook.py` | v0.6 | `29298da49346` | — |
+| `TEXTBOOK.md` | v0.6 | `f8dd10b4611d` | — |
+| `TOOLS_MANIFEST.md` | v65 | `f85af79a86dd` | ○ |
+| `RELEASE.md` | v2.45 | — | 이 문서 |
 
 ### 문헌 (5)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `literature.py` | v0.4 | `1fe34738bcc8` | — |
-| `test_literature.py` | v0.4 | `660b68142ab7` | — |
-| `LITERATURE.md` | v0.4 | `42e9bcc9e1c6` | — |
-| `TOOLS_MANIFEST.md` | v64 | `3cb69427beaa` | ○ |
-| `RELEASE.md` | v2.44 | — | 이 문서 |
+| `literature.py` | v0.5 | `9a4167578ad4` | ○ |
+| `test_literature.py` | v0.5 | `30c01cdb3ac1` | ○ |
+| `LITERATURE.md` | v0.5 | `ce1ea0cade3d` | ○ |
+| `TOOLS_MANIFEST.md` | v65 | `f85af79a86dd` | ○ |
+| `RELEASE.md` | v2.45 | — | 이 문서 |
 
 ### 코드 (25)
 | 파일 | 판 | 해시 | 변경 |
@@ -92,28 +90,27 @@
 | `handoff.py` | v2.0 | `642269d51cc5` | — |
 | `test_handoff.py` | v2.0 | `3c660a5a654c` | — |
 | `HANDOFF_FORMAT.md` | v2.0 | `577b9f35e9d9` | — |
-| `textbook.py` | v0.6 | `505e14289fd2` | ○ |
-| `test_textbook.py` | v0.6 | `29298da49346` | ○ |
-| `TEXTBOOK.md` | v0.6 | `f8dd10b4611d` | ○ |
-| `literature.py` | v0.4 | `1fe34738bcc8` | — |
-| `test_literature.py` | v0.4 | `660b68142ab7` | — |
-| `LITERATURE.md` | v0.4 | `42e9bcc9e1c6` | — |
+| `textbook.py` | v0.6 | `505e14289fd2` | — |
+| `test_textbook.py` | v0.6 | `29298da49346` | — |
+| `TEXTBOOK.md` | v0.6 | `f8dd10b4611d` | — |
+| `literature.py` | v0.5 | `9a4167578ad4` | ○ |
+| `test_literature.py` | v0.5 | `30c01cdb3ac1` | ○ |
+| `LITERATURE.md` | v0.5 | `ce1ea0cade3d` | ○ |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v64 | `3cb69427beaa` | ○ |
+| `TOOLS_MANIFEST.md` | v65 | `f85af79a86dd` | ○ |
 | `CODE_PROJECT_README.md` | v5 | `cbffb6ca85db` | — |
-| `HISTORY.md` | — | `ec52b914eefd` | ○ |
+| `HISTORY.md` | — | `e9066193817e` | ○ |
 | `release.py` | — | `a5dad4e3e398` | — |
 | `GITHUB_README.md` | — | `c81d29504e46` | — |
 | `PRIVATE_TERMS.txt` | — | `6e8c2862cf5e` | — |
-| `RELEASE.md` | v2.44 | — | 이 문서 |
+| `RELEASE.md` | v2.45 | — | 이 문서 |
 <!-- sets:end -->
 
 ## 4. 각 프로젝트 대화창이 첫 세션에서 할 일
 
-1. 교과서(Cowork): selfcheck 로 manifest v64 이상·textbook 0.6 확인. 쪽 그림은 전자책이면 `--render` 로(TEXTBOOK.md 쪽 그림 뽑기 절). Jacobson 어깨 그림은 코드가 새 지시문을 준다(사용자가 붙여 넣음).
+1. 리뷰어·문헌(Cowork): selfcheck 로 manifest v65 이상·literature 0.5 확인. **v0.4 `oa` 로 받은 paper.md 중 표가 있는 것은 표 수치를 쓰기 전에 다시 받는다**(`oa --fetch` 를 그 DOI 폴더를 비우고 다시 — 보관소 파일은 사용자 허용 뒤에). 지금까지 `oa` 로 받은 실물은 코드 세션 시험 1편뿐이라 보관소에는 없을 것으로 본다(확인 안 함).
 2. 다른 역할: 할 일 없음.
 
 ## 5. 검증하지 않은 것
 
-- 실물 전자책(Jacobson)에서 `--render` 결과 — 시험 PDF 로만 확인. 첫 쪽(PDF 74)을 Cowork 가 열어 본다.
-- Acrobat 에서 `/Decode` 없는 Adobe CMYK JPEG 가 어떻게 보이는지(MuPDF·pdftoppm 으로만 대조).
+- 병합이 여러 겹인 복잡한 표(가로·세로 병합이 한 칸에 함께 있는 것)는 시험 표 1개와 실물 1편으로만 확인했다.

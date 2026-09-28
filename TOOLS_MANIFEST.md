@@ -1,6 +1,6 @@
 # TOOLS_MANIFEST — 도구 릴리스 목록 (코드 프로젝트 진본)
 
-**manifest 판: v64 · 릴리스 v2.44 · 2026-09-28**
+**manifest 판: v65 · 릴리스 v2.45 · 2026-09-28**
 
 > **이 파일이 진본 판정 기준이다.** 파일명은 고정(`TOOLS_MANIFEST.md`), 판은 이 줄에만 있다.
 > 세트는 전부 삭제 → 전부 재업로드이므로 파일명에 판이 있을 이유가 없고, 파일명 판이 "어느 manifest 가 최신인가"
@@ -24,9 +24,9 @@
 | `textbook.py` | v0.6 | `505e14289fd2` | `test_textbook.py` 30/30 | 59262 |
 | `test_textbook.py` | v0.6 동반 | `29298da49346` | — | 34684 |
 | `TEXTBOOK.md` | v0.6 | `f8dd10b4611d` | — | 13154 |
-| `literature.py` | v0.4 | `1fe34738bcc8` | `test_literature.py` 8/8 | 35129 |
-| `test_literature.py` | v0.4 동반 | `660b68142ab7` | — | 15571 |
-| `LITERATURE.md` | v0.4 | `42e9bcc9e1c6` | — | 11772 |
+| `literature.py` | v0.5 | `9a4167578ad4` | `test_literature.py` 9/9 | 36561 |
+| `test_literature.py` | v0.5 동반 | `30c01cdb3ac1` | — | 18059 |
+| `LITERATURE.md` | v0.5 | `ce1ea0cade3d` | — | 11954 |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — | 17531 |
 | `CODE_PROJECT_README.md` · `HISTORY.md` · `release.py` | 코드 프로젝트 전용 | (배포하지 않음 — 판·해시는 RELEASE §3 코드 표) | — | — |
 
@@ -87,5 +87,5 @@ GitHub 에서 읽는다(넘김 문서를 쓰는 쪽). 발표에서 claim_graph 3
 **코드 수정** — 코드 프로젝트에서만. 다른 프로젝트는 `{YYMMDD}_도구회신_{주제}_v{M}.md` 로 보낸다. 덱 전용 스크립트
 (`build_*.py`)는 발표 프로젝트가 직접 쓰되 툴킷 함수를 고치거나 새 툴킷 함수를 만들면 회신으로 보낸다.
 
-<!-- prev-release: v2.43 · CLAIM_GRAPH.md=a2d9f4dd1749;CODE_PROJECT_README.md=cbffb6ca85db;DECK_SPEC.md=d5b88da3990f;GITHUB_README.md=c81d29504e46;HANDOFF_FORMAT.md=577b9f35e9d9;HISTORY.md=58a11bccafd7;LITERATURE.md=42e9bcc9e1c6;PRIVATE_TERMS.txt=6e8c2862cf5e;REVIEW_PROTOCOL.md=7f6e413d4d48;TEXTBOOK.md=d441d67eea3e;claim_graph.py=14e977e99a39;deck_toolkit.py=75507c4a9834;handoff.py=642269d51cc5;literature.py=1fe34738bcc8;release.py=a5dad4e3e398;test_claim_graph.py=bd5f5c99691a;test_handoff.py=3c660a5a654c;test_literature.py=660b68142ab7;test_textbook.py=4b2da8dfcecb;test_toolkit.py=4a9355ac210d;test_verify_toolkit.py=aba65de39d87;textbook.py=5f916620c6c0;verify_toolkit.py=e703af6d5418 -->
-<!-- release-hashes: v2.44 · CLAIM_GRAPH.md=a2d9f4dd1749;CODE_PROJECT_README.md=cbffb6ca85db;DECK_SPEC.md=d5b88da3990f;GITHUB_README.md=c81d29504e46;HANDOFF_FORMAT.md=577b9f35e9d9;HISTORY.md=963932f75261;LITERATURE.md=42e9bcc9e1c6;PRIVATE_TERMS.txt=6e8c2862cf5e;REVIEW_PROTOCOL.md=7f6e413d4d48;TEXTBOOK.md=f8dd10b4611d;claim_graph.py=14e977e99a39;deck_toolkit.py=75507c4a9834;handoff.py=642269d51cc5;literature.py=1fe34738bcc8;release.py=a5dad4e3e398;test_claim_graph.py=bd5f5c99691a;test_handoff.py=3c660a5a654c;test_literature.py=660b68142ab7;test_textbook.py=29298da49346;test_toolkit.py=4a9355ac210d;test_verify_toolkit.py=aba65de39d87;textbook.py=505e14289fd2;verify_toolkit.py=e703af6d5418 -->
+<!-- prev-release: v2.44 · CLAIM_GRAPH.md=a2d9f4dd1749;CODE_PROJECT_README.md=cbffb6ca85db;DECK_SPEC.md=d5b88da3990f;GITHUB_README.md=c81d29504e46;HANDOFF_FORMAT.md=577b9f35e9d9;HISTORY.md=963932f75261;LITERATURE.md=42e9bcc9e1c6;PRIVATE_TERMS.txt=6e8c2862cf5e;REVIEW_PROTOCOL.md=7f6e413d4d48;TEXTBOOK.md=f8dd10b4611d;claim_graph.py=14e977e99a39;deck_toolkit.py=75507c4a9834;handoff.py=642269d51cc5;literature.py=1fe34738bcc8;release.py=a5dad4e3e398;test_claim_graph.py=bd5f5c99691a;test_handoff.py=3c660a5a654c;test_literature.py=660b68142ab7;test_textbook.py=29298da49346;test_toolkit.py=4a9355ac210d;test_verify_toolkit.py=aba65de39d87;textbook.py=505e14289fd2;verify_toolkit.py=e703af6d5418 -->
+<!-- release-hashes: v2.45 · CLAIM_GRAPH.md=a2d9f4dd1749;CODE_PROJECT_README.md=cbffb6ca85db;DECK_SPEC.md=d5b88da3990f;GITHUB_README.md=c81d29504e46;HANDOFF_FORMAT.md=577b9f35e9d9;HISTORY.md=010c31eecdc9;LITERATURE.md=ce1ea0cade3d;PRIVATE_TERMS.txt=6e8c2862cf5e;REVIEW_PROTOCOL.md=7f6e413d4d48;TEXTBOOK.md=f8dd10b4611d;claim_graph.py=14e977e99a39;deck_toolkit.py=75507c4a9834;handoff.py=642269d51cc5;literature.py=9a4167578ad4;release.py=a5dad4e3e398;test_claim_graph.py=bd5f5c99691a;test_handoff.py=3c660a5a654c;test_literature.py=30c01cdb3ac1;test_textbook.py=29298da49346;test_toolkit.py=4a9355ac210d;test_verify_toolkit.py=aba65de39d87;textbook.py=505e14289fd2;verify_toolkit.py=e703af6d5418 -->
