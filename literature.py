@@ -8,7 +8,7 @@
     python3 literature.py plan   지시.md --out 작업폴더 [--store 보관소]     # 받을 목록(DOI·PubMed 링크·저장 이름·이미 있음)
     python3 literature.py ingest 지시.md --inbox 받은폴더 --store 보관소 --out 작업폴더
     python3 literature.py locate 지시.md --store 보관소 --out 작업폴더 [--top 3]
-    python3 literature.py check  지시.md --inbox 받은폴더 [--out 작업폴더]     # v0.2: 받은 파일 검사(%PDF·쪽 수·DOI)
+    python3 literature.py check  지시.md --inbox 받은폴더 [--store 보관소] [--out 작업폴더]   # 받은 파일 검사(%PDF·쪽 수·DOI·글자층·md 쪽 표지)
 """
 import argparse
 import datetime
@@ -19,7 +19,7 @@ import shutil
 import sys
 import unicodedata
 
-__version__ = '0.2'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.3'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
 
 DOI_RE = re.compile(r'\b(10\.\d{4,9}/[^\s"<>]+)', re.I)
 PMID_RE = re.compile(r'\bPMID:?\s*(\d{5,9})\b', re.I)
@@ -271,9 +271,11 @@ def ingest(instr_path, inbox, store, out, stream=sys.stdout):
             md = '\n'.join(L) + '\n'
             open(os.path.join(dd, 'paper.md'), 'w', encoding='utf8').write(md)
             open(os.path.join(dd, 'meta.md'), 'w', encoding='utf8').write(
-                '<!-- lit: doi=%s pages=%d blank=%d sha=%s -->\n# %s\n\n- DOI: %s\n- 첫 저자·해: %s %s\n- 참고문헌: %s\n- 받은 날: %s\n- 원 파일 이름: `%s`\n' % (
+                '<!-- lit: doi=%s pages=%d blank=%d sha=%s -->\n# %s\n\n- DOI: %s\n- 첫 저자·해: %s %s\n- 참고문헌: %s\n- 받은 날: %s\n- 원 파일 이름: `%s`\n'
+                '- 원 PDF: sha256 앞 16자 `%s` · %d쪽 · 글자층 없는 쪽 %d · paper.md 쪽 표지 %d(= 쪽 수여야 한다)\n' % (
                     doi or '-', len(pages), blank, hashlib.sha256(open(path, 'rb').read()).hexdigest()[:16], r['title'] or r['raw'][:80],
-                    doi or '—', r['author'], r['year'], r['raw'][:300], datetime.date.today().isoformat(), f))
+                    doi or '—', r['author'], r['year'], r['raw'][:300], datetime.date.today().isoformat(), f,
+                    hashlib.sha256(open(path, 'rb').read()).hexdigest()[:16], len(pages), blank, md.count('\n[p.')))
             if doi:
                 by_doi[doi] = key
         _cite_note(store, key, name, r['n'])
@@ -402,7 +404,7 @@ def locate(instr_path, store, out, top=3, stream=sys.stdout):
     return fp
 
 
-def check(instr_path, inbox, out=None, stream=sys.stdout):
+def check(instr_path, inbox, out=None, stream=sys.stdout, store=None):
     """v0.2 (리뷰어 09-28 받기 규칙 5): 받은 파일 검사 — 첫 바이트 %PDF(HTML 을 PDF 이름으로 저장한 것 거르기), 쪽 수 > 1,
     앞 두 쪽의 DOI 가 그 참고문헌(파일 이름 번호)의 DOI 와 같은지. 반환 [(파일, 결과, 까닭)]."""
     text = _nfc(open(instr_path, encoding='utf8').read())
@@ -421,6 +423,9 @@ def check(instr_path, inbox, out=None, stream=sys.stdout):
             rows.append((f, '✗', '읽지 못함 %s' % type(e).__name__)); continue
         if len(pages) <= 1:
             rows.append((f, '✗', '쪽 수 %d — 초록·첫 쪽만 받았을 수 있다' % len(pages))); continue
+        blank = sum(1 for _, _, t in pages if not t)
+        if blank * 2 >= len(pages):     # v0.3 (리뷰어 09-28): 스캔본 — md 로 판정할 수 없다
+            rows.append((f, '✗', '%d쪽 중 %d쪽 글자층 없음(스캔) — **PDF 필요**' % (len(pages), blank))); continue
         r, how = match_pdf(f, pages, refs)          # v0.2: 사용자가 받은 이름(저장 이름이 아닌 것)도 DOI·제목으로
         dois = {_clean_doi(d) for d in DOI_RE.findall(' '.join(t for _, _, t in pages[:2]))}
         if not r:
@@ -430,7 +435,18 @@ def check(instr_path, inbox, out=None, stream=sys.stdout):
         elif r and r['doi'] and not dois:
             rows.append((f, '△', '%d쪽 · 앞쪽에 DOI 가 없다 — 제목으로 확인' % len(pages)))
         else:
-            rows.append((f, '○', '%d쪽 · 참고문헌 %d(%s)%s' % (len(pages), r['n'], how, ' · DOI 맞음' if r['doi'] in dois else '')))
+            note = (' · 글자층 없는 쪽 %d' % blank) if blank else ''
+            # v0.3 (리뷰어 09-28): 보관소 paper.md 의 쪽 표지 수 = PDF 쪽 수 — md 가 잘리면 '0회' 판정이 거짓이 된다
+            if store and r['doi']:
+                by_doi, _ = store_index(store)
+                key = by_doi.get(r['doi'])
+                mdp = os.path.join(store, key, 'paper.md') if key else None
+                if mdp and os.path.exists(mdp):
+                    nm = open(mdp, encoding='utf8').read().count('\n[p.')
+                    if nm != len(pages):
+                        rows.append((f, '✗', '%d쪽인데 보관소 paper.md 쪽 표지 %d — md 가 잘렸다(다시 ingest)' % (len(pages), nm))); continue
+                    note += ' · paper.md 쪽 표지 %d = 쪽 수' % nm
+            rows.append((f, '○', '%d쪽 · 참고문헌 %d(%s)%s%s' % (len(pages), r['n'], how, ' · DOI 맞음' if r['doi'] in dois else '', note)))
     L = ['# %s — 받은 파일 검사' % name, '', '| 파일 | 결과 | 까닭 |', '|---|---|---|'] + ['| `%s` | %s | %s |' % r_ for r_ in rows]
     L += ['', '○ %d · △ %d · ✗ %d' % tuple(sum(1 for r_ in rows if r_[1] == k) for k in '○△✗'), '']
     if out:
@@ -449,13 +465,14 @@ if __name__ == '__main__':
     l_ = sub.add_parser('locate'); l_.add_argument('instr'); l_.add_argument('--store', required=True); l_.add_argument('--out', required=True)
     l_.add_argument('--top', type=int, default=3)
     c_ = sub.add_parser('check'); c_.add_argument('instr'); c_.add_argument('--inbox', required=True); c_.add_argument('--out', default=None)
+    c_.add_argument('--store', default=None, help='보관소 — 있으면 paper.md 쪽 표지 수를 PDF 쪽 수와 대조(v0.3)')
     a = ap.parse_args()
     if a.cmd == 'plan':
         plan(a.instr, a.out, a.store)
     elif a.cmd == 'ingest':
         ingest(a.instr, a.inbox, a.store, a.out)
     elif a.cmd == 'check':
-        rows = check(a.instr, a.inbox, a.out)
+        rows = check(a.instr, a.inbox, a.out, store=a.store)
         sys.exit(1 if any(r[1] == '✗' for r in rows) else 0)
     else:
         locate(a.instr, a.store, a.out, a.top)

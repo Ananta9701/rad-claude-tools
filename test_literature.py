@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.2'
+EXPECT_VERSION = '0.3'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 
@@ -162,6 +162,23 @@ def t_v02_strip_publisher_boiler():
     assert got[2][1] == 'DOI', got                                             # 이름이 달라도 안내 줄의 DOI 로
     md = open(os.path.join(d, 's', got[2][0], 'paper.md'), encoding='utf8').read()
     assert 'Downloaded from' not in md and 'Some Institution' not in md and 'Results were good.' in md and '안내 줄 3개를 뺐다' in md, md
+
+
+def t_v03_check_text_layer_and_md_pages():
+    d, instr = _fixture()
+    store, out = os.path.join(d, 'store'), os.path.join(d, 'out')
+    got, _ = LT.ingest(instr, os.path.join(d, 'inbox'), store, out, stream=io.StringIO())
+    meta = open(os.path.join(store, got[1][0], 'meta.md'), encoding='utf8').read()
+    assert '- 원 PDF: sha256 앞 16자' in meta and '2쪽 · 글자층 없는 쪽 0 · paper.md 쪽 표지 2' in meta, meta
+    rows = {f: (r, w) for f, r, w in LT.check(instr, os.path.join(d, 'inbox'), stream=io.StringIO(), store=store)}
+    assert rows['download (3).pdf'][0] == '○' and 'paper.md 쪽 표지 2 = 쪽 수' in rows['download (3).pdf'][1], rows
+    mdp = os.path.join(store, got[2][0], 'paper.md'); t = open(mdp, encoding='utf8').read()
+    open(mdp, 'w', encoding='utf8').write(t[:t.index('\n[p.2]')])                 # md 가 잘린 꼴
+    rows = {f: (r, w) for f, r, w in LT.check(instr, os.path.join(d, 'inbox'), stream=io.StringIO(), store=store)}
+    assert rows['download (3).pdf'][0] == '✗' and 'md 가 잘렸다' in rows['download (3).pdf'][1], rows
+    make_pdf(os.path.join(d, 'inbox', '002_scan.pdf'), [[], [], ['x']])           # 3쪽 중 2쪽 글자층 없음
+    rows = {f: (r, w) for f, r, w in LT.check(instr, os.path.join(d, 'inbox'), stream=io.StringIO())}
+    assert rows['002_scan.pdf'][0] == '✗' and 'PDF 필요' in rows['002_scan.pdf'][1], rows
 
 
 def t_cli():

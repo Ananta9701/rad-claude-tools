@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.35'
+EXPECT_VERSION = '16.36'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -2031,6 +2031,36 @@ def t_v1635_fail_still_drops_title_and_cites():
     assert cg[0] + cg[2] >= W - int(0.1 * E) and cg[1] + cg[3] >= H - int(0.5 * E), cg                      # 우하단
     assert T._is_cite('Smith J et al. Radiology 2020;295:1-9') and T._is_cite('221122 BR 발표') and not T._is_cite('Arrow points to the leak')
     assert not T._is_cite('이 소견은 발표 자료에서 흔히 보이는 모양이지만 실제 임상에서는 다른 원인이 더 많아 감별 진단에 넣어야 한다고 설명한다')   # 긴 본문 속 '발표' 는 메모 아님
+
+
+def t_v1636_keep_arrangement_success_regression():
+    # 발표 K20: 16.35 가 제자리 배치 '성공' 길에서 plan = best[1] 을 빠뜨려 TypeError — 제목을 남긴 채 본문 상자가 줄어드는 화면
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    from pptx.enum.text import MSO_AUTO_SIZE
+    from PIL import Image
+    E = T.EMU_IN
+    img = os.path.join(TMP, 'k20.png'); Image.new('RGB', (300, 180), 'gray').save(img)
+    prs = Presentation(); prs.slide_width, prs.slide_height = Inches(10), Inches(7.5)
+    sl = prs.slides.add_slide(prs.slide_layouts[5]); sl.shapes.title.text_frame.text = 'Endoleak overview'
+    b = sl.shapes.add_textbox(Inches(0.3), Inches(1.6), Inches(9.4), Inches(3.5)); b.name = 'Body'
+    tf = b.text_frame; tf.word_wrap = True; tf.text = 'first line of the body'
+    pp = tf.add_paragraph(); pp.text = 'second line'
+    for pp in tf.paragraphs:
+        for rr in pp.runs:
+            rr.font.size = Pt(18)
+    b.text_frame.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+    pic = sl.shapes.add_picture(img, Inches(3.0), Inches(5.3), Inches(3.0), Inches(1.8)); pic.name = 'Pic 1'
+    path = os.path.join(TMP, 'k20.pptx'); prs.save(path)
+    d = T.Deck.open(path, wd('k20')); sn = [x for x, _, _ in d.order() if x][0]
+    r = T.fit_layout(d, sn)                                                     # 16.35 에서는 여기서 TypeError
+    assert r and not r[0].startswith('[!]') and any(c.startswith('제목 띠') for c in r) and any(c.startswith('본문 "Body"') for c in r) \
+        and any(c.startswith('그림 "Pic 1"') for c in r), r
+    x = open(d._slide(sn), encoding='utf8').read()
+    assert re.search(r'type="title"', x)                                         # 제목은 남는다
+    bh = int(re.search(r'name="Body".*?<a:ext cx="\d+" cy="(\d+)"', x, re.S).group(1))
+    assert bh < int(3.5 * E), bh                                                 # 본문 상자 높이가 글 높이로 줄었다
+    d.save('/tmp/k20o.pptx'); assert T.validate('/tmp/k20o.pptx', path)
 
 
 def t_v1619_da_after_vowel():

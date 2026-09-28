@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.35'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.36'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -3922,6 +3922,8 @@ def fit_layout(deck, slide_no, title_min=20, body_min=14, body_max=None, max_up=
             plan = {'body': None, 'pics': []}
             cite_boxes = []
             out.insert(0, msg)
+        else:
+            plan = best[1]      # v16.36 (발표 K20): 16.35 가 K19-1 을 넣으며 이 줄을 빠뜨려 제자리 배치 '성공' 화면에서 TypeError
     # 적용 — 본문
     if body and plan['body']:
         bx, by, bw, bh, pt = plan['body']

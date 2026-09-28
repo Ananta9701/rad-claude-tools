@@ -1,4 +1,4 @@
-# LITERATURE — 논문 원문 받기·변환·찾기 규약 (literature.py v0.2)
+# LITERATURE — 논문 원문 받기·변환·찾기 규약 (literature.py v0.3)
 
 > Cowork 「문헌」 역할. 원문 검증(리뷰어)과 분야 말뭉치(저자, 다음 단계)에 쓸 논문 원문을 모은다.
 > Cowork 는 찾기·받기(·변환·위치 찾기)까지, **판정(이 문장이 원문과 맞는가)은 리뷰어** 가 한다(사용자 09-28).
@@ -16,12 +16,18 @@
 | 3a. 받기 — 무료 공개 | Cowork(앱 내장 브라우저) | 목록대로 **한 편씩** 받아 병원 컴퓨터 `C:\Users\user\Desktop\문헌작업\{원고}` 에 저장 이름으로(§2) |
 | 3b. 받기 — 구독·봇 확인 사이트 | **사용자**(평소 브라우저, 병원 구독) | Cowork 가 멈춘 문헌(목록의 남은 것)을 받아 같은 폴더에 — 이름은 아무렇게나(짝짓기는 DOI·제목) |
 | 4. 검사·변환·위치 찾기 | Cowork(클라우드 셸) | `check`·`ingest`·`locate` — 결과(보관소·문헌목록·주장위치)는 `문헌작업` 에 되쓴다 |
-| 5. Drive 로 | Cowork(md) · 사용자(PDF) | Cowork 가 md(`paper.md`·`meta.md`·INDEX·문헌목록·주장위치)를 Drive `문헌 보관소`·`Claude 작업/문헌/{원고}` 에 올린다. 사용자는 `문헌작업\{원고}` 의 PDF 를 drive.google.com 의 `Claude 작업/문헌/{원고}/inbox` 로 한 번에 끌어다 놓는다 |
-| 6. 검증 | 리뷰어 대화창 | 문헌목록 → paper.md(Drive)로 판정. 표·그림·수식은 inbox 의 PDF(경로 (b))나 사용자에게 쪽 화면을. 못 받은 문헌은 REVIEW_PROTOCOL 의 입수 불가 문헌 |
+| 5. Drive 로 | Cowork | md(`paper.md`·`meta.md`·INDEX·문헌목록·주장위치·받은파일검사)를 Drive `문헌 보관소/{DOI}/`·`Claude 작업/문헌/{원고}` 에 올린다. **PDF 는 병원 컴퓨터 `문헌작업` 에 남긴다** |
+| 6. 검증 | 리뷰어 대화창 | **paper.md 로 판정**(기본, v0.3). 수식·그림 수치·보충자료, 또는 표 수치 하나가 판정을 가를 때만 리뷰어가 그 문헌의 PDF 를 요청 → 사용자가 그 PDF 하나를 `Claude 작업/문헌/{원고}/inbox` 로(경로 (b) — 예외). 못 받은 문헌은 REVIEW_PROTOCOL 의 입수 불가 문헌 |
+
+- **v0.3 기본 경로 — md 로 판정**(리뷰어 시험 09-28): 같은 2단 조판 논문을 paper.md 와 Drive 로 PDF 직접 읽기로 나란히 채점했더니 paper.md 는 단 순서·표
+  셀 순서가 제자리였고, Drive 직접 읽기는 좌우 단이 섞이고 표 셀이 행을 넘었다. 표본이 1편(Frontiers)이라 다른 조판(Wiley·Elsevier)은 확인 중.
+- 조건: `meta.md` 에 원 PDF 의 sha256·쪽 수·글자층 없는 쪽·paper.md 쪽 표지 수. `check --store` 가 **쪽 표지 수 = PDF 쪽 수**(md 가 잘리면 "0회" 판정이
+  거짓이 된다)와 **글자층**(쪽의 절반 이상이 비면 스캔 — "PDF 필요")을 본다. 리뷰어는 지시의 DOI 와 meta 의 DOI 를 대조하고, 회신에 "입수 경로: Cowork md
+  (원 PDF sha …), PDF 미대조" 와 표 수치를 근거로 쓴 경우 PDF 대조 여부를 적는다.
 
 - 구독 논문은 **사용자가 받는다**(3b) — Cowork 는 봇 확인을 풀지 않고, 사람이 앱 브라우저에서 확인을 한 번 통과시켜 Cowork 가 이어 받게 하는
   방법(가능은 하다)은 쓰지 않는다: 같은 사이트에 자동 요청을 이어 가는 셈이라 출판사 약관·기관 차단 위험이 크다(코드 판단 09-28 — 바꾸려면 사용자 결정).
-- PDF 는 병원 컴퓨터(`문헌작업`)와 Drive inbox 에만. `문헌 보관소`(Drive)에는 md 만 — Cowork 가 PDF 를 Drive 로 올리지 못한다(크기).
+- PDF 는 병원 컴퓨터(`문헌작업`)에, 리뷰어가 요청한 것만 Drive inbox 에. `문헌 보관소`(Drive)에는 md 만 — Cowork 가 PDF 를 Drive 로 올리지 못한다(크기).
 
 ## 1. 리뷰어의 검증 지시 (md)
 
@@ -70,7 +76,7 @@ rm -rf ~/rct && git clone -q --depth 1 https://github.com/Ananta9701/rad-claude-
 python3 -c "import pypdf" 2>/dev/null || pip install --user pypdf || git clone -q --depth 1 https://github.com/py-pdf/pypdf ~/pypdf
 python3 ~/rct/claim_graph.py selfcheck --dir ~/rct --role 문헌 --tests
 python3 ~/rct/literature.py plan   "<지시.md>" --out "<작업폴더>" [--store "<문헌 보관소>"]
-python3 ~/rct/literature.py check  "<지시.md>" --inbox "<받은 폴더>" --out "<작업폴더>"
+python3 ~/rct/literature.py check  "<지시.md>" --inbox "<받은 폴더>" --store "<보관소>" --out "<작업폴더>"   # ingest 뒤에 한 번 더 — 쪽 표지 수 대조"
 python3 ~/rct/literature.py ingest "<지시.md>" --inbox "<받은 폴더>" --store "<문헌 보관소>" --out "<작업폴더>"
 python3 ~/rct/literature.py locate "<지시.md>" --store "<문헌 보관소>" --out "<작업폴더>"
 ```
@@ -85,7 +91,7 @@ python3 ~/rct/literature.py locate "<지시.md>" --store "<문헌 보관소>" --
 ## 4. 리뷰어가 읽는 법
 
 - 먼저 `{원고}_문헌목록.md` → 문헌마다 `문헌 보관소/{폴더}/paper.md`(쪽 표지). 낱말 찾기는 Drive 검색(`문헌 보관소` 안 `fullText contains`).
-- **경로 (b)** (09-28 시험): inbox 의 PDF 를 Drive 연결(`read_file_content`)로 — 전문이 잘림 없이 들어오고, 쪽 꼬리말이 쪽 표지 역할을 한다.
+- **경로 (b)** — 예외(수식·그림·보충자료·결정적 표 수치): 요청한 PDF 를 inbox 에서 Drive 연결(`read_file_content`)로 — 전문이 잘림 없이 들어오고, 쪽 꼬리말이 쪽 표지 역할을 한다.
   본문 문장은 충분(0회 여부도 셀 수 있다). **2단 조판은 좌우 줄이 섞일 수 있고, 표·수식·그림은 흐트러진다** — 표·그림 근거 주장은 사용자에게
   그 쪽의 화면(PDF 쪽 그림)을 받아 확인한다.
 - (선택) `{원고}_주장위치.md` 가 있으면 위치 안내로 쓴다 — 원문 문단을 직접 읽고 판정.
