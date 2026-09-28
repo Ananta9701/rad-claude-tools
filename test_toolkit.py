@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.32'
+EXPECT_VERSION = '16.33'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -1877,6 +1877,79 @@ def t_v1632_title_block_k14():
     assert re.search(r'name="Label".*?<a:off x="\d+" y="(\d+)"', x, re.S).group(1) == str(int(7.1 * T.EMU_IN))   # 아래 이름표는 그대로
     assert i['tIns'] == i['bIns']
     d.save('/tmp/k14o.pptx'); assert T.validate('/tmp/k14o.pptx', path)
+
+
+def t_v1633_colors_band_fit_layout():
+    from pptx import Presentation
+    from pptx.util import Inches, Pt, Emu
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_SHAPE
+    from PIL import Image
+    E = T.EMU_IN
+    # K15-1 개정: 이름 색(prstClr white)·검정 → 테마 글자색, 자동 지우기 끔(노랑은 남김), 낮은 대비 강조색만 같은 계열로 진하게
+    d = T.Deck.open(SRC, wd('k151')); sn = [x for x, _, _ in d.order() if x][6]
+    runs = ''.join('<a:r><a:rPr lang="en-US" sz="1800"><a:solidFill>%s</a:solidFill></a:rPr><a:t>%s</a:t></a:r>' % c for c in (
+        ('<a:prstClr val="white"/>', 'W'), ('<a:srgbClr val="000000"/>', 'K'), ('<a:srgbClr val="FFFF00"/>', 'Y'), ('<a:srgbClr val="FF0000"/>', 'R')))
+    box = ('<p:sp><p:nvSpPr><p:cNvPr id="999" name="Colors"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="100" y="3000000"/>'
+           '<a:ext cx="3000000" cy="500000"/></a:xfrm></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p>%s</a:p></p:txBody></p:sp>' % runs)
+    x = open(d._slide(sn), encoding='utf8').read(); open(d._slide(sn), 'w', encoding='utf8').write(x.replace('</p:spTree>', box + '</p:spTree>'))
+    r = T.adopt_house_look(d, sn, recolor=['white', 'black'], auto_light=False, darken=True)
+    y = re.search(r'name="Colors".*?</p:sp>', open(d._slide(sn), encoding='utf8').read(), re.S).group(0)
+    cols = re.findall(r'srgbClr val="(\w{6})"', y)
+    assert 'prstClr' not in y and '000000' not in cols and 'FF0000' in cols and 'FFFF00' not in cols, (r, cols)
+    new_y = re.findall(r'srgbClr val="(\w{6})"', y)
+    assert len(new_y) == 2 and T._contrast([c for c in new_y if c != 'FF0000'][0], 'FFFFFF') >= 3.0, (new_y, r)
+    assert any('배경 대비가 낮은 FFFF00 →' in c for c in r), r
+    assert T._delta_e([c for c in new_y if c != 'FF0000'][0], 'FF0000') >= 20
+    # K15-3: 따로 그린 띠 도형 + 위치를 물려받는 제목·본문 자리 표시자
+    prs = Presentation(); prs.slide_width, prs.slide_height = Inches(10), Inches(7.5)
+    sl = prs.slides.add_slide(prs.slide_layouts[1]); sl.shapes.title.text_frame.text = 'Prostate artery embolization'
+    sl.placeholders[1].text_frame.text = 'body text'
+    band = sl.shapes.add_shape(MSO_SHAPE.RECTANGLE, Emu(0), Emu(-18288), Inches(10), Inches(0.62)); band.name = '제목 1'
+    band.fill.solid(); band.fill.fore_color.rgb = RGBColor(0xD9, 0xD9, 0xD9)
+    path = os.path.join(TMP, 'k153.pptx'); prs.save(path)
+    B = T.Deck.open(path, wd('k153')); sb = [x for x, _, _ in B.order() if x][0]
+    r = T.title_block(B, sb, band_h=1.8, push=True)                 # 본문(마스터에서 1.6" 물려받음)이 띠 아래 + 0.1" 보다 위가 되게
+    assert r[0].startswith('띠 도형 "제목 1" 을 띠로') and any('물려받던 위치 → 적어 넣음' in c for c in r), r
+    xb = open(B._slide(sb), encoding='utf8').read()
+    bnd = re.search(r'name="제목 1".*?<a:off x="(-?\d+)" y="(-?\d+)"/><a:ext cx="\d+" cy="(\d+)"', xb, re.S).groups()
+    ti = T._title_info(B, sb)
+    assert int(bnd[2]) == ti['h'] == int(1.8 * E) and int(bnd[1]) == ti['y'] == -18288, (bnd, ti['y'], ti['h'])
+    body = re.search(r'<p:sp>(?:(?!<p:sp>).)*?idx="1"(?:(?!<p:sp>).)*?</p:sp>', xb, re.S).group(0)
+    assert int(re.search(r'<a:off x="-?\d+" y="(-?\d+)"', body).group(1)) == -18288 + int(1.8 * E) + int(0.1 * E), body[:300]
+    B.save('/tmp/k153o.pptx'); assert T.validate('/tmp/k153o.pptx', path)
+    # K16 1단계: 밀집 화면 — 제목 띠 촘촘히, 그림+주석 비율, 본문 글과 안 겹침, 이름표 그대로
+    prs = Presentation(); prs.slide_width, prs.slide_height = Inches(10), Inches(7.5)
+    sl = prs.slides.add_slide(prs.slide_layouts[5]); sl.shapes.title.text_frame.text = 'Endoleak type II'
+    b = sl.shapes.add_textbox(Inches(0.3), Inches(1.0), Inches(5.0), Inches(5.5)); b.name = 'Body'
+    tf = b.text_frame; tf.word_wrap = True; tf.text = 'Type II endoleak from lumbar or IMA branches'
+    for k in range(5):
+        pp = tf.add_paragraph(); pp.text = 'point %d with some explanatory words here' % k
+    for pp in tf.paragraphs:
+        for rr in pp.runs:
+            rr.font.size = Pt(20)
+    img = os.path.join(TMP, 'k16.png'); Image.new('RGB', (400, 300), 'gray').save(img)
+    pic = sl.shapes.add_picture(img, Inches(4.5), Inches(1.6), Inches(5.0), Inches(3.75)); pic.name = 'Pic 1'
+    arr = sl.shapes.add_shape(MSO_SHAPE.RIGHT_ARROW, Inches(6.0), Inches(2.5), Inches(0.5), Inches(0.3)); arr.name = 'Arrow 1'
+    lab = sl.shapes.add_textbox(Inches(0.2), Inches(7.1), Inches(1.4), Inches(0.3)); lab.name = 'Label'; lab.text_frame.text = '(R4 name)'
+    path = os.path.join(TMP, 'k16.pptx'); prs.save(path)
+    F = T.Deck.open(path, wd('k16')); sf = [x for x, _, _ in F.order() if x][0]
+    r = T.fit_layout(F, sf)
+    assert r and not r[0].startswith('[!]') and any(c.startswith('그림 "Pic 1"') and '주석 1 같이' in c for c in r), r
+    xf = open(F._slide(sf), encoding='utf8').read()
+    g = lambda nm: tuple(int(v) for v in re.search(r'name="%s".*?<a:off x="(-?\d+)" y="(-?\d+)"/><a:ext cx="(\d+)" cy="(\d+)"' % re.escape(nm), xf, re.S).groups())
+    ti = T._title_info(F, sf); pg, ag, lg, bg = g('Pic 1'), g('Arrow 1'), g('Label'), g('Body')
+    assert ti["y"] == 0 and ti["h"] < int(1.0 * E), ti["h"]                                   # 촘촘한 띠(44pt 글 + 0.08"×2), 위에 붙음
+    assert pg[1] >= ti['h'] and pg[0] + pg[2] <= int(10 * E) and pg[1] + pg[3] <= int(7.5 * E)
+    assert pg[0] >= bg[0] + bg[2] or pg[1] >= bg[1] + int(0.5 * E), (pg, bg)                   # 본문과 옆으로 갈라섬(글과 안 겹침)
+    assert pg[0] <= ag[0] and ag[0] + ag[2] <= pg[0] + pg[2] and pg[1] <= ag[1] <= pg[1] + pg[3], (pg, ag)   # 주석은 그림 안에 그대로
+    assert lg == (int(0.2 * E), int(7.1 * E), int(1.4 * E), int(0.3 * E))                     # 이름표 그대로
+    F.save('/tmp/k16o.pptx'); assert T.validate('/tmp/k16o.pptx', path)
+    many = T.Deck.open(path, wd('k16b')); sm = [x for x, _, _ in many.order() if x][0]
+    xm = open(many._slide(sm), encoding='utf8').read()
+    xm = xm.replace('point 0 with some explanatory words here', ' '.join(['very long text'] * 400))
+    open(many._slide(sm), 'w', encoding='utf8').write(xm)
+    assert T.fit_layout(many, sm)[0].startswith('[!]') and open(many._slide(sm), encoding='utf8').read() == xm   # 안 되면 바꾸지 않는다
 
 
 def t_v1619_da_after_vowel():

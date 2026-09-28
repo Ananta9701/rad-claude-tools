@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.32'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.33'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -3407,13 +3407,78 @@ def _theme_rgb(deck, slide_no):
     return out
 
 
+PRST_RGB = {'white': 'FFFFFF', 'black': '000000', 'red': 'FF0000', 'yellow': 'FFFF00', 'lime': '00FF00', 'green': '008000',
+            'blue': '0000FF', 'cyan': '00FFFF', 'aqua': '00FFFF', 'magenta': 'FF00FF', 'fuchsia': 'FF00FF', 'orange': 'FFA500',
+            'gray': '808080', 'grey': '808080', 'silver': 'C0C0C0', 'navy': '000080', 'maroon': '800000', 'purple': '800080',
+            'teal': '008080', 'olive': '808000', 'ltGray': 'C0C0C0', 'dkGray': '404040'}
+
+
 def _fill_rgb(xml, theme):
-    """solidFill 안의 srgbClr/schemeClr → 'RRGGBB' (못 풀면 None)."""
+    """solidFill 안의 srgbClr/schemeClr/prstClr → 'RRGGBB' (못 풀면 None). v16.33: prstClr(미리 정한 색 이름 — white 등)."""
     c = re.search(r'<a:srgbClr val="([0-9A-Fa-f]{6})"', xml or '')
     if c:
         return c.group(1).upper()
     c = re.search(r'<a:schemeClr val="(\w+)"', xml or '')
-    return theme.get(c.group(1)) if c else None
+    if c:
+        return theme.get(c.group(1))
+    c = re.search(r'<a:prstClr val="(\w+)"', xml or '')
+    return PRST_RGB.get(c.group(1)) if c else None
+
+
+def _color_keys(xml, theme):
+    """색 비교 열쇠: {16진수, 이름(prstClr·schemeClr, 소문자)}."""
+    keys = set()
+    h = _fill_rgb(xml, theme)
+    if h:
+        keys.add(h)
+    for m in re.finditer(r'<a:(?:prstClr|schemeClr) val="(\w+)"', xml or ''):
+        keys.add(m.group(1).lower())
+    return keys
+
+
+def _rel_lum(rgb):
+    def ch(v):
+        v = v / 255.0
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    r, g, b = (int(rgb[i:i + 2], 16) for i in (0, 2, 4))
+    return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b)
+
+
+def _contrast(a, b):
+    la, lb = sorted((_rel_lum(a), _rel_lum(b)), reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+def _lab(rgb):
+    def ch(v):
+        v = v / 255.0
+        return ((v + 0.055) / 1.055) ** 2.4 if v > 0.04045 else v / 12.92
+    r, g, b = (ch(int(rgb[i:i + 2], 16)) for i in (0, 2, 4))
+    X = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047
+    Y = (0.2126 * r + 0.7152 * g + 0.0722 * b)
+    Z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883
+    f = lambda t: t ** (1 / 3.0) if t > 0.008856 else 7.787 * t + 16 / 116.0
+    return 116 * f(Y) - 16, 500 * (f(X) - f(Y)), 200 * (f(Y) - f(Z))
+
+
+def _delta_e(a, b):
+    la, lb = _lab(a), _lab(b)
+    return sum((p - q) ** 2 for p, q in zip(la, lb)) ** 0.5
+
+
+def _darken_for(rgb, bg, others, min_contrast=3.0, min_de=20.0):
+    """같은 색상(hue)·채도로 명도만 낮춰 bg 대비 min_contrast 이상, others(이미 쓰인 글자색) 모두와 색차 min_de 이상인 첫 색. 없으면 None."""
+    import colorsys
+    r, g, b = (int(rgb[i:i + 2], 16) / 255.0 for i in (0, 2, 4))
+    h, l, s_ = colorsys.rgb_to_hls(r, g, b)
+    step = 0.02
+    while l > 0.05:
+        l -= step
+        rr, gg, bb = colorsys.hls_to_rgb(h, l, s_)
+        cand = '%02X%02X%02X' % (int(round(rr * 255)), int(round(gg * 255)), int(round(bb * 255)))
+        if _contrast(cand, bg) >= min_contrast and all(_delta_e(cand, o) >= min_de for o in others):
+            return cand
+    return None
 
 
 def _lum(rgb):
@@ -3435,7 +3500,7 @@ def _slide_bg_rgb(deck, slide_no, theme):
     return theme.get('bg1', 'FFFFFF')
 
 
-def adopt_house_look(deck, slide_no, dry_run=False, light_text=0.85, light_bg=0.6, recolor=()):
+def adopt_house_look(deck, slide_no, dry_run=False, light_text=0.85, light_bg=0.6, recolor=(), auto_light=True, darken=False, min_contrast=3.0):
     """v16.31 (발표 K12): 가져온 슬라이드를 기준 덱 모양으로 — ① 밝은 배경 위의 아주 밝은 글자색(흰색 등)을 지워 테마 글자색을
     따르게(강조색·어두운 채움 상자 안의 흰 글자는 그대로), ② 제목 자리 표시자가 비었으면 위쪽의 제목 글상자(위 25% 안, 가장 큰
     글자, 두 문단 이하·80자 이하)를 제목 자리 표시자로 옮긴다(글만 옮기고 글상자는 지운다 — 뒤에 titles/title-bands 규격을 받게).
@@ -3489,7 +3554,13 @@ def adopt_house_look(deck, slide_no, dry_run=False, light_text=0.85, light_bg=0.
             x = x2
             out.append('제목 글상자 "%s"(%dpt) → 제목 자리 표시자' % (text[:40], sz // 100))
     # ①′ v16.32 (발표 K14, 사용자 09-28): 지정한 색(--recolor, 예: 연두 92D050·주황 FFC000)은 배경과 관계없이 테마 글자색으로 — 빨강은 강조로 남긴다
-    rec = {c.upper().lstrip('#') for c in (recolor or ()) if c}
+    rec = set()
+    for c in (recolor or ()):
+        c = c.strip().lstrip('#')
+        if c:
+            rec.add(c.upper() if re.fullmatch(r'[0-9A-Fa-f]{6}', c) else c.lower())
+            if c.lower() in {k.lower() for k in PRST_RGB}:     # 이름을 주면 같은 16진수 색도(white = FFFFFF)
+                rec.add(PRST_RGB[next(k for k in PRST_RGB if k.lower() == c.lower())])
     if rec:
         n_rec = 0
 
@@ -3497,8 +3568,7 @@ def adopt_house_look(deck, slide_no, dry_run=False, light_text=0.85, light_bg=0.
             nonlocal n_rec
             inner = rm.group(0)
             sf = re.search(r'<a:solidFill>(.*?)</a:solidFill>', inner, re.S)
-            c = _fill_rgb(sf.group(1), theme) if sf else None
-            if c and c in rec:
+            if sf and _color_keys(sf.group(1), theme) & rec:      # v16.33 (발표 K15-1): 이름(white·black)·테마 색도
                 n_rec += 1
                 return inner.replace(sf.group(0), '', 1)
             return inner
@@ -3511,6 +3581,8 @@ def adopt_house_look(deck, slide_no, dry_run=False, light_text=0.85, light_bg=0.
         out.append('[참고] 배경이 그림·그라데이션 — 글자색 그대로')
     elif _lum(bg) < light_bg:
         out.append('[참고] 배경이 어둡다(#%s) — 글자색 그대로' % bg)
+    elif not auto_light:
+        pass                                    # v16.33 (발표 K15-1): 밝은 색 자동 지우기를 끈다 — 목록에 없는 색은 강조로 남긴다
     else:
         n_runs = 0
 
@@ -3535,8 +3607,269 @@ def adopt_house_look(deck, slide_no, dry_run=False, light_text=0.85, light_bg=0.
         x = re.sub(r'<p:sp>(?:(?!<p:sp>).)*?</p:sp>', fix_shape, x, flags=re.S)
         if n_runs:
             out.append('밝은 글자색 %d곳을 지워 테마 글자색으로(배경 #%s)' % (n_runs, bg))
+    # ② v16.33 (발표 K15-1 개정): 배경 대비가 모자란 강조색만 같은 계열의 진한 색으로 — 그 화면의 다른 글자색·빨강과 구분되게
+    if darken and bg:
+        used = set()
+        for sf in re.findall(r'<a:rPr\b[^>]*>.*?<a:solidFill>(.*?)</a:solidFill>', x, re.S):
+            c = _fill_rgb(sf, theme)
+            if c:
+                used.add(c)
+        used.add('FF0000')
+        changes = {}
+        for c in sorted(used):
+            if c == 'FF0000' or _contrast(c, bg) >= min_contrast:
+                continue
+            new = _darken_for(c, bg, [o for o in used | set(changes.values()) if o != c], min_contrast)
+            changes[c] = new
+        n_dk = 0
+
+        def fix_dk(rm):
+            nonlocal n_dk
+            inner = rm.group(0)
+            sf = re.search(r'<a:solidFill>(.*?)</a:solidFill>', inner, re.S)
+            c = _fill_rgb(sf.group(1), theme) if sf else None
+            if c in changes and changes[c]:
+                n_dk += 1
+                return inner.replace(sf.group(0), '<a:solidFill><a:srgbClr val="%s"/></a:solidFill>' % changes[c], 1)
+            return inner
+        x = re.sub(r'<a:(?:rPr|endParaRPr)\b[^>]*>.*?</a:(?:rPr|endParaRPr)>', fix_dk, x, flags=re.S)
+        for c, new in sorted(changes.items()):
+            out.append(('배경 대비가 낮은 %s → %s(대비 %.1f → %.1f)' % (c, new, _contrast(c, bg), _contrast(new, bg))) if new else
+                       ('[!] 배경 대비가 낮은 %s — 구분되는 진한 색을 찾지 못해 그대로' % c))
+        if n_dk:
+            out.append('진하게 바꾼 조각 %d' % n_dk)
     if not dry_run:
         open(p, 'w', encoding='utf8').write(x)
+    return out
+
+
+def _band_shape(x, W):
+    """v16.33 (발표 K15-3): 제목 띠로 따로 그린 도형 — 글 없는 채운 사각형, 위쪽(윗끝 0.1" 이내)·가로 거의 전체(90%↑)·높이 2" 이하.
+    둘 이상이면 None(애매)."""
+    hits = []
+    for m in re.finditer(r'<p:sp>(?:(?!<p:sp>).)*?</p:sp>', x, re.S):
+        seg = m.group(0)
+        if '<p:ph' in seg or _AT.search(seg) and ''.join(_AT.findall(seg)).strip():
+            continue
+        g = _GEO.search(seg)
+        sp = (re.search(r'<p:spPr\b.*?</p:spPr>', seg, re.S) or [''])[0]
+        if not g or not re.search(r'<a:(?:solidFill|gradFill)\b', re.sub(r'<a:ln\b.*?</a:ln>', '', sp, flags=re.S)):
+            continue
+        gx, gy, gw, gh = (int(v) for v in g.groups())
+        if gy <= 0.1 * EMU_IN and gx <= 0.1 * EMU_IN and gw >= 0.9 * W and gh <= 2 * EMU_IN and 'prst="line"' not in seg:
+            nm = re.search(r'<p:cNvPr\b[^>]*\bname="([^"]*)"', seg)
+            hits.append({'seg': seg, 'geo': (gx, gy, gw, gh), 'name': html.unescape(nm.group(1)) if nm else ''})
+    return hits[0] if len(hits) == 1 else None
+
+
+def _ph_geo(deck, slide_no, seg):
+    """자리 표시자가 물려받는 위치·크기: 레이아웃의 같은 idx(없으면 같은 type), 없으면 마스터의 같은 type."""
+    ph = re.search(r'<p:ph\b([^>]*)/?>', seg)
+    if not ph:
+        return None
+    idx = re.search(r'idx="(\d+)"', ph.group(1)); typ = (re.search(r'type="(\w+)"', ph.group(1)) or [None, 'body'])[1]
+    for f in (os.path.join(deck.dir, 'ppt/slideLayouts', deck.layout_of(slide_no)), _master_of(deck, slide_no)):
+        if not f or not os.path.exists(f):
+            continue
+        for m in re.finditer(r'<p:sp>(?:(?!<p:sp>).)*?</p:sp>', open(f, encoding='utf8').read(), re.S):
+            q = re.search(r'<p:ph\b([^>]*)/?>', m.group(0))
+            if not q:
+                continue
+            same = (idx and re.search(r'idx="%s"' % idx.group(1), q.group(1))) or \
+                   ((re.search(r'type="(\w+)"', q.group(1)) or [None, 'body'])[1] == typ and (not idx or 'master' in f.lower()))
+            g = _GEO.search(m.group(0))
+            if same and g:
+                return tuple(int(v) for v in g.groups())
+    return None
+
+
+def _top_shapes(x):
+    """spTree 바로 아래 도형들(그룹은 한 덩어리) — [{'tag','start','end','seg','name','geo'}]."""
+    tree = re.search(r'<p:spTree>(.*)</p:spTree>', x, re.S)
+    off0, body, res, k = tree.start(1), tree.group(1), [], 0
+    while True:
+        m = re.search(r'<p:(sp|pic|cxnSp|graphicFrame|grpSp)>', body[k:])
+        if not m:
+            break
+        tag, a = m.group(1), k + m.start()
+        depth, j = 0, a
+        for mm in re.finditer(r'<p:%s>|</p:%s>' % (tag, tag), body[a:]):
+            depth += 1 if mm.group(0)[1] != '/' else -1
+            if depth == 0:
+                j = a + mm.end(); break
+        segx = body[a:j]
+        g = re.search(r'<a:off x="(-?\d+)" y="(-?\d+)"\s*/>\s*<a:ext cx="(\d+)" cy="(\d+)"', segx)
+        nm = re.search(r'<p:cNvPr\b[^>]*\bname="([^"]*)"', segx)
+        res.append({'tag': tag, 'start': off0 + a, 'end': off0 + j, 'seg': segx, 'name': html.unescape(nm.group(1)) if nm else '',
+                    'geo': tuple(int(v) for v in g.groups()) if g else None})
+        k = j
+    return res
+
+
+def _inter(a, b):
+    return a[0] < b[0] + b[2] and b[0] < a[0] + a[2] and a[1] < b[1] + b[3] and b[1] < a[1] + a[3]
+
+
+def _inside_frac(a, b):
+    """a 가 b 안에 드는 넓이 비율."""
+    w = max(0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])); h = max(0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+    return (w * h) / float(max(1, a[2] * a[3]))
+
+
+def fit_layout(deck, slide_no, title_min=20, body_min=14, max_up=1.5, min_scale=0.5, band_gap=0.08, gap=0.1, margin=0.05, dry_run=False):
+    """v16.33 (발표 K16 1단계, 사용자 09-28 배치 양식): 밀집 화면 — ① 제목 띠를 촘촘하게(글 높이 + 위아래 band_gap, 위에 붙임, 2줄이면
+    title_min 까지 줄여 1줄이 되는지 봄) ② 본문(가장 큰 글상자)은 띠 아래로, 글자를 원래 크기에서 body_min 까지 ③ 그림(그림 위 주석과 한
+    덩어리)을 원래 자리의 가장 가까운 구석을 고정해 비율대로 max_up 까지 키우거나 min_scale 까지 줄여 본문 글·다른 그림·그 밖의 상자와
+    겹치지 않게 — 본문 글자 크기 후보마다 그림 넓이 합이 가장 큰 해(같으면 본문이 큰 해). 안 되면 바꾸지 않고 '[!] 나누기 필요'.
+    이름표·그림 설명·인용·그 밖의 상자는 그대로(2단계). 글 내용은 바꾸지 않는다. 반환: 문자열 목록."""
+    x = open(deck._slide(slide_no), encoding='utf8').read()
+    W, H = deck.slide_size(); E = EMU_IN
+    i = _title_info(deck, slide_no)
+    if not i or i['kind'] != 'ph':
+        return ['[!] 제목 자리 표시자가 없다 — adopt-house-look 으로 먼저']
+    out = []
+    band = _band_shape(x, W)
+    # ① 제목 띠
+    tsz = i['eff_sz'] or 2800
+    t_lines = _title_lines(i, tsz)
+    new_tsz = tsz
+    if t_lines > 1:
+        for p_ in range(tsz // 100 - 1, title_min - 1, -1):
+            if _title_lines(i, p_ * 100) == 1:
+                new_tsz = p_ * 100; break
+    t_lines = _title_lines(i, new_tsz)
+    t_text = int(t_lines * new_tsz / 100.0 * LINE_FACTOR * i.get('lnspc', 1.0) * 12700)
+    bgap = int(band_gap * E)
+    t_h = t_text + 2 * bgap
+    tx, tw = (band['geo'][0], band['geo'][2]) if band else (i['x'], i['w'])
+    top = t_h + int(gap * E)
+    region = (int(margin * E), top, W - 2 * int(margin * E), H - int(margin * E) - top)
+    shp = _top_shapes(x)
+    tsh = [q for q in shp if re.search(r'<p:ph\b[^>]*type="(?:title|ctrTitle)"', q['seg'])]
+    rest = [q for q in shp if q not in tsh and not (band and q['seg'] == band['seg'])]
+    pics = [q for q in rest if q['geo'] and (q['tag'] == 'pic' or (q['tag'] == 'grpSp' and '<p:pic>' in q['seg']))]
+    texts = [q for q in rest if q['geo'] and q['tag'] == 'sp' and ''.join(_AT.findall(q['seg'])).strip()]
+    label = [q for q in texts if re.match(r'\s*\(R\d', html.unescape(''.join(_AT.findall(q['seg']))))]
+    ann = {}
+    for q in rest:
+        if q in pics or not q['geo'] or q in label:
+            continue
+        best = max(pics, key=lambda p_: _inside_frac(q['geo'], p_['geo']), default=None)
+        if best and _inside_frac(q['geo'], best['geo']) >= 0.7:
+            ann.setdefault(id(best), []).append(q)
+    annotated = {id(q) for v in ann.values() for q in v}
+    cand = [q for q in texts if q not in label and id(q) not in annotated]
+    body = max(cand, key=lambda q: q['geo'][2] * q['geo'][3], default=None)
+    fixed = [q for q in rest if q['geo'] and q not in pics and q is not body and id(q) not in annotated
+             and not re.search(r'<p:ph\b[^>]*type="(?:dt|ftr|sldNum)"', q['seg'])]
+    # 본문 글 높이 추정
+    def body_box(p_scale):
+        if not body:
+            return None
+        bx, by, bw, bh = body['geo']
+        by = max(by, region[1])
+        bp = (re.search(r'<a:bodyPr\b[^>]*', body['seg']) or [''])[0]
+        l_, r_, t_, b_ = (int((re.search(r'\b%s="(-?\d+)"' % k, bp) or [0, d])[1]) for k, d in (('lIns', 91440), ('rIns', 91440), ('tIns', 45720), ('bIns', 45720)))
+        hh = 0.0
+        for pm in re.findall(r'<a:p>(.*?)</a:p>', body['seg'], re.S):
+            t = html.unescape(''.join(_AT.findall(pm)))
+            szs = [int(v) for v in re.findall(r'<a:(?:rPr|endParaRPr)\b[^>]*\bsz="(\d+)"', pm)] or [1800]
+            ps = max(szs) / 100.0 * p_scale
+            hh += max(1, _est_lines(t, ps, bw - l_ - r_)) * ps * LINE_FACTOR * 12700 if t.strip() else ps * LINE_FACTOR * 12700 * 0.5
+        return (bx, by, bw, int(hh) + t_ + b_)
+    bmax = max([int(v) for v in re.findall(r'<a:(?:rPr|endParaRPr)\b[^>]*\bsz="(\d+)"', body['seg'])] or [1800]) if body else 1800
+    rx0, ry0, rx1, ry1 = region[0], region[1], region[0] + region[2], region[1] + region[3]
+    def place(pic, obstacles):
+        gx, gy, gw, gh = pic['geo']
+        dy = max(0, ry0 - gy); gy += dy
+        corners = {'tl': (gx, gy, rx0, ry0), 'tr': (gx + gw, gy, rx1, ry0), 'bl': (gx, gy + gh, rx0, ry1), 'br': (gx + gw, gy + gh, rx1, ry1)}
+        cname = min(corners, key=lambda c: (corners[c][0] - corners[c][2]) ** 2 + (corners[c][1] - corners[c][3]) ** 2)
+        ax, ay = corners[cname][0], corners[cname][1]
+        # 구석이 영역 가장자리에 가까우면(0.75" 이내) 그 가장자리로 붙인다 — 원래 배치(오른쪽 위 등)는 지키고 넓이는 키운다
+        if abs(ax - corners[cname][2]) <= 0.75 * E:
+            ax = corners[cname][2]
+        if abs(ay - corners[cname][3]) <= 0.75 * E:
+            ay = corners[cname][3]
+        k = max_up
+        while k >= min_scale - 1e-9:
+            nw, nh = int(gw * k), int(gh * k)
+            nx = ax - nw if cname[1] == 'r' else ax
+            ny = ay - nh if cname[0] == 'b' else ay
+            box = (nx, ny, nw, nh)
+            if nx >= rx0 and ny >= ry0 and nx + nw <= rx1 and ny + nh <= ry1 and not any(_inter(box, o) for o in obstacles):
+                return k, box, (ax, ay), dy
+            k = round(k - 0.02, 4)
+        return None
+    best = None
+    pmax = bmax // 100
+    for pt in range(pmax, body_min - 1, -1):
+        f = pt / float(pmax)
+        bb = body_box(f)
+        if bb and bb[1] + bb[3] > ry1:
+            continue
+        obst = ([bb] if bb else []) + [q['geo'] for q in fixed if not any(_inter(q['geo'], p_['geo']) for p_ in pics)]
+        placed, ok = [], True
+        for pic in sorted(pics, key=lambda q: -(q['geo'][2] * q['geo'][3])):
+            r_ = place(pic, obst + [b for _, b, _, _, _ in placed])
+            if not r_:
+                ok = False; break
+            placed.append((pic, r_[1], r_[0], r_[2], r_[3]))
+        if not ok:
+            continue
+        area = sum(b[2] * b[3] for _, b, _, _, _ in placed)
+        if best is None or area > best[0] * 1.001:
+            best = (area, pt, f, bb, placed)
+    if best is None:
+        return ['[!] 본문 %dpt·그림 %d%% 하한에서도 겹침 없이 안 들어간다 — 바꾸지 않음(나누기 필요)' % (body_min, int(min_scale * 100))]
+    area, pt, f, bb, placed = best
+    # 적용
+    edits = []
+    tseg, mat = _title_materialized(i)
+    tseg = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy="\d+"\s*/>', '<a:off x="%d" y="0"/><a:ext cx="%d" cy="%d"/>' % (tx, tw, t_h), tseg, 1)
+    bpm = re.search(r'<a:bodyPr\b[^>]*?/?>', tseg)
+    if bpm:
+        nt = re.sub(r'\s(?:tIns|bIns)="-?\d+"', '', bpm.group(0))
+        nt = (nt[:-2] + ' tIns="%d" bIns="%d"/>' % (bgap, bgap)) if nt.endswith('/>') else (nt[:-1] + ' tIns="%d" bIns="%d">' % (bgap, bgap))
+        tseg = tseg.replace(bpm.group(0), nt, 1)
+    if new_tsz != tsz:
+        tseg = re.sub(r'(<a:(?:rPr|endParaRPr)\b[^>]*?\bsz=")\d+"', lambda mm: '%s%d"' % (mm.group(1), new_tsz), tseg)
+        tseg = re.sub(r'<a:(rPr|endParaRPr)\b((?:(?!\bsz=)[^>])*?)(/?)>', lambda mm: '<a:%s%s sz="%d"%s>' % (mm.group(1), mm.group(2), new_tsz, mm.group(3)), tseg)
+    edits.append((i['start'], i['end'], tseg))
+    out.append('제목 띠 %.2f" → %.2f"(위에 붙임, 여백 %.2f")%s%s' % (((band['geo'][3] if band else i['h']) / E), t_h / E, band_gap,
+               (' · 제목 %dpt → %dpt' % (tsz // 100, new_tsz // 100)) if new_tsz != tsz else '', ' · 물려받던 제목 적어 넣음' if mat else ''))
+    if band:
+        nb = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="(\d+)" cy="\d+"', lambda mm: '<a:off x="%d" y="0"/><a:ext cx="%s" cy="%d"' % (tx, mm.group(1), t_h), band['seg'], 1)
+        s0 = x.find(band['seg']); edits.append((s0, s0 + len(band['seg']), nb))
+    if body:
+        bx, by, bw, bh = body['geo']
+        nb = body['seg']
+        if f < 0.999:
+            nb = re.sub(r'(<a:(?:rPr|endParaRPr)\b[^>]*?\bsz=")(\d+)"', lambda mm: '%s%d"' % (mm.group(1), int(int(mm.group(2)) * f)), nb)
+        ny = max(by, ry0); ncy = min(bh, ry1 - ny)
+        nb = re.sub(r'(<a:off x="-?\d+" y=")-?\d+("\s*/>\s*<a:ext cx="\d+" cy=")\d+(")', lambda mm: '%s%d%s%d%s' % (mm.group(1), ny, mm.group(2), ncy, mm.group(3)), nb, 1)
+        edits.append((body['start'], body['end'], nb))
+        out.append('본문 "%s" %dpt → %dpt%s' % (body['name'], pmax, pt, (' · %.2f" 내림' % ((ny - by) / E)) if ny != by else ''))
+    for pic, box, k, (ax, ay), dy in placed:
+        gx, gy, gw, gh = pic['geo']
+        def tf(g, sc_font=False):
+            X, Y, CX, CY = g
+            Y += dy
+            return (int(ax + (X - ax) * k), int(ay + (Y - ay) * k), int(CX * k), int(CY * k))
+        nx, ny, nw, nh = box
+        ps = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy="\d+"', '<a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"' % (nx, ny, nw, nh), pic['seg'], 1)
+        edits.append((pic['start'], pic['end'], ps))
+        n_ann = 0
+        for q in ann.get(id(pic), []):
+            qx, qy, qw, qh = tf(q['geo'])
+            qs = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy="\d+"', '<a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"' % (qx, qy, qw, qh), q['seg'], 1)
+            if abs(k - 1) > 1e-3:
+                qs = re.sub(r'(<a:(?:rPr|endParaRPr)\b[^>]*?\bsz=")(\d+)"', lambda mm: '%s%d"' % (mm.group(1), max(800, int(int(mm.group(2)) * k))), qs)
+            edits.append((q['start'], q['end'], qs)); n_ann += 1
+        out.append('그림 "%s" %d%%%s' % (pic['name'], int(round(k * 100)), (' · 주석 %d 같이' % n_ann) if n_ann else ''))
+    if not dry_run:
+        for a, b, sg in sorted(edits, key=lambda e: -e[0]):
+            x = x[:a] + sg + x[b:]
+        open(deck._slide(slide_no), 'w', encoding='utf8').write(x)
     return out
 
 
@@ -3556,17 +3889,32 @@ def title_block(deck, slide_no, band_h=None, prof=None, gap_in=0.1, drop_rule=Fa
     lines = _title_lines(i, sz)
     text_h = int(lines * sz / 100.0 * LINE_FACTOR * i.get('lnspc', 1.0) * 12700)
     target = int(band_h * EMU_IN) if band_h else ((prof or {}).get('h_by_lines', {}).get(lines) or i['h'])
-    ins = max(int(0.05 * EMU_IN), (target - text_h) // 2)
+    x0 = open(deck._slide(slide_no), encoding='utf8').read()
+    band = _band_shape(x0, W)
     base, mat = _title_materialized(i)
+    if band:
+        # v16.33 (발표 K15-3): 따로 그린 띠 도형 — 제목 자리 표시자를 그 띠에 맞추고, 띠 높이 = max(규격, 제목이 들어갈 높이), 도형과 함께
+        bx, by, bw, bh = band['geo']
+        target = max(target, text_h + int(0.1 * EMU_IN))
+        base = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy="\d+"\s*/>',
+                      '<a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/>' % (bx, by, bw, target), base, 1)
+        i = dict(i, x=bx, y=by, w=bw)
+    ins = max(int(0.05 * EMU_IN), (target - text_h) // 2)
     seg = re.sub(r'(<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy=")\d+(")', lambda m: m.group(1) + str(target) + m.group(2), base, 1)
     bp = re.search(r'<a:bodyPr\b[^>]*?/?>', seg)
     if bp:
         tag = bp.group(0); nt = re.sub(r'\s(?:tIns|bIns)="-?\d+"', '', tag)
         nt = (nt[:-2] + ' tIns="%d" bIns="%d"/>' % (ins, ins)) if nt.endswith('/>') else (nt[:-1] + ' tIns="%d" bIns="%d">' % (ins, ins))
         seg = seg.replace(tag, nt, 1)
-    x = open(deck._slide(slide_no), encoding='utf8').read()
-    x = x[:i['start']] + seg + x[i['end']:]
-    if seg != i['seg']:
+    x = x0[:i['start']] + seg + x0[i['end']:]
+    if band:
+        bseg = band['seg']
+        nb = re.sub(r'(<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy=")\d+(")', lambda m: m.group(1) + str(target) + m.group(2), bseg, 1)
+        x = x.replace(bseg, nb, 1)
+        band = dict(band, seg=nb)                 # 아래 '내리기' 에서 띠 도형을 빼려면 바뀐 모양으로 찾는다
+        out.append('띠 도형 "%s" 을 띠로 — 제목 자리 표시자를 그 위치로%s · 띠 %.2f" → %.2f" (도형과 함께)' % (
+            band['name'], '(물려받던 위치 → 적어 넣음)' if mat else '', band['geo'][3] / EMU_IN, target / EMU_IN))
+    elif seg != i['seg']:
         out.append(('물려받던 제목 — 적어 넣음 · ' if mat else '') + '띠 %.2f" → %.2f" · 위/아래 여백 %.2f"' % (i['h'] / EMU_IN, target / EMU_IN, ins / EMU_IN))
     band_bottom = i['y'] + target
     tstart = i['start']
@@ -3591,8 +3939,13 @@ def title_block(deck, slide_no, band_h=None, prof=None, gap_in=0.1, drop_rule=Fa
             segx = body[a:j]
             g = re.search(r'<a:off x="(-?\d+)" y="(-?\d+)"\s*/>\s*<a:ext cx="(\d+)" cy="(\d+)"', segx)
             nm = re.search(r'<p:cNvPr\b[^>]*\bname="([^"]*)"', segx)
+            inh = None
+            if not g and '<p:ph' in segx and not re.search(r'<p:ph\b[^>]*type="(?:title|ctrTitle)"', segx):
+                inh = _ph_geo(deck, slide_no, segx)      # v16.33 (발표 K15-3): 위치를 물려받는 본문 자리 표시자
+            if band and band['seg'] == segx:
+                k = j; continue
             res.append({'tag': tag, 'start': off0 + a, 'end': off0 + j, 'seg': segx, 'name': html.unescape(nm.group(1)) if nm else '',
-                        'geo': tuple(int(v) for v in g.groups()) if g else None,
+                        'geo': tuple(int(v) for v in g.groups()) if g else inh, 'inh': bool(inh),
                         'title': bool(re.search(r'<p:ph\b[^>]*type="(?:title|ctrTitle)"', segx)),
                         'foot': bool(re.search(r'<p:ph\b[^>]*type="(?:dt|ftr|sldNum)"', segx))})
             k = j
@@ -3634,6 +3987,11 @@ def title_block(deck, slide_no, band_h=None, prof=None, gap_in=0.1, drop_rule=Fa
                         note = ' · 아래 넘침만큼 글자 %d%% 로(%s)' % (int(f * 100), '·'.join('%.1fpt' % (v * f / 100.0) for v in sorted(set(szs))))
                 else:
                     note = ' · [!] 그림·도형이 아래로 %.2f" 넘침(크기 그대로)' % ((ny + gh - H) / EMU_IN)
+            if sh.get('inh'):   # 물려받던 위치 — 적어 넣는다
+                xf = '<a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>' % (gx, gy, gw, gh)
+                nseg = re.sub(r'<p:spPr\s*/>', '<p:spPr>%s</p:spPr>' % xf, nseg, 1) if re.search(r'<p:spPr\s*/>', nseg) else \
+                    re.sub(r'(<p:spPr\b[^>]*>)', lambda mm: mm.group(1) + xf, nseg, 1)
+                note += ' · 물려받던 위치 → 적어 넣음'
             nseg = re.sub(r'(<a:off x="-?\d+" y=")-?\d+("\s*/>\s*<a:ext cx="\d+" cy=")\d+(")',
                           lambda mm: '%s%d%s%d%s' % (mm.group(1), ny, mm.group(2), ncy, mm.group(3)), nseg, 1)
             x = x[:sh['start']] + nseg + x[sh['end']:]
@@ -5359,9 +5717,17 @@ def main():
     po.add_argument('--font', default=DEFAULT_FONT, choices=list(FONT_PROFILES))
     po.add_argument('--audience', choices=('internal', 'external'), default=None, help='내부 발표는 환자 정보 검사 생략, 외부는 [!] (v16.9)')
     ex = sub.add_parser('handout'); ex.add_argument('pptx'); ex.add_argument('-o', required=True)
+    fl = sub.add_parser('fit-layout', help='밀집 화면 배치 1단계(v16.33, 발표 K16): 제목 띠 촘촘히·본문 글자·그림+주석 비율')
+    fl.add_argument('pptx'); fl.add_argument('-o', required=True); fl.add_argument('--screens', required=True); fl.add_argument('--dry-run', action='store_true')
+    fl.add_argument('--title-min', type=int, default=20); fl.add_argument('--body-min', type=int, default=14)
+    fl.add_argument('--max-upscale', type=float, default=1.5); fl.add_argument('--min-scale', type=float, default=0.5)
+    fl.add_argument('--render', default=None, help='결과 화면을 PNG 로(이 폴더에) — LibreOffice 가 있는 곳에서')
     hl = sub.add_parser('adopt-house-look', help='가져온 슬라이드의 흰 글자·글상자 제목을 기준 덱 모양으로(v16.31, 발표 K12)')
     hl.add_argument('pptx'); hl.add_argument('-o', required=True); hl.add_argument('--screens', required=True); hl.add_argument('--dry-run', action='store_true')
-    hl.add_argument('--recolor', default='', help='테마 글자색으로 바꿀 색(쉼표, 예: 92D050,FFC000) — 빨강은 넣지 않으면 그대로(v16.32 K14)')
+    hl.add_argument('--recolor', default='', help='테마 글자색으로 바꿀 색(쉼표 — 16진수·white/black 같은 이름·bg1/tx1 같은 테마 색, v16.33 K15-1)')
+    hl.add_argument('--no-auto-light', action='store_true', help='밝은 색 자동 지우기를 끈다 — 목록에 없는 색은 강조로 남긴다(v16.33)')
+    hl.add_argument('--darken-low-contrast', action='store_true', help='배경 대비가 모자란 강조색만 같은 계열의 진한 색으로(v16.33)')
+    hl.add_argument('--min-contrast', type=float, default=3.0)
     hl.add_argument('--title-band', action='store_true', help='제목 띠 + 그 아래 본문(K14): 띠 높이는 --band-height 또는 --like 규격')
     hl.add_argument('--band-height', type=float, default=None); hl.add_argument('--like', type=int, default=None)
     hl.add_argument('--push-content', action='store_true', help='띠 아래 간격보다 위의 상자·그림을 한 덩어리로 내린다(§0-C 예외 — 지정한 화면만)')
@@ -5514,6 +5880,20 @@ def main():
         validate(args.o, args.pptx)
     elif args.cmd == 'handout':
         print(export_notes(Deck.open(args.pptx), args.o))
+    elif args.cmd == 'fit-layout':
+        dk = Deck.open(args.pptx, tempfile_dir('fl')) if args.dry_run else Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]
+        for pos in sorted(_parse_screens(args.screens, len(order))):
+            for c in fit_layout(dk, order[pos - 1], title_min=args.title_min, body_min=args.body_min, max_up=args.max_upscale, min_scale=args.min_scale):
+                print('화면 %d: %s' % (pos, c))
+        target = os.path.join(tempfile_dir('flo'), 'fit.pptx') if args.dry_run else args.o
+        dk.save(target)
+        if args.render:
+            try:
+                render(target, args.render)
+                print('렌더 → %s' % args.render)
+            except Exception as e:
+                print('[참고] 렌더 못 함(%s) — LibreOffice 가 있는 곳에서' % type(e).__name__)
+        print('(dry-run — 저장 안 함)' if args.dry_run else '→ %s' % args.o)
     elif args.cmd == 'adopt-house-look':
         # dry-run 도 사본 덱에 실제로 해 본다(제목을 옮긴 뒤의 띠·본문을 보려면) — 저장만 하지 않는다
         dk = Deck.open(args.pptx, tempfile_dir('ahl')) if args.dry_run else Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]
@@ -5522,7 +5902,8 @@ def main():
         if args.title_band and not (args.band_height or bprof):
             sys.exit('--title-band 에는 --band-height 인치 또는 --like 기준 화면이 필요하다')
         for pos in sorted(_parse_screens(args.screens, len(order))):
-            for c in adopt_house_look(dk, order[pos - 1], recolor=rec):
+            for c in adopt_house_look(dk, order[pos - 1], recolor=rec, auto_light=not args.no_auto_light,
+                                      darken=args.darken_low_contrast, min_contrast=args.min_contrast):
                 print('화면 %d: %s' % (pos, c))
             if args.title_band:
                 for c in title_block(dk, order[pos - 1], band_h=args.band_height, prof=bprof, gap_in=args.gap, drop_rule=args.drop_title_rule,
