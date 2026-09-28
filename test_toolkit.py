@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.36'
+EXPECT_VERSION = '16.37'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -2061,6 +2061,50 @@ def t_v1636_keep_arrangement_success_regression():
     bh = int(re.search(r'name="Body".*?<a:ext cx="\d+" cy="(\d+)"', x, re.S).group(1))
     assert bh < int(3.5 * E), bh                                                 # 본문 상자 높이가 글 높이로 줄었다
     d.save('/tmp/k20o.pptx'); assert T.validate('/tmp/k20o.pptx', path)
+
+
+def t_v1637_box_to_memo_side_decision_wrap():
+    from pptx import Presentation
+    from pptx.util import Inches, Pt, Emu
+    from PIL import Image
+    E = T.EMU_IN
+    # K22-2: 단어 단위 줄바꿈 — 칸보다 긴 단어는 줄을 따로 차지, 좁을수록 글자 수 모델보다 줄이 많다
+    assert T._wrap_lines('aaaa bbbb cccc', 10, 10 * 12700 * 4.6, 10 * 12700 * 4.6) == 2   # 0.5em 모델: 단어 2em, 한 줄 4.6em → 둘씩
+    assert T._wrap_lines('averyveryverylongword', 10, 12700 * 20, 12700 * 20) >= 5         # 한 단어 5.25em·칸 2em
+    # 들여쓰기(marL)·줄 간격 150% 가 높이에 든다
+    seg0 = '<p:sp><p:txBody><a:bodyPr/><a:lstStyle/><a:p><a:r><a:rPr sz="1800"/><a:t>word word word word</a:t></a:r></a:p></p:txBody></p:sp>'
+    seg1 = seg0.replace('<a:p><a:r>', '<a:p><a:pPr marL="685800" indent="-342900"><a:lnSpc><a:spcPct val="150000"/></a:lnSpc></a:pPr><a:r>')
+    d0 = T.Deck.open(SRC, wd('k22m'))
+    m0, m1 = T._para_metrics(d0, seg0)[0], T._para_metrics(d0, seg1)[0]
+    assert (m0['marL'], m0['ln_pct']) == (0, 1.0) and (m1['marL'], m1['indent'], m1['ln_pct']) == (685800, -342900, 1.5), (m0, m1)
+    # K22-1: 본문이 위에 전폭·그림이 그 아래면 auto 가 옆 배치를 고르지 않는다 / K21: 출처 글상자를 노트 메모로
+    img = os.path.join(TMP, 'k22.png'); Image.new('RGB', (300, 180), 'gray').save(img)
+    prs = Presentation(); prs.slide_width, prs.slide_height = Inches(10), Inches(7.5)
+    sl = prs.slides.add_slide(prs.slide_layouts[5]); sl.shapes.title.text_frame.text = 'Endoleak types'
+    b = sl.shapes.add_textbox(Inches(0.02), Inches(1.4), Inches(9.97), Inches(3.23)); b.name = 'TextBox 4'
+    tf = b.text_frame; tf.word_wrap = True; tf.text = 'Type I endoleak'
+    for k in range(3):
+        pp = tf.add_paragraph(); pp.text = 'Leakage from the attachment sites of stent-graft and native artery %d' % k
+    for pp in tf.paragraphs:
+        for rr in pp.runs:
+            rr.font.size = Pt(18)
+    pic = sl.shapes.add_picture(img, Inches(5.5), Inches(4.2), Inches(4.0), Inches(2.4)); pic.name = 'Pic 1'
+    memo = sl.shapes.add_textbox(Inches(0.3), Inches(6.9), Inches(3.0), Inches(0.3)); memo.name = 'TextBox 6'; memo.text_frame.text = '221122 source memo'
+    path = os.path.join(TMP, 'k22.pptx'); prs.save(path)
+    d = T.Deck.open(path, wd('k22')); sn = [x for x, _, _ in d.order() if x][0]
+    r = T.fit_layout(d, sn)
+    assert not any('옆 배치' in c for c in r), r                                   # 제자리(위아래) 배치
+    x = open(d._slide(sn), encoding='utf8').read()
+    bw = int(re.search(r'name="TextBox 4".*?<a:ext cx="(\d+)"', x, re.S).group(1))
+    assert bw == int(9.97 * E), bw                                               # 본문 폭 그대로(좁은 칸으로 밀지 않음)
+    nm, t, m0_, m1_ = d.box_to_memo(sn, '221122')
+    assert (nm, t, m0_, m1_) == ('TextBox 6', '221122 source memo', 0, 1) and 'TextBox 6' not in open(d._slide(sn), encoding='utf8').read()
+    assert d.notes_sections(sn)[2] == ['221122 source memo']
+    try:
+        d.box_to_memo(sn, 'no such text'); assert False                          # 맞는 상자가 없으면 거부
+    except ValueError:
+        pass
+    d.save('/tmp/k22o.pptx'); assert T.validate('/tmp/k22o.pptx', path)
 
 
 def t_v1619_da_after_vowel():

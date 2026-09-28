@@ -1,4 +1,4 @@
-# LITERATURE — 논문 원문 받기·변환·찾기 규약 (literature.py v0.3)
+# LITERATURE — 논문 원문 받기·변환·찾기 규약 (literature.py v0.4)
 
 > Cowork 「문헌」 역할. 원문 검증(리뷰어)과 분야 말뭉치(저자, 다음 단계)에 쓸 논문 원문을 모은다.
 > Cowork 는 찾기·받기(·변환·위치 찾기)까지, **판정(이 문장이 원문과 맞는가)은 리뷰어** 가 한다(사용자 09-28).
@@ -6,6 +6,9 @@
 > v0.2: 병원 컴퓨터 시험 두 번(09-28, 리뷰어 회신 4건 + 문헌 Cowork 회신 v2)에서 드러난 환경에 맞춰 고쳤다 — Windows Cowork 는 PC 에서
 > 셸이 돌지 않고(클라우드 작업공간 — PDF 를 올려 처리하고 결과만 되쓴다, 파일당 20 MB 이하), Drive 동기화 가상 드라이브(`G:\`) 연결은 거절,
 > **바탕화면 로컬 폴더 `문헌작업` 은 연결된다**. 앱 내장 브라우저로 무료 공개 논문(출판사)은 받아지고, PubMed·PMC·Wiley 는 봇 확인에서 막힌다.
+> v0.4: 끝까지 한 번 통과(리뷰어 채점 — paper.md 만으로 한 판정이 PDF 로 한 판정과 같다, 2편). 병원 컴퓨터는 **당직실 공용 PC** — 사용자가 작업 뒤
+> 로컬 파일을 지우고 로그아웃하며, `문헌작업` 은 Drive 데스크톱으로 동기화한다. 그래서 **정본은 Drive `문헌 보관소`(PDF 포함, 사용자 결정)**.
+> 브라우저보다 먼저 **공식 API**(Unpaywall·Europe PMC — 캡차 없음)로 OA 를 찾는다(리뷰어 제안).
 
 ## 0. 누가 무엇을
 
@@ -13,11 +16,12 @@
 |---|---|---|
 | 1. 지시 | 리뷰어 대화창 | 참고문헌과 "원문으로 확인할 주장" 을 §1 모양의 md 로 `Claude 작업/문헌` 에 |
 | 2. 받을 목록 | Cowork(클라우드 셸) | `literature.py plan` → 받을 목록(찾을 곳 순서·저장 이름) |
+| 2b. 공식 API | Cowork(클라우드 셸) | `literature.py oa --email … --fetch` → DOI 마다 Unpaywall(OA 사본 위치)·Europe PMC(전문 XML) 조회, OA 전문 XML 은 받아 md(절 표지)로 보관소에. **남은 것만** 3a·3b 로 |
 | 3a. 받기 — 무료 공개 | Cowork(앱 내장 브라우저) | 목록대로 **한 편씩** 받아 병원 컴퓨터 `C:\Users\user\Desktop\문헌작업\{원고}` 에 저장 이름으로(§2) |
 | 3b. 받기 — 구독·봇 확인 사이트 | **사용자**(평소 브라우저, 병원 구독) | Cowork 가 멈춘 문헌(목록의 남은 것)을 받아 같은 폴더에 — 이름은 아무렇게나(짝짓기는 DOI·제목) |
 | 4. 검사·변환·위치 찾기 | Cowork(클라우드 셸) | `check`·`ingest`·`locate` — 결과(보관소·문헌목록·주장위치)는 `문헌작업` 에 되쓴다 |
-| 5. Drive 로 | Cowork | md(`paper.md`·`meta.md`·INDEX·문헌목록·주장위치·받은파일검사)를 Drive `문헌 보관소/{DOI}/`·`Claude 작업/문헌/{원고}` 에 올린다. **PDF 는 병원 컴퓨터 `문헌작업` 에 남긴다** |
-| 6. 검증 | 리뷰어 대화창 | **paper.md 로 판정**(기본, v0.3). 수식·그림 수치·보충자료, 또는 표 수치 하나가 판정을 가를 때만 리뷰어가 그 문헌의 PDF 를 요청 → 사용자가 그 PDF 하나를 `Claude 작업/문헌/{원고}/inbox` 로(경로 (b) — 예외). 못 받은 문헌은 REVIEW_PROTOCOL 의 입수 불가 문헌 |
+| 5. Drive 로 | Cowork(동기화) | 보관소(`paper.pdf`·`paper.md`·`meta.md`)·INDEX 를 Drive **`문헌 보관소/{DOI}/`**, 원고별 md(문헌목록·주장위치·받은파일검사)를 `Claude 작업/문헌/{원고}` 에. PDF 도 `문헌 보관소` 에(사용자 결정 09-28 — 공용 PC 의 로컬 파일은 지운다) |
+| 6. 검증 | 리뷰어 대화창 | **paper.md 로 판정**(기본). 수식·그림 수치·보충자료, 또는 표 수치 하나가 판정을 가를 때만 같은 폴더의 `paper.pdf` 를 Drive 로 직접(경로 (b) — 예외). 못 받은 문헌은 REVIEW_PROTOCOL 의 입수 불가 문헌. **리뷰어는 `문헌 보관소` 만 본다** — Drive 검색에 동기화된 `문헌작업` 사본이 같이 나와도 쓰지 않는다 |
 
 - **v0.3 기본 경로 — md 로 판정**(리뷰어 시험 09-28): 같은 2단 조판 논문을 paper.md 와 Drive 로 PDF 직접 읽기로 나란히 채점했더니 paper.md 는 단 순서·표
   셀 순서가 제자리였고, Drive 직접 읽기는 좌우 단이 섞이고 표 셀이 행을 넘었다. 표본이 1편(Frontiers)이라 다른 조판(Wiley·Elsevier)은 확인 중.
@@ -27,7 +31,7 @@
 
 - 구독 논문은 **사용자가 받는다**(3b) — Cowork 는 봇 확인을 풀지 않고, 사람이 앱 브라우저에서 확인을 한 번 통과시켜 Cowork 가 이어 받게 하는
   방법(가능은 하다)은 쓰지 않는다: 같은 사이트에 자동 요청을 이어 가는 셈이라 출판사 약관·기관 차단 위험이 크다(코드 판단 09-28 — 바꾸려면 사용자 결정).
-- PDF 는 병원 컴퓨터(`문헌작업`)에, 리뷰어가 요청한 것만 Drive inbox 에. `문헌 보관소`(Drive)에는 md 만 — Cowork 가 PDF 를 Drive 로 올리지 못한다(크기).
+- 공용 PC: 작업이 끝나면 사용자가 `문헌작업` 의 로컬 파일을 지운다 — 그 전에 Drive 동기화가 끝났는지(`문헌 보관소` 에 PDF·md 가 보이는지) 확인.
 
 ## 1. 리뷰어의 검증 지시 (md)
 
@@ -76,6 +80,7 @@ rm -rf ~/rct && git clone -q --depth 1 https://github.com/Ananta9701/rad-claude-
 python3 -c "import pypdf" 2>/dev/null || pip install --user pypdf || git clone -q --depth 1 https://github.com/py-pdf/pypdf ~/pypdf
 python3 ~/rct/claim_graph.py selfcheck --dir ~/rct --role 문헌 --tests
 python3 ~/rct/literature.py plan   "<지시.md>" --out "<작업폴더>" [--store "<문헌 보관소>"]
+python3 ~/rct/literature.py oa     "<지시.md>" --email "<사용자 이메일>" --store "<보관소>" --out "<작업폴더>" --fetch   # 이메일은 지시·셸에서만(공개 저장소 X)
 python3 ~/rct/literature.py check  "<지시.md>" --inbox "<받은 폴더>" --store "<보관소>" --out "<작업폴더>"   # ingest 뒤에 한 번 더 — 쪽 표지 수 대조"
 python3 ~/rct/literature.py ingest "<지시.md>" --inbox "<받은 폴더>" --store "<문헌 보관소>" --out "<작업폴더>"
 python3 ~/rct/literature.py locate "<지시.md>" --store "<문헌 보관소>" --out "<작업폴더>"
@@ -84,7 +89,11 @@ python3 ~/rct/literature.py locate "<지시.md>" --store "<문헌 보관소>" --
   받지 않는다(plan 이 "있음", ingest 가 인용 줄만). 맨 위 `INDEX.md`.
 - `locate` 는 주장마다 **원문 전체에서 0회인 찾을 말**(원고의 말이 원문에 없다 — 가장 강한 신호), 찾을 말이 가장 많이 든 문단 3개,
   그리고 **찾을 말별 첫 자리**(요약 문단 편향을 피해)를 쪽 표지와 함께 적는다. **판정은 하지 않는다.**
-- 산출: `{원고}_받을목록.md`·`{원고}_받은파일검사.md`·`{원고}_문헌목록.md`·`{원고}_주장위치.md`. `--store` 는 `문헌작업\보관소`(로컬) —
+- 산출: `{원고}_받을목록.md`·`{원고}_OA조회.md`·`{원고}_받은파일검사.md`·`{원고}_문헌목록.md`·`{원고}_주장위치.md`.
+- `oa` 는 초당 1 요청. Europe PMC 전문 XML 은 표가 행 구조로 오고 2단·첨자 문제가 없다 — 대신 쪽 표지가 없고(절 표지 `[§ …]`) 게재 PDF 와 판이 다를
+  수 있어 meta 에 출처를 적는다. 출판사 TDM(구독 전문 API)은 기관 계약 확인 전이라 쓰지 않는다.
+- `locate` 의 0회 줄: 밑줄·하이픈·공백·마침표를 뺀 꼴로 다시 세어 나오면 "표기 차이로 0회일 수 있음"(첨자 `F_ISF` 가 원문에 `F ISF`). `check`·meta 는
+  수식 글꼴 치환 흔적(`¼ þ ð Þ` 5회 이상)을 알린다 — 그 문헌의 수식·표 부호는 PDF 로. `--store` 는 `문헌작업\보관소`(로컬) —
   끝나면 md 만 Drive `문헌 보관소`(같은 폴더 구조)와 `Claude 작업/문헌/{원고}` 로 올린다(§0 5단계).
 - `paper.md` 에서는 쪽마다 붙는 출판사 다운로드 안내 줄(기관 이름·날짜)을 뺀다 — 뺀 줄 수는 머리에.
 

@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.36'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.37'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -1318,6 +1318,36 @@ class Deck:
         x, a, b = self._find_para(slide_no, key, shape)
         open(self._slide(slide_no), 'w', encoding='utf8').write(x[:b] + self.runs_xml(runs, **kw) + x[b:])
         return True
+
+    def box_to_memo(self, slide_no, match, dry_run=False):
+        """v16.37 (발표 K21): 글에 match 가 든 글상자(자리 표시자 아님) **하나** 의 글을 노트 '기존 메모' 구역 끝에 한 줄로 더하고(구역이
+        없으면 표지부터 — 대본·참고는 그대로) 상자를 지운다(delete_shape 규칙: 정확히 하나일 때만). 슬라이드에서 그림을 가리던 출처
+        메모를 정보는 남기고 치우는 용도. 반환 (상자 이름, 옮긴 글, 메모 줄 수 전, 후)."""
+        x = open(self._slide(slide_no), encoding='utf8').read()
+        hits = []
+        for m in re.finditer(r'<p:sp>(?:(?!<p:sp>).)*?</p:sp>', x, re.S):
+            seg = m.group(0)
+            if '<p:ph' in seg:
+                continue
+            parts = [html.unescape(''.join(_AT.findall(q))).strip() for q in re.findall(r'<a:p>(.*?)</a:p>', seg, re.S)]
+            t = ' / '.join(q for q in parts if q)
+            if match in t:
+                nm = re.search(r'<p:cNvPr\b[^>]*\bname="([^"]*)"', seg)
+                hits.append((html.unescape(nm.group(1)) if nm else '', t))
+        if len(hits) != 1:
+            raise ValueError('box-to-memo: "%s" 가 든 글상자 %d개 — 정확히 하나여야 한다%s' % (
+                match, len(hits), (': ' + ', '.join('"%s"' % h[0] for h in hits[:5])) if hits else ''))
+        nm, t = hits[0]
+        before = len(self.notes_sections(slide_no)[2])
+        if dry_run:
+            return nm, t, before, before + 1
+        if self.notes_no(slide_no) is None:
+            self._create_notes(slide_no)
+        p, d, a, e = self._notes_body(slide_no)
+        has = any(_is_memo_sep(l) for l in self.notes(slide_no))
+        open(p, 'w', encoding='utf8').write(d[:e] + notes_xml(([NOTES_SEP_MEMO] if not has else []) + [t]) + d[e:])
+        self.delete_shape(slide_no, nm, must_contain=match)
+        return nm, t, before, len(self.notes_sections(slide_no)[2])
 
     def fit_corner_boxes(self, slide_no, tol_in=0.02, pad=0.15, dry_run=False, font_path=None):
         """v16.27 (발표 K7): 슬라이드 가장자리(위·아래·왼쪽·오른쪽, 허용 tol_in 인치)에 붙은 채우기·테두리 없는 글상자를, 붙은 가장자리를
@@ -3683,6 +3713,65 @@ def _ph_geo(deck, slide_no, seg):
     return None
 
 
+def _wrap_lines(text, size_pt, first_w, rest_w, font_path=None):
+    """v16.37 (발표 K22-2): 단어 단위 줄바꿈 줄 수 — 한 줄에 안 드는 긴 단어는 자기 폭만큼 줄을 차지한다(쪼개지 않는 PowerPoint 처럼
+    다음 줄로 넘기고, 그래도 넘치면 글자 단위로 나뉜다). 한글은 글자마다 끊을 수 있다."""
+    emu = lambda pt: pt * 12700
+    toks = re.findall(r'[\uac00-\ud7a3]|[^\s\uac00-\ud7a3]+', text)
+    if not toks:
+        return 1
+    sp = emu(_text_width_pt(' ', size_pt, font_path)) * 0.6
+    lines, cur, cap = 1, 0.0, max(1.0, first_w)
+    for t in toks:
+        w = emu(_text_width_pt(t, size_pt, font_path))
+        add = w if cur == 0 else w + (0 if re.match(r'[\uac00-\ud7a3]', t) else sp)
+        if cur + add <= cap:
+            cur += add; continue
+        if cur > 0:
+            lines += 1; cap = max(1.0, rest_w); cur = 0.0
+        while w > cap:                       # 칸보다 긴 한 단어
+            w -= cap; lines += 1
+        cur = w
+    return lines
+
+
+def _para_metrics(deck, seg, default_sz=1800):
+    """글상자 문단마다 {text, sz(pt), marL, indent(EMU), ln_pct, ln_pts, bef, aft(pt)} — 문단 pPr → 도형 lstStyle 같은 수준 → 발표 기본 글 스타일."""
+    lst = (re.search(r'<a:lstStyle>(.*?)</a:lstStyle>', seg, re.S) or [None, ''])[1]
+    pres = os.path.join(deck.dir, 'ppt/presentation.xml')
+    dts = (re.search(r'<p:defaultTextStyle>(.*?)</p:defaultTextStyle>', open(pres, encoding='utf8').read(), re.S) or [None, ''])[1] if os.path.exists(pres) else ''
+    def lvl_attr(src, lv, attr):
+        m = re.search(r'<a:lvl%dpPr\b([^>]*)' % (lv + 1), src or '')
+        mm = re.search(r'\b%s="(-?\d+)"' % attr, m.group(1)) if m else None
+        return int(mm.group(1)) if mm else None
+    def lvl_ln(src, lv):
+        m = re.search(r'<a:lvl%dpPr\b[^>]*>(.*?)</a:lvl%dpPr>' % (lv + 1, lv + 1), src or '', re.S)
+        return m.group(1) if m else ''
+    out = []
+    for pm in re.findall(r'<a:p>(.*?)</a:p>', seg, re.S):
+        t = html.unescape(''.join(_AT.findall(pm)))
+        szs = [int(v) for v in re.findall(r'<a:(?:rPr|endParaRPr)\b[^>]*\bsz="(\d+)"', pm)] or [default_sz]
+        ppr_tag = (re.search(r'<a:pPr\b[^>]*', pm) or [''])[0]
+        ppr_body = (re.search(r'<a:pPr\b[^>]*>(.*?)</a:pPr>', pm, re.S) or [None, ''])[1]
+        lv = int((re.search(r'\blvl="(\d)"', ppr_tag) or [0, 0])[1])
+        def pick(attr):
+            m = re.search(r'\b%s="(-?\d+)"' % attr, ppr_tag)
+            if m:
+                return int(m.group(1))
+            for src in (lst, dts):
+                v = lvl_attr(src, lv, attr)
+                if v is not None:
+                    return v
+            return 0
+        lnsrc = ppr_body or lvl_ln(lst, lv) or lvl_ln(dts, lv)
+        pct = re.search(r'<a:lnSpc><a:spcPct val="(\d+)"', lnsrc); pts = re.search(r'<a:lnSpc><a:spcPts val="(\d+)"', lnsrc)
+        bef = re.search(r'<a:spcBef><a:spcPts val="(\d+)"', lnsrc); aft = re.search(r'<a:spcAft><a:spcPts val="(\d+)"', lnsrc)
+        out.append({'text': t, 'sz': max(szs) / 100.0, 'marL': pick('marL'), 'indent': pick('indent'),
+                    'ln_pct': int(pct.group(1)) / 100000.0 if pct else 1.0, 'ln_pts': int(pts.group(1)) / 100.0 if pts else None,
+                    'bef': int(bef.group(1)) / 100.0 if bef else 0.0, 'aft': int(aft.group(1)) / 100.0 if aft else 0.0})
+    return out
+
+
 def _top_shapes(x):
     """spTree 바로 아래 도형들(그룹은 한 덩어리) — [{'tag','start','end','seg','name','geo'}]."""
     tree = re.search(r'<p:spTree>(.*)</p:spTree>', x, re.S)
@@ -3823,21 +3912,21 @@ def fit_layout(deck, slide_no, title_min=20, body_min=14, body_max=None, max_up=
     pmax = (max(b_szs) if b_szs else b_base) // 100
     bp = (re.search(r'<a:bodyPr\b[^>]*', body['seg']) or [''])[0] if body else ''
     l_, r_, t_, b_ = (int((re.search(r'\b%s="(-?\d+)"' % k, bp) or [0, d])[1]) for k, d in (('lIns', 91440), ('rIns', 91440), ('tIns', 45720), ('bIns', 45720)))
-    paras = []
-    if body:
-        for pm in re.findall(r'<a:p>(.*?)</a:p>', body['seg'], re.S):
-            t = html.unescape(''.join(_AT.findall(pm)))
-            szs = [int(v) for v in re.findall(r'<a:(?:rPr|endParaRPr)\b[^>]*\bsz="(\d+)"', pm)] or [pmax * 100]
-            paras.append((t, max(szs) / 100.0))
+    paras = _para_metrics(deck, body['seg'], pmax * 100) if body else []
     def text_h(pt, bw):
+        # v16.37 (발표 K22-2): 단어 단위 줄바꿈, 문단 들여쓰기(marL·indent — 글머리표 자리), 줄 간격(lnSpc %·pt), 앞뒤 간격 —
+        # 전에는 글자 수 ÷ 폭 모델이라 좁은 칸(3.32")에서 5.13" 로 추정했는데 실제는 슬라이드 아래로 한참 넘쳤다
         f = pt / float(pmax)
         hh = 0.0
-        for t, ps0 in paras:
-            ps = ps0 * f
-            if not t.strip():
-                hh += ps * LINE_FACTOR * 12700 * 0.5; continue
-            n = _est_lines_font(t, ps, bw - l_ - r_, fp) if fp else _est_lines(t, ps, bw - l_ - r_)
-            hh += max(1, n) * ps * LINE_FACTOR * 12700
+        for q in paras:
+            ps = q['sz'] * f
+            line_h = (q['ln_pts'] * f if q['ln_pts'] else ps * LINE_FACTOR * q['ln_pct']) * 12700
+            hh += (q['bef'] + q['aft']) * f * 12700
+            if not q['text'].strip():
+                hh += line_h * 0.5; continue
+            avail = bw - l_ - r_ - q['marL']
+            first = avail - q['indent']
+            hh += _wrap_lines(q['text'], ps, first, avail, fp) * line_h
         return int(hh * text_margin) + t_ + b_
     cite_boxes, cy_ = [], H - int(margin * E)
     for q in sorted(cites, key=lambda q: -q['geo'][1]):          # 아래에 있던 것부터 우하단에 쌓는다(K19-2, §0)
@@ -3846,8 +3935,11 @@ def fit_layout(deck, slide_no, title_min=20, body_min=14, body_max=None, max_up=
         cite_boxes.append((q, (W - int(margin * E) - qw, cy_, qw, qh)))
         cy_ -= int(0.03 * E)
     obst0 = [q['geo'] for q in fixed if not any(_inter(q['geo'], p_['geo']) for p_ in pics)] + ([lab_box] if lab_box else []) + [b for _, b in cite_boxes]
+    # v16.37 (발표 K22-1): auto 는 그림이 본문 **옆**(오른쪽이면서 그림 윗끝이 본문 상자의 위쪽 60% 안)일 때만 옆 배치 —
+    # 본문이 위에 전폭이고 그림이 그 아래인 화면(인터벤션 27)을 옆 배치로 골라 본문을 좁은 칸에 밀어 넣었다
     side = bool(pics and body) and (arrange == 'side' or (arrange == 'auto' and all(
-        p_['geo'][0] + p_['geo'][2] / 2.0 > body['geo'][0] + body['geo'][2] / 2.0 for p_ in pics)))
+        p_['geo'][0] + p_['geo'][2] / 2.0 > body['geo'][0] + body['geo'][2] / 2.0 and p_['geo'][1] < body['geo'][1] + 0.6 * body['geo'][3]
+        for p_ in pics)))
     groups = [(p_, ann.get(id(p_), [])) for p_ in pics]
     plan = None                    # {'body': (x,y,w,h,pt), 'pics': [(pic, k, (ax,ay), (dx,dy))]}
     if side:
@@ -5890,6 +5982,9 @@ def main():
     hl.add_argument('--push-content', action='store_true', help='띠 아래 간격보다 위의 상자·그림을 한 덩어리로 내린다(§0-C 예외 — 지정한 화면만)')
     hl.add_argument('--drop-title-rule', action='store_true', help='띠 안 가로선(옛 제목 밑줄) 하나를 지운다 — 둘 이상이면 알림')
     hl.add_argument('--gap', type=float, default=0.1); hl.add_argument('--min-pt', type=int, default=12)
+    bm = sub.add_parser('box-to-memo', help='글상자를 노트 기존 메모 구역으로 옮기고 지운다(v16.37, 발표 K21)')
+    bm.add_argument('pptx'); bm.add_argument('-o', required=True); bm.add_argument('--screens', required=True); bm.add_argument('--match', required=True)
+    bm.add_argument('--dry-run', action='store_true')
     tb = sub.add_parser('title-bands', help='제목 띠가 필요 높이보다 낮으면 키운다 — Google Slides 안전(v16.28, 발표 K8)')
     tb.add_argument('pptx'); tb.add_argument('-o', required=True); tb.add_argument('--screens', default=None); tb.add_argument('--dry-run', action='store_true')
     tb.add_argument('--shrink-bottom-inset', nargs='?', const=0.1, type=float, default=None,
@@ -6084,6 +6179,18 @@ def main():
         if not args.dry_run:
             dk.save(args.o)
         print('(dry-run — 저장 안 함)' if args.dry_run else '→ %s' % args.o)
+    elif args.cmd == 'box-to-memo':
+        dk = Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]; bad = 0
+        for pos in sorted(_parse_screens(args.screens, len(order))):
+            try:
+                nm, t, b0, b1 = dk.box_to_memo(order[pos - 1], args.match, dry_run=args.dry_run)
+                print('화면 %d: "%s" → 기존 메모 끝("%s") · 메모 %d → %d줄' % (pos, nm, t[:60], b0, b1))
+            except ValueError as e:
+                bad += 1; print('[!] 화면 %d: %s' % (pos, e))
+        if not args.dry_run and not bad:
+            dk.save(args.o)
+        print('(dry-run — 저장 안 함)' if args.dry_run else ('[!] 멈춤 — 저장 안 함' if bad else '→ %s' % args.o))
+        sys.exit(1 if bad else 0)
     elif args.cmd == 'title-bands':
         dk = Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]
         want = _parse_screens(args.screens, len(order)) if args.screens else set(range(1, len(order) + 1))

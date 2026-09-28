@@ -9,6 +9,7 @@
     python3 literature.py ingest 지시.md --inbox 받은폴더 --store 보관소 --out 작업폴더
     python3 literature.py locate 지시.md --store 보관소 --out 작업폴더 [--top 3]
     python3 literature.py check  지시.md --inbox 받은폴더 [--store 보관소] [--out 작업폴더]   # 받은 파일 검사(%PDF·쪽 수·DOI·글자층·md 쪽 표지)
+    python3 literature.py oa     지시.md --email 주소 --store 보관소 --out 작업폴더 [--fetch]  # v0.4: 공식 API(Unpaywall·Europe PMC)로 OA 찾기·전문 XML
 """
 import argparse
 import datetime
@@ -19,7 +20,7 @@ import shutil
 import sys
 import unicodedata
 
-__version__ = '0.3'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.4'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
 
 DOI_RE = re.compile(r'\b(10\.\d{4,9}/[^\s"<>]+)', re.I)
 PMID_RE = re.compile(r'\bPMID:?\s*(\d{5,9})\b', re.I)
@@ -200,6 +201,14 @@ def _strip_boiler(t):
     return re.sub(r'\n{3,}', '\n\n', t).strip(), n
 
 
+MATHFONT = re.compile(r'[¼þðÞ]')
+
+
+def mathfont_count(text):
+    """v0.4 (리뷰어 09-28): 수식 글꼴이 다른 글자로 나오는 흔적(= → ¼, + → þ, 괄호 → ð Þ — Wiley 조판) 수."""
+    return len(MATHFONT.findall(text or ''))
+
+
 def _tokens(s):
     return {w for w in re.findall(r'[0-9a-z가-힣]{3,}', _nfc(s).lower())}
 
@@ -272,10 +281,11 @@ def ingest(instr_path, inbox, store, out, stream=sys.stdout):
             open(os.path.join(dd, 'paper.md'), 'w', encoding='utf8').write(md)
             open(os.path.join(dd, 'meta.md'), 'w', encoding='utf8').write(
                 '<!-- lit: doi=%s pages=%d blank=%d sha=%s -->\n# %s\n\n- DOI: %s\n- 첫 저자·해: %s %s\n- 참고문헌: %s\n- 받은 날: %s\n- 원 파일 이름: `%s`\n'
-                '- 원 PDF: sha256 앞 16자 `%s` · %d쪽 · 글자층 없는 쪽 %d · paper.md 쪽 표지 %d(= 쪽 수여야 한다)\n' % (
+                '- 원 PDF: sha256 앞 16자 `%s` · %d쪽 · 글자층 없는 쪽 %d · paper.md 쪽 표지 %d(= 쪽 수여야 한다)\n%s' % (
                     doi or '-', len(pages), blank, hashlib.sha256(open(path, 'rb').read()).hexdigest()[:16], r['title'] or r['raw'][:80],
                     doi or '—', r['author'], r['year'], r['raw'][:300], datetime.date.today().isoformat(), f,
-                    hashlib.sha256(open(path, 'rb').read()).hexdigest()[:16], len(pages), blank, md.count('\n[p.')))
+                    hashlib.sha256(open(path, 'rb').read()).hexdigest()[:16], len(pages), blank, md.count('\n[p.'),
+                    ('- **수식 글꼴 치환 있음**(¼ þ ð Þ %d회) — 수식·수식 글꼴로 조판된 표의 부호는 PDF 로 확인\n' % mathfont_count(md)) if mathfont_count(md) >= 5 else ''))
             if doi:
                 by_doi[doi] = key
         _cite_note(store, key, name, r['n'])
@@ -375,6 +385,10 @@ def locate(instr_path, store, out, top=3, stream=sys.stdout):
             # v0.2 (리뷰어 09-28): 원문 전체에서 한 번도 안 나온 말 — 원문 검증에서 가장 강한 신호
             whole = re.sub(r'\s+', ' ', md)
             zero = [t for t, p in pats if not p.search(whole)]
+            # v0.4 (리뷰어 09-28): 아래첨자가 떨어져 나온 기호(F_ISF → 'F ISF')가 0회로 잡힌 거짓 양성 — 밑줄·하이픈·공백·마침표를 뺀 꼴로 다시 센다
+            flat_all = re.sub(r'[\s_\-‐–.]+', '', _nfc(md)).lower()
+            loose = {t: flat_all.count(re.sub(r'[\s_\-‐–.]+', '', _nfc(t)).lower()) for t in zero}
+            zero = ['%s(표기 차이로 0회일 수 있음 — 밑줄·하이픈·공백 무시하면 %d회)' % (t, loose[t]) if loose[t] else t for t in zero]
             order = list(cands)
             cands.sort(key=lambda z: -z[0])
             L.append('- 문헌 %d `%s/paper.md`:' % (n, key))
@@ -436,6 +450,9 @@ def check(instr_path, inbox, out=None, stream=sys.stdout, store=None):
             rows.append((f, '△', '%d쪽 · 앞쪽에 DOI 가 없다 — 제목으로 확인' % len(pages)))
         else:
             note = (' · 글자층 없는 쪽 %d' % blank) if blank else ''
+            mf = mathfont_count(' '.join(t for _, _, t in pages))
+            if mf >= 5:
+                note += ' · **수식 글꼴 치환 %d회 — 수식·표 부호는 PDF 로**' % mf
             # v0.3 (리뷰어 09-28): 보관소 paper.md 의 쪽 표지 수 = PDF 쪽 수 — md 가 잘리면 '0회' 판정이 거짓이 된다
             if store and r['doi']:
                 by_doi, _ = store_index(store)
@@ -456,6 +473,127 @@ def check(instr_path, inbox, out=None, stream=sys.stdout, store=None):
     return rows
 
 
+# ─────────────────────────── 공식 API — Unpaywall · Europe PMC (v0.4) ───────────────────────────
+UA = 'rad-claude-tools literature.py (research verification; one request per second)'
+
+
+def _get(url, timeout=30):
+    import urllib.request
+    req = urllib.request.Request(url, headers={'User-Agent': UA})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
+def jats_to_md(xml_bytes):
+    """Europe PMC 전문 XML(JATS) → md: 제목·초록·절 표지 `[§ 절 이름]`·문단·표(행마다 칸을 ' | ' 로)·그림 설명. 수식은 [수식]."""
+    import xml.etree.ElementTree as ET
+    root = ET.fromstring(xml_bytes)
+    txt = lambda e: re.sub(r'\s+', ' ', ''.join(e.itertext())).strip() if e is not None else ''
+    L = []
+    t = root.find('.//article-title')
+    L += ['# %s' % txt(t), '']
+    ab = root.find('.//abstract')
+    if ab is not None:
+        L += ['[§ Abstract]', ''] + [txt(p) for p in ab.iter('p')] + ['']
+    def walk(sec, depth):
+        title = sec.find('title')
+        L.extend(['[§ %s]' % (txt(title) or '절'), ''])
+        for ch in sec:
+            if ch.tag == 'p':
+                for f in ch.iter('disp-formula'):
+                    f.clear(); f.text = '[수식]'
+                L.extend([txt(ch), ''])
+            elif ch.tag == 'sec':
+                walk(ch, depth + 1)
+            elif ch.tag == 'table-wrap':
+                L.append('표 %s — %s' % (txt(ch.find('label')), txt(ch.find('caption'))))
+                for tr in ch.iter('tr'):
+                    L.append('| ' + ' | '.join(txt(c) for c in tr if c.tag in ('td', 'th')) + ' |')
+                L.append('')
+            elif ch.tag == 'fig':
+                L.extend(['그림 %s — %s' % (txt(ch.find('label')), txt(ch.find('caption'))), ''])
+    body = root.find('.//body')
+    for sec in (body if body is not None else []):
+        if sec.tag == 'sec':
+            walk(sec, 1)
+        elif sec.tag == 'p':
+            L.extend([txt(sec), ''])
+    return '\n'.join(L).strip() + '\n'
+
+
+def oa(instr_path, email, store, out, fetch=False, sleep=1.0, getter=None, stream=sys.stdout):
+    """v0.4 (리뷰어 09-28 제안): 브라우저를 열기 전에 **공식 기계 접근 API** 로 — DOI 마다 Unpaywall(합법적 무료 사본 위치, 이메일 필요)과
+    Europe PMC(PMCID·전문 XML 여부)를 조회해 목록을 만들고, --fetch 면 Europe PMC 전문 XML 을 받아 md(절 표지)로 보관소에. 캡차가 없는
+    공식 경로라 봇 차단·약관 문제가 없다. 출판사 TDM(구독 전문)은 기관 계약 확인 전이라 쓰지 않는다. 반환 [(번호, 결과)]."""
+    import json, time
+    get = getter or _get
+    text = _nfc(open(instr_path, encoding='utf8').read())
+    refs = parse_refs(text); name = manuscript_name(text, instr_path)
+    if not email or '@' not in email:
+        raise SystemExit('[멈춤] --email 이 필요하다(Unpaywall 이용 조건). 공개 저장소에는 적지 않는다 — 지시나 셸에서만')
+    by_doi, _ = store_index(store) if store else ({}, {})
+    rows, res = [], []
+    for r in refs:
+        if not r['doi']:
+            rows.append('| %d | %s %s | — | DOI 없음 — 브라우저·사용자 | |' % (r['n'], r['author'], r['year'])); res.append((r['n'], 'nodoi')); continue
+        if r['doi'] in by_doi:
+            rows.append('| %d | %s %s | %s | 보관소에 있음 `%s` | |' % (r['n'], r['author'], r['year'], r['doi'], by_doi[r['doi']])); res.append((r['n'], 'have')); continue
+        up, ep = {}, {}
+        try:
+            up = json.loads(get('https://api.unpaywall.org/v2/%s?email=%s' % (r['doi'], email)))
+        except Exception as e:
+            up = {'_err': type(e).__name__}
+        time.sleep(sleep)
+        try:
+            q = get('https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI:%%22%s%%22&format=json&resultType=lite' % r['doi'])
+            hits = json.loads(q).get('resultList', {}).get('result', [])
+            ep = hits[0] if hits else {}
+        except Exception as e:
+            ep = {'_err': type(e).__name__}
+        time.sleep(sleep)
+        loc = (up.get('best_oa_location') or {}) if isinstance(up, dict) else {}
+        pdf = loc.get('url_for_pdf') or ''
+        pmcid = ep.get('pmcid') or r['pmc'] or ''
+        xml_ok = bool(pmcid) and ep.get('isOpenAccess') == 'Y' and ep.get('inEPMC') == 'Y'
+        what = []
+        if xml_ok:
+            what.append('Europe PMC 전문 XML(%s)' % pmcid)
+        if pdf:
+            what.append('OA PDF %s' % pdf)
+        if not what:
+            what.append('OA 없음 — 브라우저(doi.org)·구독이면 사용자' + (' [조회 오류 %s]' % (up.get('_err') or ep.get('_err')) if up.get('_err') or ep.get('_err') else ''))
+        got = ''
+        if fetch and xml_ok:
+            try:
+                xmlb = get('https://www.ebi.ac.uk/europepmc/webservices/rest/%s/fullTextXML' % pmcid)
+                key = doi_key(r['doi']); dd = os.path.join(store, key); os.makedirs(dd, exist_ok=True)
+                md = jats_to_md(xmlb)
+                hdr = '> Europe PMC 전문 XML(%s)에서 — 쪽 표지 대신 절 표지 `[§ …]`. 게재 PDF 와 판(정정·판본)이 다를 수 있다 — 쪽 인용은 PDF 로.\n\n' % pmcid
+                open(os.path.join(dd, 'paper.md'), 'w', encoding='utf8').write(md.replace('\n', '\n' + hdr, 1) if md.startswith('# ') else hdr + md)
+                open(os.path.join(dd, 'paper.xml'), 'wb').write(xmlb)
+                open(os.path.join(dd, 'meta.md'), 'w', encoding='utf8').write(
+                    '<!-- lit: doi=%s pages=0 blank=0 sha=%s -->\n# %s\n\n- DOI: %s\n- 출처: Europe PMC 전문 XML %s(OA)\n- 첫 저자·해: %s %s\n- 참고문헌: %s\n- 받은 날: %s\n' % (
+                        r['doi'], hashlib.sha256(xmlb).hexdigest()[:16], r['title'] or r['raw'][:80], r['doi'], pmcid, r['author'], r['year'],
+                        r['raw'][:300], datetime.date.today().isoformat()))
+                _cite_note(store, key, name, r['n'])
+                by_doi[r['doi']] = key
+                got = '받음 `%s/paper.md`' % key
+            except Exception as e:
+                got = 'XML 받기 실패 %s' % type(e).__name__
+            time.sleep(sleep)
+        rows.append('| %d | %s %s | %s | %s | %s |' % (r['n'], r['author'], r['year'], r['doi'], ' · '.join(what), got))
+        res.append((r['n'], 'xml' if xml_ok else ('pdf' if pdf else 'none')))
+    if store and os.path.isdir(store):
+        _write_store_index(store)
+    L = ['# %s — 공식 API 조회(OA)' % name, '',
+         '> literature.py v%s oa — Unpaywall·Europe PMC(캡차 없는 공식 경로). 남은 것은 받을 목록의 브라우저 순서(doi.org)로, 구독은 사용자.' % __version__, '',
+         '| 번호 | 첫 저자·해 | DOI | 찾은 것 | 받음 |', '|---|---|---|---|---|'] + rows + ['']
+    os.makedirs(out, exist_ok=True)
+    open(os.path.join(out, '%s_OA조회.md' % name), 'w', encoding='utf8').write('\n'.join(L))
+    print('\n'.join(L), file=stream)
+    return res
+
+
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -466,11 +604,15 @@ if __name__ == '__main__':
     l_.add_argument('--top', type=int, default=3)
     c_ = sub.add_parser('check'); c_.add_argument('instr'); c_.add_argument('--inbox', required=True); c_.add_argument('--out', default=None)
     c_.add_argument('--store', default=None, help='보관소 — 있으면 paper.md 쪽 표지 수를 PDF 쪽 수와 대조(v0.3)')
+    o_ = sub.add_parser('oa'); o_.add_argument('instr'); o_.add_argument('--email', default=os.environ.get('LIT_EMAIL'))
+    o_.add_argument('--store', required=True); o_.add_argument('--out', required=True); o_.add_argument('--fetch', action='store_true')
     a = ap.parse_args()
     if a.cmd == 'plan':
         plan(a.instr, a.out, a.store)
     elif a.cmd == 'ingest':
         ingest(a.instr, a.inbox, a.store, a.out)
+    elif a.cmd == 'oa':
+        oa(a.instr, a.email, a.store, a.out, fetch=a.fetch)
     elif a.cmd == 'check':
         rows = check(a.instr, a.inbox, a.out, store=a.store)
         sys.exit(1 if any(r[1] == '✗' for r in rows) else 0)

@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.3'
+EXPECT_VERSION = '0.4'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 
@@ -179,6 +179,48 @@ def t_v03_check_text_layer_and_md_pages():
     make_pdf(os.path.join(d, 'inbox', '002_scan.pdf'), [[], [], ['x']])           # 3쪽 중 2쪽 글자층 없음
     rows = {f: (r, w) for f, r, w in LT.check(instr, os.path.join(d, 'inbox'), stream=io.StringIO())}
     assert rows['002_scan.pdf'][0] == '✗' and 'PDF 필요' in rows['002_scan.pdf'][1], rows
+
+
+JATS = b"""<?xml version="1.0"?><article><front><article-meta><title-group><article-title>Contrast enhanced ultrasound in renal masses</article-title></title-group>
+<abstract><p>We studied renal masses.</p></abstract></article-meta></front><body>
+<sec><title>Results</title><p>Sensitivity was 88% for F<sub>ISF</sub> maps.</p>
+<table-wrap><label>Table 1</label><caption><p>Accuracy</p></caption><table><tr><th>Group</th><th>AUC</th></tr><tr><td>A</td><td>&#8722;0.63</td></tr></table></table-wrap>
+</sec></body></article>"""
+
+
+def t_v04_oa_api_and_zero_loose_and_mathfont():
+    import json
+    d, instr = _fixture()
+    store, out = os.path.join(d, 'store'), os.path.join(d, 'out')
+    calls = []
+    def fake_get(url, timeout=30):
+        calls.append(url)
+        if 'unpaywall' in url:
+            return json.dumps({'best_oa_location': {'url_for_pdf': 'https://example.org/x.pdf'}} if 'xyz456' in url else {'best_oa_location': None}).encode()
+        if 'search?query=DOI' in url:
+            return json.dumps({'resultList': {'result': [{'pmcid': 'PMC7654321', 'isOpenAccess': 'Y', 'inEPMC': 'Y'}]}} if 'xyz456' in url else {'resultList': {'result': []}}).encode()
+        if 'fullTextXML' in url:
+            return JATS
+        raise AssertionError(url)
+    try:
+        LT.oa(instr, None, store, out, getter=fake_get, sleep=0, stream=io.StringIO()); assert False
+    except SystemExit as e:
+        assert 'email' in str(e)
+    res = dict(LT.oa(instr, 'me@example.invalid', store, out, fetch=True, getter=fake_get, sleep=0, stream=io.StringIO()))
+    assert res == {1: 'none', 2: 'xml', 3: 'nodoi', 4: 'nodoi'}, res
+    md = open(os.path.join(store, '10.1000_xyz456', 'paper.md'), encoding='utf8').read()
+    assert '[§ Results]' in md and '| A | −0.63 |' in md and ('F ISF' in md or 'FISF' in md), md     # 표가 행 그대로, 음수 부호 그대로
+    assert 'Europe PMC 전문 XML(PMC7654321)' in md and os.path.exists(os.path.join(store, '10.1000_xyz456', 'paper.xml'))
+    assert all('email=me@example.invalid' in c for c in calls if 'unpaywall' in c)
+    # 보관소에 있으면 다시 조회하지 않는다
+    calls.clear(); res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=fake_get, sleep=0, stream=io.StringIO()))
+    assert res[2] == 'have' and not any('xyz456' in c for c in calls)
+    # 0회 거짓 양성: F_ISF 를 찾을 말로 — 원문에는 'F ISF'(첨자 분리) → 표기 차이 표시
+    ins2 = _write(os.path.join(d, 'i3.md'), INSTR.replace('| C2 | 3, 4 | 예측 정확도 | accuracy, fracture healing |', '| C2 | 2 | 기호 | F_ISF, 88% |'))
+    loc = open(LT.locate(ins2, store, out, stream=io.StringIO()), encoding='utf8').read()
+    assert 'F_ISF(표기 차이로 0회일 수 있음 — 밑줄·하이픈·공백 무시하면 1회)' in loc, loc
+    # 수식 글꼴 치환 표시
+    assert LT.mathfont_count('a ¼ b þ c ðxÞ') == 4
 
 
 def t_cli():
