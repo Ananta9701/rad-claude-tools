@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.33'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.34'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -3716,161 +3716,267 @@ def _inside_frac(a, b):
     return (w * h) / float(max(1, a[2] * a[3]))
 
 
-def fit_layout(deck, slide_no, title_min=20, body_min=14, max_up=1.5, min_scale=0.5, band_gap=0.08, gap=0.1, margin=0.05, dry_run=False):
-    """v16.33 (발표 K16 1단계, 사용자 09-28 배치 양식): 밀집 화면 — ① 제목 띠를 촘촘하게(글 높이 + 위아래 band_gap, 위에 붙임, 2줄이면
-    title_min 까지 줄여 1줄이 되는지 봄) ② 본문(가장 큰 글상자)은 띠 아래로, 글자를 원래 크기에서 body_min 까지 ③ 그림(그림 위 주석과 한
-    덩어리)을 원래 자리의 가장 가까운 구석을 고정해 비율대로 max_up 까지 키우거나 min_scale 까지 줄여 본문 글·다른 그림·그 밖의 상자와
-    겹치지 않게 — 본문 글자 크기 후보마다 그림 넓이 합이 가장 큰 해(같으면 본문이 큰 해). 안 되면 바꾸지 않고 '[!] 나누기 필요'.
-    이름표·그림 설명·인용·그 밖의 상자는 그대로(2단계). 글 내용은 바꾸지 않는다. 반환: 문자열 목록."""
+def fit_layout(deck, slide_no, title_min=20, body_min=14, body_max=None, max_up=1.5, min_scale=0.5, band_gap=0.08, gap=0.2,
+               margin=0.05, col_gap=0.2, min_text_w=0.35, text_margin=1.1, arrange='auto', drop_title=False, label_pos=None, dry_run=False):
+    """v16.33 1단계 → v16.34 2단계 (발표 K16·K17, 사용자 09-28 배치 양식): 밀집 화면.
+    ① 제목 띠를 촘촘하게(글 높이 + 위아래 band_gap, 위에 붙임, 2줄이면 title_min 까지 줄여 1줄이 되는지) — drop_title 이면 제목·띠 도형을
+       빼고 그 자리까지 영역으로(노트는 그대로). 띠와 본문 간격 gap(기본 0.2" — K17 F3).
+    ② 배치 — arrange='side'(그림이 본문 오른쪽이면 auto 가 고른다 — K17 S2·S3): 그림들(주석·바로 옆 작은 설명 상자와 한 덩어리)을 영역
+       오른쪽 위에 붙여 영역 높이·(영역 폭 − 글 칸 최소 폭) 안에서 비율대로, 본문은 그 왼쪽 칸 폭으로 좁히고 글자는 body_max(없으면 원래
+       크기)에서 body_min 사이에서 칸에 드는 가장 큰 크기. arrange='keep': 1단계처럼 그림 구석 고정 비율, 본문 글자는 원래→body_min.
+    ③ 본문 상자 높이는 추정 글 높이 × text_margin 으로 적어 넣는다(K17 F1 — spAutoFit 상자의 저장 높이가 그대로라 PowerPoint 가 옛 높이로
+       그렸다). 겹침은 이 **저장 위치** 로 판정(K17 F2).
+    ④ 이름표는 label_pos(기준 화면의 이름표 자리)로 옮기고 맨 앞 층으로, 그림은 이름표와도 안 겹치게(K17 S4).
+    안 되면 바꾸지 않고 '[!] 나누기 필요'. 글 내용은 바꾸지 않는다. 반환: 문자열 목록."""
     x = open(deck._slide(slide_no), encoding='utf8').read()
     W, H = deck.slide_size(); E = EMU_IN
     i = _title_info(deck, slide_no)
-    if not i or i['kind'] != 'ph':
+    if not drop_title and (not i or i['kind'] != 'ph'):
         return ['[!] 제목 자리 표시자가 없다 — adopt-house-look 으로 먼저']
     out = []
     band = _band_shape(x, W)
-    # ① 제목 띠
-    tsz = i['eff_sz'] or 2800
-    t_lines = _title_lines(i, tsz)
-    new_tsz = tsz
-    if t_lines > 1:
-        for p_ in range(tsz // 100 - 1, title_min - 1, -1):
-            if _title_lines(i, p_ * 100) == 1:
-                new_tsz = p_ * 100; break
-    t_lines = _title_lines(i, new_tsz)
-    t_text = int(t_lines * new_tsz / 100.0 * LINE_FACTOR * i.get('lnspc', 1.0) * 12700)
-    bgap = int(band_gap * E)
-    t_h = t_text + 2 * bgap
-    tx, tw = (band['geo'][0], band['geo'][2]) if band else (i['x'], i['w'])
-    top = t_h + int(gap * E)
-    region = (int(margin * E), top, W - 2 * int(margin * E), H - int(margin * E) - top)
     shp = _top_shapes(x)
     tsh = [q for q in shp if re.search(r'<p:ph\b[^>]*type="(?:title|ctrTitle)"', q['seg'])]
     rest = [q for q in shp if q not in tsh and not (band and q['seg'] == band['seg'])]
     pics = [q for q in rest if q['geo'] and (q['tag'] == 'pic' or (q['tag'] == 'grpSp' and '<p:pic>' in q['seg']))]
-    texts = [q for q in rest if q['geo'] and q['tag'] == 'sp' and ''.join(_AT.findall(q['seg'])).strip()]
-    label = [q for q in texts if re.match(r'\s*\(R\d', html.unescape(''.join(_AT.findall(q['seg']))))]
+    txt = lambda q: html.unescape(''.join(_AT.findall(q['seg']))).strip()
+    texts = [q for q in rest if q['geo'] and q['tag'] == 'sp' and txt(q)]
+    label = next((q for q in texts if re.match(r'\(R\d', txt(q))), None)
     ann = {}
     for q in rest:
-        if q in pics or not q['geo'] or q in label:
+        if q in pics or not q['geo'] or q is label:
             continue
         best = max(pics, key=lambda p_: _inside_frac(q['geo'], p_['geo']), default=None)
         if best and _inside_frac(q['geo'], best['geo']) >= 0.7:
             ann.setdefault(id(best), []).append(q)
-    annotated = {id(q) for v in ann.values() for q in v}
-    cand = [q for q in texts if q not in label and id(q) not in annotated]
+    attached = {id(q) for v in ann.values() for q in v}
+    cand = [q for q in texts if q is not label and id(q) not in attached]
     body = max(cand, key=lambda q: q['geo'][2] * q['geo'][3], default=None)
-    fixed = [q for q in rest if q['geo'] and q not in pics and q is not body and id(q) not in annotated
+    # 그림 바로 바깥(0.3" 이내)의 작은 글상자 = 그림 설명 — 그림과 같이 움직인다(자리 규칙은 뒤 단계)
+    for q in texts:
+        if q is body or q is label or id(q) in attached:
+            continue
+        for p_ in pics:
+            px, py, pw, ph_ = p_['geo']; g = int(0.3 * E)
+            if q['geo'][2] * q['geo'][3] < 0.25 * pw * ph_ and _inter(q['geo'], (px - g, py - g, pw + 2 * g, ph_ + 2 * g)):
+                ann.setdefault(id(p_), []).append(q); attached.add(id(q)); break
+    fixed = [q for q in rest if q['geo'] and q not in pics and q is not body and q is not label and id(q) not in attached
              and not re.search(r'<p:ph\b[^>]*type="(?:dt|ftr|sldNum)"', q['seg'])]
-    # 본문 글 높이 추정
-    def body_box(p_scale):
-        if not body:
-            return None
-        bx, by, bw, bh = body['geo']
-        by = max(by, region[1])
-        bp = (re.search(r'<a:bodyPr\b[^>]*', body['seg']) or [''])[0]
-        l_, r_, t_, b_ = (int((re.search(r'\b%s="(-?\d+)"' % k, bp) or [0, d])[1]) for k, d in (('lIns', 91440), ('rIns', 91440), ('tIns', 45720), ('bIns', 45720)))
-        hh = 0.0
+    fp = _theme_body_font_file(deck, slide_no)
+    # ① 제목
+    edits, removes = [], []
+    if drop_title:
+        for q in tsh:
+            removes.append(q['seg'])
+        if band:
+            removes.append(band['seg'])
+        top = int(margin * E) + int(0.05 * E)
+        out.append('제목%s 뺌(앞 화면과 같은 제목 — 노트는 그대로)' % ('·띠 도형' if band else ''))
+    else:
+        tsz = i['eff_sz'] or 2800
+        new_tsz = tsz
+        if _title_lines(i, tsz) > 1:
+            for p_ in range(tsz // 100 - 1, title_min - 1, -1):
+                if _title_lines(i, p_ * 100) == 1:
+                    new_tsz = p_ * 100; break
+        t_text = int(_title_lines(i, new_tsz) * new_tsz / 100.0 * LINE_FACTOR * i.get('lnspc', 1.0) * 12700)
+        bgap = int(band_gap * E); t_h = t_text + 2 * bgap
+        tx, tw = (band['geo'][0], band['geo'][2]) if band else (i['x'], i['w'])
+        top = t_h + int(gap * E)
+        tseg, mat = _title_materialized(i)
+        tseg = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy="\d+"\s*/>', '<a:off x="%d" y="0"/><a:ext cx="%d" cy="%d"/>' % (tx, tw, t_h), tseg, 1)
+        bpm = re.search(r'<a:bodyPr\b[^>]*?/?>', tseg)
+        if bpm:
+            nt = re.sub(r'\s(?:tIns|bIns)="-?\d+"', '', bpm.group(0))
+            nt = (nt[:-2] + ' tIns="%d" bIns="%d"/>' % (bgap, bgap)) if nt.endswith('/>') else (nt[:-1] + ' tIns="%d" bIns="%d">' % (bgap, bgap))
+            tseg = tseg.replace(bpm.group(0), nt, 1)
+        if new_tsz != tsz:
+            tseg = re.sub(r'(<a:(?:rPr|endParaRPr)\b[^>]*?\bsz=")\d+"', lambda mm: '%s%d"' % (mm.group(1), new_tsz), tseg)
+            tseg = re.sub(r'<a:(rPr|endParaRPr)\b((?:(?!\bsz=)[^>])*?)(/?)>', lambda mm: '<a:%s%s sz="%d"%s>' % (mm.group(1), mm.group(2), new_tsz, mm.group(3)), tseg)
+        edits.append((i['start'], i['end'], tseg))
+        if band:
+            nb = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="(\d+)" cy="\d+"', lambda mm: '<a:off x="%d" y="0"/><a:ext cx="%s" cy="%d"' % (tx, mm.group(1), t_h), band['seg'], 1)
+            s0 = x.find(band['seg']); edits.append((s0, s0 + len(band['seg']), nb))
+        out.append('제목 띠 %.2f" → %.2f"(위에 붙임, 여백 %.2f")%s%s' % (((band['geo'][3] if band else i['h']) / E), t_h / E, band_gap,
+                   (' · 제목 %dpt → %dpt' % (tsz // 100, new_tsz // 100)) if new_tsz != tsz else '', ' · 물려받던 제목 적어 넣음' if mat else ''))
+    mx = int(margin * E)
+    R0 = (mx, top, W - 2 * mx, H - mx - top)
+    rx0, ry0, rx1, ry1 = R0[0], R0[1], R0[0] + R0[2], R0[1] + R0[3]
+    # ④ 이름표 자리
+    lab_box = None
+    if label:
+        lx, ly = (label_pos if label_pos else label['geo'][:2])
+        lab_box = (lx, ly, label['geo'][2], label['geo'][3])
+    # 본문 글 높이(여유 포함) — 폭 bw, 글자 비율 f
+    b_szs = [int(v) for v in re.findall(r'<a:(?:rPr|endParaRPr)\b[^>]*\bsz="(\d+)"', body['seg'])] if body else []
+    b_base = 1800
+    if body and not b_szs:
+        php = re.search(r'<p:ph\b([^>]*)/?>', body['seg'])
+        if php:
+            b_base = _body_level_sizes(deck, slide_no, php.group(1)).get(0) or 1800
+    pmax = (max(b_szs) if b_szs else b_base) // 100
+    bp = (re.search(r'<a:bodyPr\b[^>]*', body['seg']) or [''])[0] if body else ''
+    l_, r_, t_, b_ = (int((re.search(r'\b%s="(-?\d+)"' % k, bp) or [0, d])[1]) for k, d in (('lIns', 91440), ('rIns', 91440), ('tIns', 45720), ('bIns', 45720)))
+    paras = []
+    if body:
         for pm in re.findall(r'<a:p>(.*?)</a:p>', body['seg'], re.S):
             t = html.unescape(''.join(_AT.findall(pm)))
-            szs = [int(v) for v in re.findall(r'<a:(?:rPr|endParaRPr)\b[^>]*\bsz="(\d+)"', pm)] or [1800]
-            ps = max(szs) / 100.0 * p_scale
-            hh += max(1, _est_lines(t, ps, bw - l_ - r_)) * ps * LINE_FACTOR * 12700 if t.strip() else ps * LINE_FACTOR * 12700 * 0.5
-        return (bx, by, bw, int(hh) + t_ + b_)
-    bmax = max([int(v) for v in re.findall(r'<a:(?:rPr|endParaRPr)\b[^>]*\bsz="(\d+)"', body['seg'])] or [1800]) if body else 1800
-    rx0, ry0, rx1, ry1 = region[0], region[1], region[0] + region[2], region[1] + region[3]
-    def place(pic, obstacles):
-        gx, gy, gw, gh = pic['geo']
-        dy = max(0, ry0 - gy); gy += dy
-        corners = {'tl': (gx, gy, rx0, ry0), 'tr': (gx + gw, gy, rx1, ry0), 'bl': (gx, gy + gh, rx0, ry1), 'br': (gx + gw, gy + gh, rx1, ry1)}
-        cname = min(corners, key=lambda c: (corners[c][0] - corners[c][2]) ** 2 + (corners[c][1] - corners[c][3]) ** 2)
-        ax, ay = corners[cname][0], corners[cname][1]
-        # 구석이 영역 가장자리에 가까우면(0.75" 이내) 그 가장자리로 붙인다 — 원래 배치(오른쪽 위 등)는 지키고 넓이는 키운다
-        if abs(ax - corners[cname][2]) <= 0.75 * E:
-            ax = corners[cname][2]
-        if abs(ay - corners[cname][3]) <= 0.75 * E:
-            ay = corners[cname][3]
-        k = max_up
-        while k >= min_scale - 1e-9:
-            nw, nh = int(gw * k), int(gh * k)
-            nx = ax - nw if cname[1] == 'r' else ax
-            ny = ay - nh if cname[0] == 'b' else ay
-            box = (nx, ny, nw, nh)
-            if nx >= rx0 and ny >= ry0 and nx + nw <= rx1 and ny + nh <= ry1 and not any(_inter(box, o) for o in obstacles):
-                return k, box, (ax, ay), dy
-            k = round(k - 0.02, 4)
-        return None
-    best = None
-    pmax = bmax // 100
-    for pt in range(pmax, body_min - 1, -1):
+            szs = [int(v) for v in re.findall(r'<a:(?:rPr|endParaRPr)\b[^>]*\bsz="(\d+)"', pm)] or [pmax * 100]
+            paras.append((t, max(szs) / 100.0))
+    def text_h(pt, bw):
         f = pt / float(pmax)
-        bb = body_box(f)
-        if bb and bb[1] + bb[3] > ry1:
-            continue
-        obst = ([bb] if bb else []) + [q['geo'] for q in fixed if not any(_inter(q['geo'], p_['geo']) for p_ in pics)]
-        placed, ok = [], True
-        for pic in sorted(pics, key=lambda q: -(q['geo'][2] * q['geo'][3])):
-            r_ = place(pic, obst + [b for _, b, _, _, _ in placed])
-            if not r_:
-                ok = False; break
-            placed.append((pic, r_[1], r_[0], r_[2], r_[3]))
-        if not ok:
-            continue
-        area = sum(b[2] * b[3] for _, b, _, _, _ in placed)
-        if best is None or area > best[0] * 1.001:
-            best = (area, pt, f, bb, placed)
-    if best is None:
-        return ['[!] 본문 %dpt·그림 %d%% 하한에서도 겹침 없이 안 들어간다 — 바꾸지 않음(나누기 필요)' % (body_min, int(min_scale * 100))]
-    area, pt, f, bb, placed = best
-    # 적용
-    edits = []
-    tseg, mat = _title_materialized(i)
-    tseg = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy="\d+"\s*/>', '<a:off x="%d" y="0"/><a:ext cx="%d" cy="%d"/>' % (tx, tw, t_h), tseg, 1)
-    bpm = re.search(r'<a:bodyPr\b[^>]*?/?>', tseg)
-    if bpm:
-        nt = re.sub(r'\s(?:tIns|bIns)="-?\d+"', '', bpm.group(0))
-        nt = (nt[:-2] + ' tIns="%d" bIns="%d"/>' % (bgap, bgap)) if nt.endswith('/>') else (nt[:-1] + ' tIns="%d" bIns="%d">' % (bgap, bgap))
-        tseg = tseg.replace(bpm.group(0), nt, 1)
-    if new_tsz != tsz:
-        tseg = re.sub(r'(<a:(?:rPr|endParaRPr)\b[^>]*?\bsz=")\d+"', lambda mm: '%s%d"' % (mm.group(1), new_tsz), tseg)
-        tseg = re.sub(r'<a:(rPr|endParaRPr)\b((?:(?!\bsz=)[^>])*?)(/?)>', lambda mm: '<a:%s%s sz="%d"%s>' % (mm.group(1), mm.group(2), new_tsz, mm.group(3)), tseg)
-    edits.append((i['start'], i['end'], tseg))
-    out.append('제목 띠 %.2f" → %.2f"(위에 붙임, 여백 %.2f")%s%s' % (((band['geo'][3] if band else i['h']) / E), t_h / E, band_gap,
-               (' · 제목 %dpt → %dpt' % (tsz // 100, new_tsz // 100)) if new_tsz != tsz else '', ' · 물려받던 제목 적어 넣음' if mat else ''))
-    if band:
-        nb = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="(\d+)" cy="\d+"', lambda mm: '<a:off x="%d" y="0"/><a:ext cx="%s" cy="%d"' % (tx, mm.group(1), t_h), band['seg'], 1)
-        s0 = x.find(band['seg']); edits.append((s0, s0 + len(band['seg']), nb))
-    if body:
-        bx, by, bw, bh = body['geo']
+        hh = 0.0
+        for t, ps0 in paras:
+            ps = ps0 * f
+            if not t.strip():
+                hh += ps * LINE_FACTOR * 12700 * 0.5; continue
+            n = _est_lines_font(t, ps, bw - l_ - r_, fp) if fp else _est_lines(t, ps, bw - l_ - r_)
+            hh += max(1, n) * ps * LINE_FACTOR * 12700
+        return int(hh * text_margin) + t_ + b_
+    obst0 = [q['geo'] for q in fixed if not any(_inter(q['geo'], p_['geo']) for p_ in pics)] + ([lab_box] if lab_box else [])
+    side = bool(pics and body) and (arrange == 'side' or (arrange == 'auto' and all(
+        p_['geo'][0] + p_['geo'][2] / 2.0 > body['geo'][0] + body['geo'][2] / 2.0 for p_ in pics)))
+    groups = [(p_, ann.get(id(p_), [])) for p_ in pics]
+    plan = None                    # {'body': (x,y,w,h,pt), 'pics': [(pic, k, (ax,ay), (dx,dy))]}
+    if side:
+        ux0 = min(p_['geo'][0] for p_ in pics); uy0 = min(p_['geo'][1] for p_ in pics)
+        ux1 = max(p_['geo'][0] + p_['geo'][2] for p_ in pics); uy1 = max(p_['geo'][1] + p_['geo'][3] for p_ in pics)
+        uw, uh = ux1 - ux0, uy1 - uy0
+        k = min(max_up, R0[3] / float(uh), (R0[2] - min_text_w * W) / float(uw))
+        k = int(k * 100) / 100.0
+        while k >= min_scale - 1e-9:
+            box = (rx1 - int(uw * k), ry0, int(uw * k), int(uh * k))
+            if not any(_inter(box, o) for o in obst0):
+                break
+            k = round(k - 0.02, 4)
+        if k >= min_scale - 1e-9:
+            bx = max(body['geo'][0], rx0); bw = rx1 - int(uw * k) - int(col_gap * E) - bx
+            top_pt = body_max or pmax
+            for pt in range(top_pt, body_min - 1, -1):
+                h_ = text_h(pt, bw)
+                bb = (bx, ry0, bw, h_)
+                if ry0 + h_ <= ry1 and not any(_inter(bb, o) for o in obst0):
+                    plan = {'body': (bx, ry0, bw, h_, pt), 'pics': [(p_, k, (ux1, uy0), (rx1 - ux1, ry0 - uy0)) for p_ in pics]}
+                    break
+        if plan is None:
+            out.append('[참고] 옆 배치로는 안 된다 — 제자리 배치로 본다')
+    if plan is None:
+        best = None
+        for pt in range(pmax, body_min - 1, -1):
+            if body:
+                bx, by, bw, bh = body['geo']; by = max(by, ry0)
+                h_ = text_h(pt, bw)
+                if by + h_ > ry1:
+                    continue
+                bb = (bx, by, bw, h_)
+            else:
+                bb = None
+            obst = obst0 + ([bb] if bb else [])
+            placed, ok = [], True
+            for p_ in sorted(pics, key=lambda q: -(q['geo'][2] * q['geo'][3])):
+                gx, gy, gw, gh = p_['geo']
+                dy = max(0, ry0 - gy); gy += dy
+                corners = {'tl': (gx, gy, rx0, ry0), 'tr': (gx + gw, gy, rx1, ry0), 'bl': (gx, gy + gh, rx0, ry1), 'br': (gx + gw, gy + gh, rx1, ry1)}
+                cn = min(corners, key=lambda c: (corners[c][0] - corners[c][2]) ** 2 + (corners[c][1] - corners[c][3]) ** 2)
+                ax, ay = corners[cn][0], corners[cn][1]
+                if abs(ax - corners[cn][2]) <= 0.75 * E:
+                    ax = corners[cn][2]
+                if abs(ay - corners[cn][3]) <= 0.75 * E:
+                    ay = corners[cn][3]
+                k, hit = max_up, None
+                while k >= min_scale - 1e-9:
+                    nw, nh = int(gw * k), int(gh * k)
+                    box = (ax - nw if cn[1] == 'r' else ax, ay - nh if cn[0] == 'b' else ay, nw, nh)
+                    if box[0] >= rx0 and box[1] >= ry0 and box[0] + nw <= rx1 and box[1] + nh <= ry1 and \
+                            not any(_inter(box, o) for o in obst + [b for _, _, _, _, b in placed]):
+                        hit = (p_, k, (ax, ay), (0, dy), box); break
+                    k = round(k - 0.02, 4)
+                if not hit:
+                    ok = False; break
+                placed.append(hit)
+            if not ok:
+                continue
+            area = sum(b[2] * b[3] for _, _, _, _, b in placed)
+            if best is None or area > best[0] * 1.001:
+                best = (area, {'body': (bb + (pt,)) if bb else None, 'pics': [(p_, k, a, d) for p_, k, a, d, _ in placed]})
+        if best is None:
+            return ['[!] 본문 %dpt·그림 %d%% 하한에서도 겹침 없이 안 들어간다 — 바꾸지 않음(나누기 필요)' % (body_min, int(min_scale * 100))]
+        plan = best[1]
+    # 적용 — 본문
+    if body and plan['body']:
+        bx, by, bw, bh, pt = plan['body']
+        f = pt / float(pmax)
         nb = body['seg']
-        if f < 0.999:
-            nb = re.sub(r'(<a:(?:rPr|endParaRPr)\b[^>]*?\bsz=")(\d+)"', lambda mm: '%s%d"' % (mm.group(1), int(int(mm.group(2)) * f)), nb)
-        ny = max(by, ry0); ncy = min(bh, ry1 - ny)
-        nb = re.sub(r'(<a:off x="-?\d+" y=")-?\d+("\s*/>\s*<a:ext cx="\d+" cy=")\d+(")', lambda mm: '%s%d%s%d%s' % (mm.group(1), ny, mm.group(2), ncy, mm.group(3)), nb, 1)
+        if abs(f - 1) > 1e-3:
+            nb = re.sub(r'(<a:(?:rPr|endParaRPr)\b[^>]*?\bsz=")(\d+)"', lambda mm: '%s%d"' % (mm.group(1), int(round(int(mm.group(2)) * f))), nb)
+            nb = re.sub(r'<a:(rPr|endParaRPr)\b((?:(?!\bsz=)[^>])*?)(/?)>', lambda mm: '<a:%s%s sz="%d"%s>' % (mm.group(1), mm.group(2), pt * 100, mm.group(3)), nb)
+            nb = re.sub(r'<a:r><a:t\b', '<a:r><a:rPr lang="ko-KR" sz="%d"/><a:t' % (pt * 100), nb)
+        if re.search(r'<a:off x="-?\d+" y="-?\d+"', nb):
+            nb = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy="\d+"', '<a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"' % (bx, by, bw, bh), nb, 1)
+        else:
+            xf = '<a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>' % (bx, by, bw, bh)
+            nb = re.sub(r'<p:spPr\s*/>', '<p:spPr>%s</p:spPr>' % xf, nb, 1) if re.search(r'<p:spPr\s*/>', nb) else re.sub(r'(<p:spPr\b[^>]*>)', lambda mm: mm.group(1) + xf, nb, 1)
         edits.append((body['start'], body['end'], nb))
-        out.append('본문 "%s" %dpt → %dpt%s' % (body['name'], pmax, pt, (' · %.2f" 내림' % ((ny - by) / E)) if ny != by else ''))
-    for pic, box, k, (ax, ay), dy in placed:
-        gx, gy, gw, gh = pic['geo']
-        def tf(g, sc_font=False):
+        ob = body['geo']
+        out.append('본문 "%s" %dpt → %dpt · 상자 %.2f×%.2f" → %.2f×%.2f"(높이 = 추정 글 높이 × %.1f)%s' % (
+            body['name'], pmax, pt, ob[2] / E, ob[3] / E, bw / E, bh / E, text_margin, ' · 옆 배치(글 왼쪽·그림 오른쪽)' if side and plan.get('pics') and plan['body'][1] == ry0 and side else ''))
+    # 적용 — 그림(주석·설명 함께)
+    for p_, k, (ax, ay), (dx, dy) in plan['pics']:
+        def tf(g):
             X, Y, CX, CY = g
-            Y += dy
-            return (int(ax + (X - ax) * k), int(ay + (Y - ay) * k), int(CX * k), int(CY * k))
-        nx, ny, nw, nh = box
-        ps = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy="\d+"', '<a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"' % (nx, ny, nw, nh), pic['seg'], 1)
-        edits.append((pic['start'], pic['end'], ps))
-        n_ann = 0
-        for q in ann.get(id(pic), []):
+            X += dx; Y += dy
+            AX, AY = ax + dx, ay + dy
+            return (int(AX + (X - AX) * k), int(AY + (Y - AY) * k), int(CX * k), int(CY * k))
+        for q in [p_] + ann.get(id(p_), []):
             qx, qy, qw, qh = tf(q['geo'])
             qs = re.sub(r'<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy="\d+"', '<a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"' % (qx, qy, qw, qh), q['seg'], 1)
-            if abs(k - 1) > 1e-3:
+            if q is not p_ and abs(k - 1) > 1e-3:
                 qs = re.sub(r'(<a:(?:rPr|endParaRPr)\b[^>]*?\bsz=")(\d+)"', lambda mm: '%s%d"' % (mm.group(1), max(800, int(int(mm.group(2)) * k))), qs)
-            edits.append((q['start'], q['end'], qs)); n_ann += 1
-        out.append('그림 "%s" %d%%%s' % (pic['name'], int(round(k * 100)), (' · 주석 %d 같이' % n_ann) if n_ann else ''))
+            edits.append((q['start'], q['end'], qs))
+        out.append('그림 "%s" %d%%%s' % (p_['name'], int(round(k * 100)), (' · 주석·설명 %d 같이' % len(ann.get(id(p_), []))) if ann.get(id(p_)) else ''))
+    # 적용 — 이름표(자리·맨 앞)
+    lab_seg = None
+    if label:
+        lx, ly, lw, lh = lab_box
+        lab_seg = re.sub(r'<a:off x="-?\d+" y="-?\d+"', '<a:off x="%d" y="%d"' % (lx, ly), label['seg'], 1)
+        edits.append((label['start'], label['end'], ''))
+        if (lx, ly) != tuple(label['geo'][:2]):
+            out.append('이름표 "%s" → 기준 자리(%.2f", %.2f")·맨 앞' % (txt(label)[:20], lx / E, ly / E))
+        else:
+            out.append('이름표 맨 앞으로')
     if not dry_run:
-        for a, b, sg in sorted(edits, key=lambda e: -e[0]):
-            x = x[:a] + sg + x[b:]
+        for a_, b_, sg in sorted(edits, key=lambda e: -e[0]):
+            x = x[:a_] + sg + x[b_:]
+        for sg in removes:
+            x = x.replace(sg, '', 1)
+        if lab_seg:
+            x = x.replace('</p:spTree>', lab_seg + '</p:spTree>', 1)
         open(deck._slide(slide_no), 'w', encoding='utf8').write(x)
     return out
+
+
+def _label_spot(deck, slide_no):
+    """기준 화면의 이름표((R… 로 시작하는 글상자) 위치."""
+    for q in _top_shapes(open(deck._slide(slide_no), encoding='utf8').read()):
+        if q['geo'] and q['tag'] == 'sp' and re.match(r'\s*\(R\d', html.unescape(''.join(_AT.findall(q['seg'])))):
+            return q['geo'][:2]
+    return None
+
+
+def _body_pt_of(deck, slide_no):
+    """기준 화면의 본문(가장 큰 글상자) 최대 글자 크기(pt)."""
+    best = None
+    for q in _top_shapes(open(deck._slide(slide_no), encoding='utf8').read()):
+        if q['geo'] and q['tag'] == 'sp' and ''.join(_AT.findall(q['seg'])).strip() and not re.search(r'type="(?:title|ctrTitle)"', q['seg']):
+            if best is None or q['geo'][2] * q['geo'][3] > best['geo'][2] * best['geo'][3]:
+                best = q
+    if not best:
+        return None
+    szs = [int(v) for v in re.findall(r'<a:rPr\b[^>]*\bsz="(\d+)"', best['seg'])]
+    if szs:
+        return max(szs) // 100
+    php = re.search(r'<p:ph\b([^>]*)/?>', best['seg'])
+    return ((_body_level_sizes(deck, slide_no, php.group(1)).get(0) or 1800) // 100) if php else None
 
 
 def title_block(deck, slide_no, band_h=None, prof=None, gap_in=0.1, drop_rule=False, push=False, min_pt=12, dry_run=False):
@@ -5717,10 +5823,16 @@ def main():
     po.add_argument('--font', default=DEFAULT_FONT, choices=list(FONT_PROFILES))
     po.add_argument('--audience', choices=('internal', 'external'), default=None, help='내부 발표는 환자 정보 검사 생략, 외부는 [!] (v16.9)')
     ex = sub.add_parser('handout'); ex.add_argument('pptx'); ex.add_argument('-o', required=True)
-    fl = sub.add_parser('fit-layout', help='밀집 화면 배치 1단계(v16.33, 발표 K16): 제목 띠 촘촘히·본문 글자·그림+주석 비율')
+    fl = sub.add_parser('fit-layout', help='밀집 화면 배치(v16.34, 발표 K16·K17): 제목 띠·반복 제목 빼기·옆 배치·본문 글자·그림+주석 비율·이름표')
     fl.add_argument('pptx'); fl.add_argument('-o', required=True); fl.add_argument('--screens', required=True); fl.add_argument('--dry-run', action='store_true')
-    fl.add_argument('--title-min', type=int, default=20); fl.add_argument('--body-min', type=int, default=14)
+    fl.add_argument('--title-min', type=int, default=20); fl.add_argument('--body-min', type=int, default=14); fl.add_argument('--body-max', type=int, default=None)
     fl.add_argument('--max-upscale', type=float, default=1.5); fl.add_argument('--min-scale', type=float, default=0.5)
+    fl.add_argument('--gap', type=float, default=0.2, help='제목 띠와 본문 간격(인치, v16.34 기본 0.2 — K17 F3)')
+    fl.add_argument('--text-margin', type=float, default=1.1, help='추정 글 높이 여유(K17 F2)')
+    fl.add_argument('--arrange', choices=('auto', 'keep', 'side'), default='auto', help='side = 글 왼쪽·그림 오른쪽(K17 S2·S3)')
+    fl.add_argument('--drop-repeat-titles', choices=('off', 'overlap', 'all'), default='off',
+                    help='앞 화면과 제목 글이 같으면 제목·띠를 뺀다 — all: 겹침과 상관없이(K17 S1, 사용자 09-28), overlap: 안 들어갈 때만')
+    fl.add_argument('--like', type=int, default=None, help='기준 화면 — 이름표 자리와 본문 크기 상한(--body-max 가 없을 때)')
     fl.add_argument('--render', default=None, help='결과 화면을 PNG 로(이 폴더에) — LibreOffice 가 있는 곳에서')
     hl = sub.add_parser('adopt-house-look', help='가져온 슬라이드의 흰 글자·글상자 제목을 기준 덱 모양으로(v16.31, 발표 K12)')
     hl.add_argument('pptx'); hl.add_argument('-o', required=True); hl.add_argument('--screens', required=True); hl.add_argument('--dry-run', action='store_true')
@@ -5882,8 +5994,23 @@ def main():
         print(export_notes(Deck.open(args.pptx), args.o))
     elif args.cmd == 'fit-layout':
         dk = Deck.open(args.pptx, tempfile_dir('fl')) if args.dry_run else Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]
+        ttl = {}
+        for pos, sn in enumerate(order, 1):
+            ti = _title_info(dk, sn)
+            ttl[pos] = ' '.join(ti['paras']).strip() if ti and ti['kind'] == 'ph' else ''
+        lab = _label_spot(dk, order[args.like - 1]) if args.like else None
+        bmax = args.body_max or (_body_pt_of(dk, order[args.like - 1]) if args.like else None)
         for pos in sorted(_parse_screens(args.screens, len(order))):
-            for c in fit_layout(dk, order[pos - 1], title_min=args.title_min, body_min=args.body_min, max_up=args.max_upscale, min_scale=args.min_scale):
+            same = bool(ttl.get(pos)) and ttl.get(pos) == ttl.get(pos - 1)
+            kw = dict(title_min=args.title_min, body_min=args.body_min, body_max=bmax, max_up=args.max_upscale, min_scale=args.min_scale,
+                      gap=args.gap, text_margin=args.text_margin, arrange=args.arrange, label_pos=lab)
+            if args.drop_repeat_titles == 'all' and same:
+                res = fit_layout(dk, order[pos - 1], drop_title=True, **kw)
+            else:
+                res = fit_layout(dk, order[pos - 1], **kw)
+                if res and res[0].startswith('[!]') and args.drop_repeat_titles == 'overlap' and same:
+                    res = fit_layout(dk, order[pos - 1], drop_title=True, **kw)
+            for c in res:
                 print('화면 %d: %s' % (pos, c))
         target = os.path.join(tempfile_dir('flo'), 'fit.pptx') if args.dry_run else args.o
         dk.save(target)

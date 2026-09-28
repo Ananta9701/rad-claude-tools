@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.33'
+EXPECT_VERSION = '16.34'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -1935,7 +1935,7 @@ def t_v1633_colors_band_fit_layout():
     path = os.path.join(TMP, 'k16.pptx'); prs.save(path)
     F = T.Deck.open(path, wd('k16')); sf = [x for x, _, _ in F.order() if x][0]
     r = T.fit_layout(F, sf)
-    assert r and not r[0].startswith('[!]') and any(c.startswith('그림 "Pic 1"') and '주석 1 같이' in c for c in r), r
+    assert r and not r[0].startswith('[!]') and any(c.startswith('그림 "Pic 1"') and '주석·설명 1 같이' in c for c in r), r
     xf = open(F._slide(sf), encoding='utf8').read()
     g = lambda nm: tuple(int(v) for v in re.search(r'name="%s".*?<a:off x="(-?\d+)" y="(-?\d+)"/><a:ext cx="(\d+)" cy="(\d+)"' % re.escape(nm), xf, re.S).groups())
     ti = T._title_info(F, sf); pg, ag, lg, bg = g('Pic 1'), g('Arrow 1'), g('Label'), g('Body')
@@ -1950,6 +1950,47 @@ def t_v1633_colors_band_fit_layout():
     xm = xm.replace('point 0 with some explanatory words here', ' '.join(['very long text'] * 400))
     open(many._slide(sm), 'w', encoding='utf8').write(xm)
     assert T.fit_layout(many, sm)[0].startswith('[!]') and open(many._slide(sm), encoding='utf8').read() == xm   # 안 되면 바꾸지 않는다
+
+
+def t_v1634_fit_layout_stage2():
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    from PIL import Image
+    E = T.EMU_IN
+    img = os.path.join(TMP, 'k17.png'); Image.new('RGB', (400, 300), 'gray').save(img)
+    prs = Presentation(); prs.slide_width, prs.slide_height = Inches(10), Inches(7.5)
+    def slide(title, body_pt, lab_xy):
+        sl = prs.slides.add_slide(prs.slide_layouts[5]); sl.shapes.title.text_frame.text = title
+        b = sl.shapes.add_textbox(Inches(0.3), Inches(1.0), Inches(6.5), Inches(3.23)); b.name = 'TextBox 4'
+        tf = b.text_frame; tf.word_wrap = True; tf.text = 'Type II endoleak — retrograde flow'
+        for k in range(3):
+            pp = tf.add_paragraph(); pp.text = 'short point %d' % k
+        for pp in tf.paragraphs:
+            for rr in pp.runs:
+                rr.font.size = Pt(body_pt)
+        b.text_frame.auto_size = True                                  # spAutoFit
+        pic = sl.shapes.add_picture(img, Inches(7.06), Inches(1.2), Inches(2.8), Inches(2.1)); pic.name = 'Pic 1'
+        lab = sl.shapes.add_textbox(Inches(lab_xy[0]), Inches(lab_xy[1]), Inches(1.4), Inches(0.3)); lab.name = 'Label'; lab.text_frame.text = '(R4 name)'
+    slide('Endograft complications - Endoleak', 24, (0.2, 7.1))         # 1: 기준(이름표 좌하단, 본문 24pt)
+    slide('Endograft complications - Endoleak', 14, (8.0, 3.0))         # 2: 같은 제목, 이름표가 그림 근처
+    slide('Endograft complications - Endoleak', 14, (8.0, 3.0))         # 3
+    path = os.path.join(TMP, 'k17.pptx'); prs.save(path)
+    out = os.path.join(TMP, 'k17o.pptx')
+    r = subprocess.run([sys.executable, os.path.join(HERE, 'deck_toolkit.py'), 'fit-layout', path, '-o', out, '--screens', '2-3', '--like', '1',
+                        '--drop-repeat-titles', 'all'], capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    assert r.returncode == 0 and r.stdout.count('제목 뺌') == 2, (r.stdout[-900:], r.stderr[-400:])   # S1: 같은 제목 묶음 둘째 장부터
+    D = T.Deck.open(out, wd('k17')); order = [x for x, _, _ in D.order() if x]
+    for sn in order[1:]:
+        x = open(D._slide(sn), encoding='utf8').read()
+        assert not re.search(r'type="title"', x)                                              # 제목·띠 뺌
+        g = lambda nm: tuple(int(v) for v in re.search(r'name="%s".*?<a:off x="(-?\d+)" y="(-?\d+)"/><a:ext cx="(\d+)" cy="(\d+)"' % nm, x, re.S).groups())
+        bx, by, bw, bh = g('TextBox 4'); px, py, pw, ph = g('Pic 1'); lx, ly, lw, lh = g('Label')
+        assert x.index('name="Label"') > x.index('name="Pic 1"')                             # S4: 이름표 맨 앞
+        assert (lx, ly) == (int(0.2 * E), int(7.1 * E)), (lx, ly)                              # 기준 화면의 이름표 자리
+        assert bx + bw <= px and by < int(0.3 * E), (bx, bw, px, by)                          # 옆 배치: 글 왼쪽·그림 오른쪽, 제목 뺀 자리까지 위로
+        assert bh < int(3.23 * E) and 'sz="1400"' not in x and max(int(v) for v in re.findall(r'sz="(\d+)"', re.search(r'name="TextBox 4".*?</p:sp>', x, re.S).group(0))) <= 2400
+        assert not T._inter((bx, by, bw, bh), (px, py, pw, ph)) and not T._inter((lx, ly, lw, lh), (px, py, pw, ph))
+    assert T.validate(out, path)
 
 
 def t_v1619_da_after_vowel():
