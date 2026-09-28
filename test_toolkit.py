@@ -1955,6 +1955,7 @@ def t_v1633_colors_band_fit_layout():
 def t_v1634_fit_layout_stage2():
     from pptx import Presentation
     from pptx.util import Inches, Pt
+    from pptx.enum.text import MSO_AUTO_SIZE
     from PIL import Image
     E = T.EMU_IN
     img = os.path.join(TMP, 'k17.png'); Image.new('RGB', (400, 300), 'gray').save(img)
@@ -1968,7 +1969,7 @@ def t_v1634_fit_layout_stage2():
         for pp in tf.paragraphs:
             for rr in pp.runs:
                 rr.font.size = Pt(body_pt)
-        b.text_frame.auto_size = True                                  # spAutoFit
+        b.text_frame.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT       # spAutoFit — True 는 Python 3.12 에서만 우연히 된다(K18)
         pic = sl.shapes.add_picture(img, Inches(7.06), Inches(1.2), Inches(2.8), Inches(2.1)); pic.name = 'Pic 1'
         lab = sl.shapes.add_textbox(Inches(lab_xy[0]), Inches(lab_xy[1]), Inches(1.4), Inches(0.3)); lab.name = 'Label'; lab.text_frame.text = '(R4 name)'
     slide('Endograft complications - Endoleak', 24, (0.2, 7.1))         # 1: 기준(이름표 좌하단, 본문 24pt)
