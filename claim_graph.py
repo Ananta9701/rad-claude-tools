@@ -42,7 +42,9 @@ import re
 import sys
 import zipfile
 
-__version__ = '15.8.1'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '15.8.2'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+# 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
+CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
 EDGE_TYPES = ('premise', 'support', 'context', 'caveat')
 EDGE_DEFAULT_WEIGHT = {'premise': 1.0, 'support': 0.7, 'context': 0.3, 'caveat': 0.5}
@@ -1137,6 +1139,8 @@ def selfcheck(folder, run_tests=False, stream=sys.stdout, role=None, compare=Non
         else:
             bad = []
             for f, h in re.findall(r'\| `([^`]+)` \| [^|]+ \| `([0-9a-f]{12})` \|', sec.group(1)):
+                if f in CODE_ONLY:          # v15.8.2: 비공개 저장소에서 릴리스 사이에도 바뀐다
+                    continue
                 fp = os.path.join(folder, f)
                 if os.path.exists(fp) and hashlib.sha256(open(fp, 'rb').read()).hexdigest()[:12] != h:
                     bad.append(f)

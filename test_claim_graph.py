@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '15.8.1'
+EXPECT_VERSION = '15.8.2'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -396,6 +396,33 @@ def t_selfcheck_tests_leave_no_pycache():
     r = CGm.selfcheck(d, run_tests=True, stream=io.StringIO())
     assert r['ok'], r['problems']
     assert not os.path.exists(os.path.join(d, '__pycache__')), os.listdir(d)
+
+def t_selfcheck_code_only_release_hash():
+    # v15.8.2 (코드 v2.43): 코드 전용 5개(HISTORY 등)는 비공개 저장소에서 릴리스 사이에도 바뀐다 — ②′ RELEASE 대조에서 뺀다.
+    # 공개 파일(claim_graph.py)은 그대로 잡는다
+    import hashlib, shutil, tempfile
+    code_only = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
+    d = tempfile.mkdtemp()
+    shutil.copy(CGm.__file__, d)
+    h = lambda f: hashlib.sha256(open(os.path.join(d, f), 'rb').read()).hexdigest()[:12]
+    man = ('**manifest 판: v1 · 릴리스 v1 · x**\n\n| `claim_graph.py` | v%s | `%s` | — | 1 |\n\n'
+           '## 2.\n\n| 파일 | 저자 |\n|---|:-:|\n| claim_graph.py | ○ |\n| TOOLS_MANIFEST.md · RELEASE.md | ○ |\n\n## 3.\n' % (CGm.__version__, h('claim_graph.py')))
+    open(os.path.join(d, 'TOOLS_MANIFEST.md'), 'w', encoding='utf8').write(man)
+    for f in code_only:
+        open(os.path.join(d, f), 'w', encoding='utf8').write('릴리스 뒤에 고친 내용\n')
+    rows = ''.join('| `%s` | — | `000000000000` | ○ |\n' % f for f in code_only)
+    def rel(cg_hash):
+        open(os.path.join(d, 'RELEASE.md'), 'w', encoding='utf8').write(
+            '# RELEASE v1 — manifest v1 — x\n\n### 저자 (3)\n| `claim_graph.py` | v1 | `%s` | — |\n| `TOOLS_MANIFEST.md` | v1 | `%s` | ○ |\n%s<!-- sets:end -->\n'
+            % (cg_hash, h('TOOLS_MANIFEST.md'), rows))
+    rel(h('claim_graph.py'))          # 성공 길: 코드 전용 해시가 모두 달라도 통과
+    buf = io.StringIO(); r = CGm.selfcheck(d, stream=buf)
+    assert r['ok'] and not any('②′' in p for p in r['problems']), (r['problems'], buf.getvalue())
+    rel('000000000000')               # 실패 길: 공개 파일 해시가 다르면 여전히 잡는다
+    r = CGm.selfcheck(d, stream=io.StringIO())
+    assert not r['ok'] and any('②′ claim_graph.py' in p for p in r['problems']), r['problems']
+    assert not any(('②′ %s' % f) in p for f in code_only for p in r['problems']), r['problems']
+    assert tuple(CGm.CODE_ONLY) == code_only, CGm.CODE_ONLY
 
 def t_claim_graph_cli():
     p = '/tmp/cg_cli.json'
