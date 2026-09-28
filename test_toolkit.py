@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.31'
+EXPECT_VERSION = '16.32'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -1792,6 +1792,91 @@ def t_v1631_adopt_house_look():
     assert 'FFFFFF' in re.search(r'name="Dark box".*?</p:sp>', y, re.S).group(0)   # 어두운 상자 안 흰 글자는 그대로
     assert T.adopt_house_look(d, order[1]) == [] or all(c.startswith('[참고]') or '밝은' in c for c in T.adopt_house_look(d, order[1], dry_run=True))
     d.save('/tmp/k12.pptx'); assert T.validate('/tmp/k12.pptx', SRC)
+
+
+def t_v1632_inherited_title_diff_boxes_bake_pts():
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    # K13: 위치·크기·채움을 물려받는 제목(슬라이드에 xfrm 없음) — 적어 넣고 보정, 레이아웃은 그대로
+    prs = Presentation(); prs.slide_width, prs.slide_height = Inches(10), Inches(7.5)
+    for txt in ('Prostate artery embolization outcomes and complications in a long title form here', 'Short'):
+        sl = prs.slides.add_slide(prs.slide_layouts[5]); sl.shapes.title.text_frame.text = txt
+    path = os.path.join(TMP, 'k13.pptx'); prs.save(path)
+    d = T.Deck.open(path, wd('k13')); order = [x for x, _, _ in d.order() if x]
+    lay = os.path.join(d.dir, 'ppt/slideLayouts', d.layout_of(order[0])); lx = open(lay, encoding='utf8').read()
+    lx = re.sub(r'(<p:ph type="title"/></p:nvPr></p:nvSpPr>)<p:spPr/>', r'\1<p:spPr><a:solidFill><a:srgbClr val="D9D9D9"/></a:solidFill></p:spPr>', lx, 1)
+    open(lay, 'w', encoding='utf8').write(lx)
+    i0 = T._title_info(d, order[0])
+    assert i0['inherit'] and i0['fill'] and 'D9D9D9' in i0['fill'], i0['fill']            # 채움도 레이아웃에서
+    r = T.raise_title_band(d, order[0])
+    assert r and r[0].startswith('물려받던 제목 — 적어 넣음 · 띠 1.25"'), r
+    x0 = open(d._slide(order[0]), encoding='utf8').read()
+    assert '<a:xfrm>' in re.search(r'<p:sp>(?:(?!<p:sp>).)*?type="title".*?</p:sp>', x0, re.S).group(0)
+    assert open(lay, encoding='utf8').read() == lx                                        # 레이아웃은 고치지 않는다
+    rb = T.balance_title_band(d, order[1], {'h_by_lines': {1: int(1.22 * T.EMU_IN)}, 'ins': (91440, 91440, 45720, 45720), 'est_sz': 4400})
+    assert rb and rb[0].startswith('물려받던 제목 — 적어 넣음 · ') and T._title_info(d, order[1])['tIns'] == T._title_info(d, order[1])['bIns'], rb
+    d.save('/tmp/k13o.pptx'); assert T.validate('/tmp/k13o.pptx', path)
+    # D1: 상자 순서만 바뀌고 한 상자 글 조각이 합쳐진 화면은 '의도하지 않은 글 변경' 이 아니다
+    A = T.Deck.open(SRC, wd('d1a')); sa = [x for x, _, _ in A.order() if x][6]
+    def tbx(i, nm, runs):
+        return ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="0" y="0"/>'
+                '<a:ext cx="100" cy="100"/></a:xfrm></p:spPr><p:txBody><a:bodyPr/><a:lstStyle/><a:p>%s</a:p></p:txBody></p:sp>'
+                % (i, nm, ''.join('<a:r><a:rPr lang="en-US"/><a:t>%s</a:t></a:r>' % t for t in runs)))
+    xa = open(A._slide(sa), encoding='utf8').read()
+    open(A._slide(sa), 'w', encoding='utf8').write(xa.replace('</p:spTree>', tbx(981, 'L', ['(R4 name)']) + tbx(982, 'T', ['complications - ', 'Endoleak']) + '</p:spTree>'))
+    A.save('/tmp/d1a.pptx')
+    B = T.Deck.open('/tmp/d1a.pptx', wd('d1b')); xb = open(B._slide(sa), encoding='utf8').read()
+    open(B._slide(sa), 'w', encoding='utf8').write(xb.replace(tbx(981, 'L', ['(R4 name)']) + tbx(982, 'T', ['complications - ', 'Endoleak']),
+                                                              tbx(982, 'T', ['complications - Endoleak']) + tbx(981, 'L', ['(R4 name)'])))
+    B.save('/tmp/d1b.pptx')
+    res = T.diff_decks('/tmp/d1a.pptx', '/tmp/d1b.pptx', stream=io.StringIO())
+    assert res['unintended'] == [] and 7 in res['slides_changed'], res
+    C = T.Deck.open('/tmp/d1a.pptx', wd('d1c')); xc = open(C._slide(sa), encoding='utf8').read()
+    open(C._slide(sa), 'w', encoding='utf8').write(xc.replace('Endoleak', 'Endoleak type II')); C.save('/tmp/d1c.pptx')
+    assert T.diff_decks('/tmp/d1a.pptx', '/tmp/d1c.pptx', stream=io.StringIO())['unintended'] == [7]
+    # D2: pt 로 고정된 줄 간격 문단 — bake 가 lnSpc 를 하나 더 넣지 않는다
+    E = T.Deck.open(SRC, wd('d2')); se = [x for x, _, _ in E.order() if x][6]
+    para = ('<a:p><a:pPr marL="0" lvl="0" indent="0"><a:lnSpc><a:spcPts val="2700"/></a:lnSpc><a:spcBef><a:spcPts val="1200"/></a:spcBef><a:buNone/></a:pPr>'
+            '<a:r><a:rPr lang="en-US" sz="1800"/><a:t>google export line</a:t></a:r></a:p>')
+    box = ('<p:sp><p:nvSpPr><p:cNvPr id="991" name="Google Shape;439;p42"/><p:cNvSpPr txBox="1"/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="100" y="100"/>'
+           '<a:ext cx="2560320" cy="1371600"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr><p:txBody><a:bodyPr anchor="b">'
+           '<a:normAutofit fontScale="55000" lnSpcReduction="20000"/></a:bodyPr><a:lstStyle/>%s</p:txBody></p:sp>' % (para * 6))
+    xe = open(E._slide(se), encoding='utf8').read(); open(E._slide(se), 'w', encoding='utf8').write(xe.replace('</p:spTree>', box + '</p:spTree>'))
+    assert E.bake_autofit(se, shape='Google Shape;439;p42') == 1
+    q = re.search(r'name="Google Shape;439;p42".*?</p:sp>', open(E._slide(se), encoding='utf8').read(), re.S).group(0)
+    assert q.count('<a:lnSpc>') == 6 and q.count('spcPts val="2160"') == 6 and 'sz="990"' in q, q[:600]
+    E.save('/tmp/d2o.pptx'); assert T.validate('/tmp/d2o.pptx', SRC)
+
+
+def t_v1632_title_block_k14():
+    from pptx import Presentation
+    from pptx.util import Inches, Pt
+    from pptx.dml.color import RGBColor
+    from pptx.enum.shapes import MSO_CONNECTOR
+    prs = Presentation(); prs.slide_width, prs.slide_height = Inches(10), Inches(7.5)
+    sl = prs.slides.add_slide(prs.slide_layouts[5]); sl.shapes.title.text_frame.text = 'Endoleak type II'   # 제목 위치는 마스터에서 물려받음
+    b = sl.shapes.add_textbox(Inches(0.5), Inches(0.43), Inches(9), Inches(6.9)); b.name = 'TextBox 4'
+    tf = b.text_frame; tf.text = 'type II green'; tf.paragraphs[0].runs[0].font.size = Pt(20)
+    tf.paragraphs[0].runs[0].font.color.rgb = RGBColor(0x92, 0xD0, 0x50)
+    p2 = tf.add_paragraph(); p2.text = 'red keep'; p2.runs[0].font.size = Pt(20); p2.runs[0].font.color.rgb = RGBColor(0xFF, 0, 0)
+    n = sl.shapes.add_textbox(Inches(8.5), Inches(7.1), Inches(1.4), Inches(0.3)); n.name = 'Label'; n.text_frame.text = '(R4 name)'
+    ln = sl.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(0.5), Inches(1.0), Inches(9.5), Inches(1.0)); ln.name = 'Rule 18'
+    path = os.path.join(TMP, 'k14.pptx'); prs.save(path)
+    d = T.Deck.open(path, wd('k14')); sn = [x for x, _, _ in d.order() if x][0]
+    assert T.adopt_house_look(d, sn, recolor=['92d050']) == ['지정한 색 92D050 1곳을 지워 테마 글자색으로']
+    dry = T.title_block(d, sn, band_h=1.22, dry_run=True)                                     # 기본: 내리지도 지우지도 않고 알림
+    assert any('--drop-title-rule' in c for c in dry) and any('--push-content' in c for c in dry), dry
+    r = T.title_block(d, sn, band_h=1.22, drop_rule=True, push=True)
+    assert r[0].startswith('물려받던 제목 — 적어 넣음 · 띠 1.25" → 1.22"') and any('옛 제목 밑줄 "Rule 18"' in c for c in r), r
+    x = open(d._slide(sn), encoding='utf8').read()
+    i = T._title_info(d, sn)
+    ty, tcy = (int(v) for v in re.search(r'name="TextBox 4".*?<a:off x="\d+" y="(\d+)"/><a:ext cx="\d+" cy="(\d+)"', x, re.S).groups())
+    assert ty == i['y'] + int(1.22 * T.EMU_IN) + int(0.1 * T.EMU_IN) and ty + tcy == int(7.5 * T.EMU_IN), (ty, tcy)   # 띠 아래 + 0.1", 슬라이드 안
+    assert 'sz="2000"' not in re.search(r'name="TextBox 4".*?</p:sp>', x, re.S).group(0)            # 넘침만큼 글자 비율로
+    assert 'Rule 18' not in x and '92D050' not in x and 'FF0000' in x
+    assert re.search(r'name="Label".*?<a:off x="\d+" y="(\d+)"', x, re.S).group(1) == str(int(7.1 * T.EMU_IN))   # 아래 이름표는 그대로
+    assert i['tIns'] == i['bIns']
+    d.save('/tmp/k14o.pptx'); assert T.validate('/tmp/k14o.pptx', path)
 
 
 def t_v1619_da_after_vowel():

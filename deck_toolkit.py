@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.31'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.32'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -1561,9 +1561,18 @@ class Deck:
                 q = re.sub(r'<a:r><a:t\b', '<a:r><a:rPr lang="ko-KR" sz="%d"/><a:t' % int(base * fs), q)
                 if red:
                     own = re.search(r'<a:lnSpc><a:spcPct val="(\d+)"/></a:lnSpc>', q)
-                    cur = int(own.group(1)) if own else lns.get(lv, lns.get(0, 100000))
-                    ln = '<a:lnSpc><a:spcPct val="%d"/></a:lnSpc>' % max(10000, cur - red)
-                    if own:
+                    pts = re.search(r'<a:lnSpc><a:spcPts val="(\d+)"/></a:lnSpc>', q)
+                    if pts:
+                        # v16.32 (발표 D2): pt 로 고정된 줄 간격(Google 내보내기) — 전에는 spcPct 를 하나 더 넣어 lnSpc 가 두 개가 됐다.
+                        # 명세 문구대로 lnSpcReduction 비율만 뺀다(글자 크기 비율은 곱하지 않는다 — PowerPoint 실제와 다를 수 있다)
+                        q = q.replace(pts.group(0), '<a:lnSpc><a:spcPts val="%d"/></a:lnSpc>' % max(100, int(int(pts.group(1)) * (1 - red / 100000.0))), 1)
+                        ln = None
+                    else:
+                        cur = int(own.group(1)) if own else lns.get(lv, lns.get(0, 100000))
+                        ln = '<a:lnSpc><a:spcPct val="%d"/></a:lnSpc>' % max(10000, cur - red)
+                    if ln is None:
+                        pass
+                    elif own:
                         q = q.replace(own.group(0), ln, 1)
                     elif re.search(r'<a:pPr\b[^>]*/>', q):
                         q = re.sub(r'<a:pPr\b([^>]*)/>', r'<a:pPr\1>%s</a:pPr>' % ln, q, count=1)
@@ -3109,6 +3118,38 @@ def _title_default_sz(deck, slide_no):
     return 3200
 
 
+def _title_chain(deck, slide_no):
+    """레이아웃 → 마스터의 제목 자리 표시자 도형(위치가 없는 것도) — 여백·채움을 물려받을 곳."""
+    out = []
+    for f in (os.path.join(deck.dir, 'ppt/slideLayouts', deck.layout_of(slide_no)), _master_of(deck, slide_no)):
+        if f and os.path.exists(f):
+            t = _TITLE_SP.search(open(f, encoding='utf8').read())
+            if t:
+                out.append(t.group(0))
+    return out
+
+
+def _title_materialized(i):
+    """v16.32 (발표 K13): 위치·크기를 물려받는 제목이면 물려받은 위치·크기·안쪽 여백을 슬라이드 도형에 적어 넣은 seg 를 돌려준다
+    (모양은 그대로). 레이아웃은 고치지 않는다. 반환 (seg, 적어 넣었나)."""
+    seg = i['seg']
+    if _GEO.search(seg):
+        return seg, False
+    xf = '<a:xfrm><a:off x="%d" y="%d"/><a:ext cx="%d" cy="%d"/></a:xfrm>' % (i['x'], i['y'], i['w'], i['h'])
+    if re.search(r'<p:spPr\s*/>', seg):
+        seg = re.sub(r'<p:spPr\s*/>', '<p:spPr>%s</p:spPr>' % xf, seg, 1)
+    else:
+        seg = re.sub(r'(<p:spPr\b[^>]*>)', lambda mm: mm.group(1) + xf, seg, 1)
+    at = ' lIns="%d" tIns="%d" rIns="%d" bIns="%d"' % (i['lIns'], i['tIns'], i['rIns'], i['bIns'])
+    bp = re.search(r'<a:bodyPr\b[^>]*?/?>', seg)
+    if bp:
+        tag = bp.group(0)
+        nt = re.sub(r'\s(?:lIns|tIns|rIns|bIns)="-?\d+"', '', tag)
+        nt = (nt[:-2] + at + '/>') if nt.endswith('/>') else (nt[:-1] + at + '>')
+        seg = seg.replace(tag, nt, 1)
+    return seg, True
+
+
 def _inherited_title(deck, slide_no):
     """레이아웃 → 마스터 순으로 제목 placeholder 의 위치·크기·bodyPr 를 찾는다."""
     for f in (os.path.join(deck.dir, 'ppt/slideLayouts', deck.layout_of(slide_no)), _master_of(deck, slide_no)):
@@ -3140,17 +3181,26 @@ def _title_info(deck, slide_no):
             return None
     seg = m.group(0)
     inh = _inherited_title(deck, slide_no) if kind == 'ph' else ''
+    chain = _title_chain(deck, slide_no) if kind == 'ph' else []     # v16.32 (발표 K13): 레이아웃(위치가 없어도) → 마스터
     g = _GEO.search(seg) or (_GEO.search(inh) if inh else None)
     if not g:
         return None
     geo = tuple(int(v) for v in g.groups())
     bp = re.search(r'<a:bodyPr\b([^>]*)', seg); bpa = bp.group(1) if bp else ''
-    bpi = re.search(r'<a:bodyPr\b([^>]*)', inh); bpia = bpi.group(1) if bpi else ''
+    bpis = [(re.search(r'<a:bodyPr\b([^>]*)', c) or [None, ''])[1] for c in chain] or [(re.search(r'<a:bodyPr\b([^>]*)', inh) or [None, ''])[1]]
     def ins(k, d):
-        mm = re.search(r'\b%s="(-?\d+)"' % k, bpa) or re.search(r'\b%s="(-?\d+)"' % k, bpia)
-        return int(mm.group(1)) if mm else d
-    sppr = re.search(r'<p:spPr\b[^>]*>(.*?)</p:spPr>', seg, re.S)
-    fill = re.search(r'<a:(?:solidFill|gradFill|blipFill|pattFill)>.*?</a:(?:solidFill|gradFill|blipFill|pattFill)>|<a:noFill/>', sppr.group(1), re.S) if sppr else None
+        for a in [bpa] + bpis:
+            mm = re.search(r'\b%s="(-?\d+)"' % k, a or '')
+            if mm:
+                return int(mm.group(1))
+        return d
+    FILL_RE = r'<a:(?:solidFill|gradFill|blipFill|pattFill)>.*?</a:(?:solidFill|gradFill|blipFill|pattFill)>|<a:noFill/>'
+    fill = None
+    for c in [seg] + chain:
+        sppr = re.search(r'<p:spPr\b[^>]*>(.*?)</p:spPr>', c, re.S)
+        fill = re.search(FILL_RE, re.sub(r'<a:ln\b.*?</a:ln>', '', sppr.group(1), flags=re.S), re.S) if sppr else None
+        if fill:
+            break
     paras = [html.unescape(''.join(_AT.findall(pm))) for pm in re.findall(r'<a:p>(.*?)</a:p>', seg, re.S)]
     szs = [int(v) for v in re.findall(r'<a:rPr\b[^>]*\bsz="(\d+)"', seg)]
     latin = re.search(r'<a:rPr\b.*?<a:latin typeface="([^"]*)"', seg, re.S)
@@ -3271,7 +3321,8 @@ def raise_title_band(deck, slide_no, dry_run=False, shrink_bottom=None):
         if i['y'] + need > top:
             return ['[!] 아래 여백을 %.2f" 로 줄여도 띠 %.2f" 가 "%s"(%.2f") 와 겹친다 — 바꾸지 않음'
                     % (shrink_bottom, need / EMU_IN, hit[0][0], top / EMU_IN)]
-    seg = re.sub(r'(<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy=")\d+(")', lambda m: m.group(1) + str(need) + m.group(2), i['seg'], 1)
+    base, mat = _title_materialized(i)
+    seg = re.sub(r'(<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy=")\d+(")', lambda m: m.group(1) + str(need) + m.group(2), base, 1)
     if new_b is not None and seg != i['seg']:
         bp = re.search(r'<a:bodyPr\b[^>]*?(/?)>', seg)
         if bp:
@@ -3279,14 +3330,13 @@ def raise_title_band(deck, slide_no, dry_run=False, shrink_bottom=None):
             new_tag = re.sub(r'\sbIns="-?\d+"', '', tag)
             new_tag = new_tag[:-2] + ' bIns="%d"/>' % new_b if new_tag.endswith('/>') else new_tag[:-1] + ' bIns="%d">' % new_b
             seg = seg.replace(tag, new_tag, 1)
-    if seg == i['seg']:
-        return ['[!] 띠 위치를 상속받는 자리 표시자 — 바꾸지 않음(titles --like 로 규격을 먼저)']
     if not dry_run:
         p = deck._slide(slide_no); x = open(p, encoding='utf8').read()
         open(p, 'w', encoding='utf8').write(x[:i['start']] + seg + x[i['end']:])
+    pre = '물려받던 제목 — 적어 넣음 · ' if mat else ''
     if new_b is not None:
-        return ['띠 %.2f" → %.2f"(%d줄) · 아래 여백 %.2f" → %.2f"(위 여백 그대로)' % (i['h'] / EMU_IN, need / EMU_IN, lines, (i['bIns'] or 0) / EMU_IN, new_b / EMU_IN)]
-    return ['띠 %.2f" → %.2f"(%d줄, 안쪽 여백 포함)' % (i['h'] / EMU_IN, need / EMU_IN, lines)]
+        return [pre + '띠 %.2f" → %.2f"(%d줄) · 아래 여백 %.2f" → %.2f"(위 여백 그대로)' % (i['h'] / EMU_IN, need / EMU_IN, lines, (i['bIns'] or 0) / EMU_IN, new_b / EMU_IN)]
+    return [pre + '띠 %.2f" → %.2f"(%d줄, 안쪽 여백 포함)' % (i['h'] / EMU_IN, need / EMU_IN, lines)]
 
 
 def balance_title_band(deck, slide_no, prof, gap_in=0.1, min_ins_in=0.05, dry_run=False):
@@ -3318,9 +3368,8 @@ def balance_title_band(deck, slide_no, prof, gap_in=0.1, min_ins_in=0.05, dry_ru
     ins = max(min_ins, (new_h - text_h) // 2)
     if abs(new_h - i['h']) < 0.02 * EMU_IN and abs((i['tIns'] or 0) - ins) < 0.02 * EMU_IN and abs((i['bIns'] or 0) - ins) < 0.02 * EMU_IN:
         return []
-    seg = re.sub(r'(<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy=")\d+(")', lambda m: m.group(1) + str(new_h) + m.group(2), i['seg'], 1)
-    if seg == i['seg'] and abs(new_h - i['h']) >= 0.02 * EMU_IN:
-        return ['[!] 띠 위치를 상속받는 자리 표시자 — 바꾸지 않음(titles --like 로 규격을 먼저)']
+    base, mat = _title_materialized(i)
+    seg = re.sub(r'(<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy=")\d+(")', lambda m: m.group(1) + str(new_h) + m.group(2), base, 1)
     bp = re.search(r'<a:bodyPr\b[^>]*?/?>', seg)
     if bp:
         tag = bp.group(0)
@@ -3330,7 +3379,7 @@ def balance_title_band(deck, slide_no, prof, gap_in=0.1, min_ins_in=0.05, dry_ru
     if not dry_run:
         p = deck._slide(slide_no); x = open(p, encoding='utf8').read()
         open(p, 'w', encoding='utf8').write(x[:i['start']] + seg + x[i['end']:])
-    return ['띠 %.2f" → %.2f"%s · 위/아래 여백 %.2f"/%.2f" → %.2f"/%.2f" (%d줄 %dpt)' % (
+    return [('물려받던 제목 — 적어 넣음 · ' if mat else '') + '띠 %.2f" → %.2f"%s · 위/아래 여백 %.2f"/%.2f" → %.2f"/%.2f" (%d줄 %dpt)' % (
         i['h'] / EMU_IN, new_h / EMU_IN, (' (아래 "%s" 까지)' % limit_by) if limit_by else ' (규격)',
         (i['tIns'] or 0) / EMU_IN, (i['bIns'] or 0) / EMU_IN, ins / EMU_IN, ins / EMU_IN, lines, sz // 100)]
 
@@ -3386,7 +3435,7 @@ def _slide_bg_rgb(deck, slide_no, theme):
     return theme.get('bg1', 'FFFFFF')
 
 
-def adopt_house_look(deck, slide_no, dry_run=False, light_text=0.85, light_bg=0.6):
+def adopt_house_look(deck, slide_no, dry_run=False, light_text=0.85, light_bg=0.6, recolor=()):
     """v16.31 (발표 K12): 가져온 슬라이드를 기준 덱 모양으로 — ① 밝은 배경 위의 아주 밝은 글자색(흰색 등)을 지워 테마 글자색을
     따르게(강조색·어두운 채움 상자 안의 흰 글자는 그대로), ② 제목 자리 표시자가 비었으면 위쪽의 제목 글상자(위 25% 안, 가장 큰
     글자, 두 문단 이하·80자 이하)를 제목 자리 표시자로 옮긴다(글만 옮기고 글상자는 지운다 — 뒤에 titles/title-bands 규격을 받게).
@@ -3439,6 +3488,23 @@ def adopt_house_look(deck, slide_no, dry_run=False, light_text=0.85, light_bg=0.
                 x2 = re.sub(r'(<p:grpSpPr\s*/>|<p:grpSpPr>.*?</p:grpSpPr>)', lambda mm: mm.group(1) + sp, x2, 1, flags=re.S)
             x = x2
             out.append('제목 글상자 "%s"(%dpt) → 제목 자리 표시자' % (text[:40], sz // 100))
+    # ①′ v16.32 (발표 K14, 사용자 09-28): 지정한 색(--recolor, 예: 연두 92D050·주황 FFC000)은 배경과 관계없이 테마 글자색으로 — 빨강은 강조로 남긴다
+    rec = {c.upper().lstrip('#') for c in (recolor or ()) if c}
+    if rec:
+        n_rec = 0
+
+        def fix_rec(rm):
+            nonlocal n_rec
+            inner = rm.group(0)
+            sf = re.search(r'<a:solidFill>(.*?)</a:solidFill>', inner, re.S)
+            c = _fill_rgb(sf.group(1), theme) if sf else None
+            if c and c in rec:
+                n_rec += 1
+                return inner.replace(sf.group(0), '', 1)
+            return inner
+        x = re.sub(r'<a:(?:rPr|endParaRPr)\b[^>]*>.*?</a:(?:rPr|endParaRPr)>', fix_rec, x, flags=re.S)
+        if n_rec:
+            out.append('지정한 색 %s %d곳을 지워 테마 글자색으로' % ('·'.join(sorted(rec)), n_rec))
     # ① 글자색
     bg = _slide_bg_rgb(deck, slide_no, theme)
     if bg is None:
@@ -3471,6 +3537,109 @@ def adopt_house_look(deck, slide_no, dry_run=False, light_text=0.85, light_bg=0.
             out.append('밝은 글자색 %d곳을 지워 테마 글자색으로(배경 #%s)' % (n_runs, bg))
     if not dry_run:
         open(p, 'w', encoding='utf8').write(x)
+    return out
+
+
+def title_block(deck, slide_no, band_h=None, prof=None, gap_in=0.1, drop_rule=False, push=False, min_pt=12, dry_run=False):
+    """v16.32 (발표 K14, 사용자 09-28): 가져온 해설 슬라이드를 "제목 띠 + 그 아래 본문" 으로 — `--screens` 로 준 화면만.
+    ① 제목 자리 표시자의 띠를 band_h(없으면 prof 규격 무리의 줄 수별 높이)로, 위쪽 끝 고정·위아래 여백 같게(물려받는 제목은 적어 넣는다).
+    ② drop_rule: 띠 안에 든 가로선 하나(옛 글상자 제목 밑줄 — 폭이 슬라이드의 40% 이상·두께 0.2" 이하)를 지운다. 둘 이상이면 지우지 않고 알림.
+    ③ push: 제목이 아닌 상자·그림 중 윗끝이 '띠 아랫끝 + 간격' 보다 위인 것을 같은 거리만큼 한 덩어리로 내린다(§0-C 의 예외 — 사용자
+       09-28, 이 명령으로 지정한 화면만). 내린 글상자가 슬라이드 아래를 넘으면 넘는 만큼 글자 크기를 비율로 줄여 적고 상자를 슬라이드 안으로
+       (min_pt 밑으로는 줄이지 않고 알림). 그림은 옮기기만, 넘으면 알림. 반환: 문자열 목록('[!]'·'[참고]' = 바꾸지 않은 것)."""
+    i = _title_info(deck, slide_no)
+    if not i or i['kind'] != 'ph':
+        return ['[!] 제목 자리 표시자가 없다 — adopt-house-look 으로 먼저 옮긴다']
+    W, H = deck.slide_size()
+    out = []
+    sz = i['eff_sz'] or 2800
+    lines = _title_lines(i, sz)
+    text_h = int(lines * sz / 100.0 * LINE_FACTOR * i.get('lnspc', 1.0) * 12700)
+    target = int(band_h * EMU_IN) if band_h else ((prof or {}).get('h_by_lines', {}).get(lines) or i['h'])
+    ins = max(int(0.05 * EMU_IN), (target - text_h) // 2)
+    base, mat = _title_materialized(i)
+    seg = re.sub(r'(<a:off x="-?\d+" y="-?\d+"\s*/>\s*<a:ext cx="\d+" cy=")\d+(")', lambda m: m.group(1) + str(target) + m.group(2), base, 1)
+    bp = re.search(r'<a:bodyPr\b[^>]*?/?>', seg)
+    if bp:
+        tag = bp.group(0); nt = re.sub(r'\s(?:tIns|bIns)="-?\d+"', '', tag)
+        nt = (nt[:-2] + ' tIns="%d" bIns="%d"/>' % (ins, ins)) if nt.endswith('/>') else (nt[:-1] + ' tIns="%d" bIns="%d">' % (ins, ins))
+        seg = seg.replace(tag, nt, 1)
+    x = open(deck._slide(slide_no), encoding='utf8').read()
+    x = x[:i['start']] + seg + x[i['end']:]
+    if seg != i['seg']:
+        out.append(('물려받던 제목 — 적어 넣음 · ' if mat else '') + '띠 %.2f" → %.2f" · 위/아래 여백 %.2f"' % (i['h'] / EMU_IN, target / EMU_IN, ins / EMU_IN))
+    band_bottom = i['y'] + target
+    tstart = i['start']
+
+    def shapes(xml):
+        res = []
+        tree = re.search(r'<p:spTree>(.*)</p:spTree>', xml, re.S)
+        off0 = tree.start(1)
+        body = tree.group(1)
+        k = 0
+        while True:
+            m = re.search(r'<p:(sp|pic|cxnSp|graphicFrame|grpSp)>', body[k:])
+            if not m:
+                break
+            tag = m.group(1); a = k + m.start()
+            depth, j = 0, a
+            pat = re.compile(r'<p:%s>|</p:%s>' % (tag, tag))
+            for mm in pat.finditer(body, a):
+                depth += 1 if mm.group(0)[1] != '/' else -1
+                if depth == 0:
+                    j = mm.end(); break
+            segx = body[a:j]
+            g = re.search(r'<a:off x="(-?\d+)" y="(-?\d+)"\s*/>\s*<a:ext cx="(\d+)" cy="(\d+)"', segx)
+            nm = re.search(r'<p:cNvPr\b[^>]*\bname="([^"]*)"', segx)
+            res.append({'tag': tag, 'start': off0 + a, 'end': off0 + j, 'seg': segx, 'name': html.unescape(nm.group(1)) if nm else '',
+                        'geo': tuple(int(v) for v in g.groups()) if g else None,
+                        'title': bool(re.search(r'<p:ph\b[^>]*type="(?:title|ctrTitle)"', segx)),
+                        'foot': bool(re.search(r'<p:ph\b[^>]*type="(?:dt|ftr|sldNum)"', segx))})
+            k = j
+        return res
+    # ② 옛 제목 밑줄
+    lines_in_band = [sh for sh in shapes(x) if not sh['title'] and sh['geo'] and sh['geo'][3] <= 0.2 * EMU_IN and sh['geo'][2] >= 0.4 * W
+                     and sh['geo'][1] + sh['geo'][3] <= band_bottom + 0.1 * EMU_IN
+                     and (sh['tag'] == 'cxnSp' or re.search(r'prst="line"', sh['seg']))]
+    if lines_in_band:
+        if not drop_rule:
+            out.append('[참고] 띠 안 가로선 %d개("%s") — 지우려면 --drop-title-rule' % (len(lines_in_band), lines_in_band[0]['name']))
+        elif len(lines_in_band) > 1:
+            out.append('[참고] 띠 안 가로선이 %d개 — 어느 것이 옛 제목 밑줄인지 애매해 지우지 않음' % len(lines_in_band))
+        else:
+            sh = lines_in_band[0]
+            x = x[:sh['start']] + x[sh['end']:]
+            out.append('옛 제목 밑줄 "%s"(y %.2f") 지움' % (sh['name'], sh['geo'][1] / EMU_IN))
+    # ③ 본문 내리기
+    limit = band_bottom + int(gap_in * EMU_IN)
+    offenders = [sh for sh in shapes(x) if not sh['title'] and not sh['foot'] and sh['geo'] and sh['geo'][1] < limit]
+    if offenders and not push:
+        out.append('[참고] 띠 아래 간격보다 위에 있는 상자 %d개("%s" 등) — 내리려면 --push-content' % (len(offenders), offenders[0]['name']))
+    elif offenders:
+        shift = limit - min(sh['geo'][1] for sh in offenders)
+        for sh in sorted(offenders, key=lambda s_: -s_['start']):
+            gx, gy, gw, gh = sh['geo']
+            ny, ncy, nseg = gy + shift, gh, sh['seg']
+            note = ''
+            if ny + gh > H:
+                if sh['tag'] == 'sp' and '<p:txBody>' in nseg:
+                    f = max(0.0, (H - ny) / float(gh))
+                    szs = [int(v) for v in re.findall(r'<a:(?:rPr|endParaRPr)\b[^>]*\bsz="(\d+)"', nseg)] or [1800]
+                    if max(szs) * f < min_pt * 100:
+                        out.append('[!] "%s" — 내리면 아래로 %.2f" 넘치는데 %dpt 밑으로 줄여야 해 글자는 그대로(상자만 내림)' % (sh['name'], (ny + gh - H) / EMU_IN, min_pt))
+                    else:
+                        nseg = re.sub(r'(<a:(?:rPr|endParaRPr)\b[^>]*?\bsz=")(\d+)"', lambda mm: '%s%d"' % (mm.group(1), int(int(mm.group(2)) * f)), nseg)
+                        nseg = re.sub(r'<a:(rPr|endParaRPr)\b((?:(?!\bsz=)[^>])*?)(/?)>', lambda mm: '<a:%s%s sz="%d"%s>' % (mm.group(1), mm.group(2), int(1800 * f), mm.group(3)), nseg)
+                        ncy = H - ny
+                        note = ' · 아래 넘침만큼 글자 %d%% 로(%s)' % (int(f * 100), '·'.join('%.1fpt' % (v * f / 100.0) for v in sorted(set(szs))))
+                else:
+                    note = ' · [!] 그림·도형이 아래로 %.2f" 넘침(크기 그대로)' % ((ny + gh - H) / EMU_IN)
+            nseg = re.sub(r'(<a:off x="-?\d+" y=")-?\d+("\s*/>\s*<a:ext cx="\d+" cy=")\d+(")',
+                          lambda mm: '%s%d%s%d%s' % (mm.group(1), ny, mm.group(2), ncy, mm.group(3)), nseg, 1)
+            x = x[:sh['start']] + nseg + x[sh['end']:]
+            out.append('"%s" 내림 %.2f"%s' % (sh['name'], shift / EMU_IN, note))
+    if not dry_run:
+        open(deck._slide(slide_no), 'w', encoding='utf8').write(x)
     return out
 
 
@@ -3967,7 +4136,10 @@ def _text_shapes(deck, slide_no):
             szs = [int(v) for v in re.findall(r'<a:(?:rPr|endParaRPr)\b[^>]*\bsz="(\d+)"', body)]
             sz = (max(szs) if szs else inh_sz.get(lv) or inh_sz.get(0) or 1800) / 100.0
             ln = re.search(r'<a:lnSpc><a:spcPct val="(\d+)"', body)
+            lpt = re.search(r'<a:lnSpc><a:spcPts val="(\d+)"', body)
             lnspc = int(ln.group(1)) / 100000.0 if ln else inh_ln.get(lv, inh_ln.get(0, 100000)) / 100000.0
+            if lpt and not ln:      # v16.32 (발표 D2): pt 로 고정된 줄 간격 — 줄 높이 = 그 pt(글자 크기와 무관)
+                lnspc = (int(lpt.group(1)) / 100.0) / (sz * LINE_FACTOR)
             def spc(tag, inh):
                 m1 = re.search(r'<a:%s><a:spcPts val="(\d+)"/>' % tag, body)
                 if m1:
@@ -4774,6 +4946,19 @@ def parse_screen_map(path):
     return out
 
 
+def _box_texts(deck, sn):
+    """v16.32 (발표 D1): 상자(도형·표)마다 글을 모아 띄어쓰기를 하나로 — 정렬한 목록. 상자 순서가 바뀌거나 한 상자 안의 글 조각이
+    합쳐져도 같다(adopt-house-look 이 제목 글상자를 제목 자리 표시자로 옮긴 화면이 '의도하지 않은 글 변경' 으로 잡힌 일)."""
+    x = open(deck._slide(sn), encoding='utf8').read()
+    out = []
+    for m in re.finditer(r'<p:(sp|graphicFrame)>(?:(?!<p:\1>).)*?</p:\1>', x, re.S):
+        t = ' '.join(html.unescape(''.join(_AT.findall(q))) for q in re.findall(r'<a:p>(.*?)</a:p>', m.group(0), re.S))
+        t = re.sub(r'\s+', ' ', t).strip()
+        if t:
+            out.append(t)
+    return sorted(out)
+
+
 def _slide_text(deck, sn):
     return ' '.join(t.strip() for t in deck.texts(sn) if t.strip())
 
@@ -4860,7 +5045,7 @@ def _diff_decks(A, B, src, stream, mapping, match_text, memo_only):
         sb = ob[pos - 1]
         if open(D._slide(sa), encoding='utf8').read() != open(B._slide(sb), encoding='utf8').read():
             res['slides_changed'].append(pos)
-        if _slide_text(D, sa) != _slide_text(B, sb) and not intended:
+        if _box_texts(D, sa) != _box_texts(B, sb) and not intended:   # v16.32 (발표 D1): 상자 순서·조각 합침은 같은 글
             res['unintended'].append(pos)
         allp = D.notes_paragraphs(sa)
         if memo_only:
@@ -5176,6 +5361,12 @@ def main():
     ex = sub.add_parser('handout'); ex.add_argument('pptx'); ex.add_argument('-o', required=True)
     hl = sub.add_parser('adopt-house-look', help='가져온 슬라이드의 흰 글자·글상자 제목을 기준 덱 모양으로(v16.31, 발표 K12)')
     hl.add_argument('pptx'); hl.add_argument('-o', required=True); hl.add_argument('--screens', required=True); hl.add_argument('--dry-run', action='store_true')
+    hl.add_argument('--recolor', default='', help='테마 글자색으로 바꿀 색(쉼표, 예: 92D050,FFC000) — 빨강은 넣지 않으면 그대로(v16.32 K14)')
+    hl.add_argument('--title-band', action='store_true', help='제목 띠 + 그 아래 본문(K14): 띠 높이는 --band-height 또는 --like 규격')
+    hl.add_argument('--band-height', type=float, default=None); hl.add_argument('--like', type=int, default=None)
+    hl.add_argument('--push-content', action='store_true', help='띠 아래 간격보다 위의 상자·그림을 한 덩어리로 내린다(§0-C 예외 — 지정한 화면만)')
+    hl.add_argument('--drop-title-rule', action='store_true', help='띠 안 가로선(옛 제목 밑줄) 하나를 지운다 — 둘 이상이면 알림')
+    hl.add_argument('--gap', type=float, default=0.1); hl.add_argument('--min-pt', type=int, default=12)
     tb = sub.add_parser('title-bands', help='제목 띠가 필요 높이보다 낮으면 키운다 — Google Slides 안전(v16.28, 발표 K8)')
     tb.add_argument('pptx'); tb.add_argument('-o', required=True); tb.add_argument('--screens', default=None); tb.add_argument('--dry-run', action='store_true')
     tb.add_argument('--shrink-bottom-inset', nargs='?', const=0.1, type=float, default=None,
@@ -5324,10 +5515,19 @@ def main():
     elif args.cmd == 'handout':
         print(export_notes(Deck.open(args.pptx), args.o))
     elif args.cmd == 'adopt-house-look':
-        dk = Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]
+        # dry-run 도 사본 덱에 실제로 해 본다(제목을 옮긴 뒤의 띠·본문을 보려면) — 저장만 하지 않는다
+        dk = Deck.open(args.pptx, tempfile_dir('ahl')) if args.dry_run else Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]
+        rec = [c.strip() for c in args.recolor.split(',') if c.strip()]
+        bprof = title_profile(dk, like=args.like) if (args.title_band and args.like) else None
+        if args.title_band and not (args.band_height or bprof):
+            sys.exit('--title-band 에는 --band-height 인치 또는 --like 기준 화면이 필요하다')
         for pos in sorted(_parse_screens(args.screens, len(order))):
-            for c in adopt_house_look(dk, order[pos - 1], dry_run=args.dry_run):
+            for c in adopt_house_look(dk, order[pos - 1], recolor=rec):
                 print('화면 %d: %s' % (pos, c))
+            if args.title_band:
+                for c in title_block(dk, order[pos - 1], band_h=args.band_height, prof=bprof, gap_in=args.gap, drop_rule=args.drop_title_rule,
+                                     push=args.push_content, min_pt=args.min_pt):
+                    print('화면 %d: %s' % (pos, c))
         if not args.dry_run:
             dk.save(args.o)
         print('(dry-run — 저장 안 함)' if args.dry_run else '→ %s' % args.o)
@@ -5349,7 +5549,7 @@ def main():
                 print('화면 %d: %s' % (pos, c))
                 if c.startswith('[!]'):
                     n_sk += 1
-                else:
+                elif not c.startswith('[참고]'):
                     n_ch += 1
         if not args.dry_run:
             dk.save(args.o)

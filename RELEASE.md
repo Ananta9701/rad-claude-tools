@@ -1,31 +1,31 @@
-# RELEASE v2.32 — manifest v52 — 2026-09-27
+# RELEASE v2.33 — manifest v53 — 2026-09-28
 
-> **v2.32** — 발표 `260927_도구회신_K11나누기_K12흰글자제목_v1`(인터벤션 첫 병합 뒤 사용자 관찰) 처리. `handoff.py` 2.0(나누기 — 넘김 문법이 늘어 +1), `deck_toolkit.py` 16.31. 이전 판 내용은 `HISTORY.md`.
-> 사용자 결정(09-27): 나눈 두 장 모두 원작자 메모를 둔다.
+> **v2.33** — 발표 `260927_도구회신_K13상속제목띠_v1`·`260928_도구회신_diff상자순서_bake잔여넘침_v1`·`260928_도구회신_K14가져온슬라이드_본문내리기_색_v1`(+ `260928_통보_발표to코드_K14사용자결정_v1`) 처리. `deck_toolkit.py` 16.32 하나. 이전 판 내용은 `HISTORY.md`.
+> 사용자 결정(09-28): 가져온 해설 슬라이드는 제목 띠 아래로 본문(§0-C 예외 — 지정한 화면만), 연두·주황은 검정(테마 글자색), 빨강은 강조로 남김, 옛 제목 밑줄은 지운다. 화면 149·250 은 bake 하지 않은 원래 모양으로(발표). K11 나누기 실물 확인(사용자 "제대로 나옴").
 
 ## 1. 바뀐 것
 
 | 도구 | 판 | 내용 |
 |---|---|---|
-| `handoff.py` | 2.0 | **K11 `나누기`** — `작업: 나누기 — 본문 k 문단 뒤에서`(선택 `· 제목에 번호`), `나눈 뒤(2/2) 대본:`(필수)·`나눈 뒤(2/2) 참고:`·`나눈 뒤(2/2) 상자 지우기: "…"`. 화면을 바로 뒤에 복제(그림·글상자·원작자 메모 두 장 모두), 1/2 는 앞 k 문단·2/2 는 나머지, 2/2 노트는 나눈 뒤 대본·참고 + 같은 메모. check 가 비어 있지 않은 문단 수로 k 를 대조(문단 작업이 같이 있으면 경고). 보고서 "나누기" 줄(두 slide, 넘침 [심각] 전 → 1/2 + 2/2, 메모 같음). 앞에 복제·삭제와 같이 쓰면 오류 |
-| `test_handoff.py` | 2.0 | 26개(+1): 문법 오류 3가지, check 의 문단 수, 적용(순서·본문 나눔·제목 번호·두 노트·메모 두 장 같음·보고) |
-| `HANDOFF_FORMAT.md` | 2.0 | 나누기 한 문단 |
-| `deck_toolkit.py` | 16.31 | **K12 `adopt-house-look --screens … [--dry-run]`** — ① 밝은 배경 위 아주 밝은 글자색(흰색 등)을 지워 테마 글자색으로(강조색·어두운 채움 상자·그림·도형은 그대로, 배경이 그림·그라데이션·어두우면 그대로). ② 제목 자리 표시자가 비었으면 위쪽 가장 큰 글자 글상자를 제목 자리 표시자로 옮김(애매하면 [참고]) — 그 뒤 `titles`/`title-bands` 로 규격을 받는다 |
-| `test_toolkit.py` | 16.31 | 176개(+1): 흰 글자 → 테마색, 빨강 그대로, 어두운 상자 그대로, 글상자 제목 → 제목 자리 표시자 |
-| `DECK_SPEC.md` | 16.31 | 판 기록 |
+| `deck_toolkit.py` | 16.32 | **K13** 물려받는 제목(슬라이드에 위치 없음)도 `title-bands` 세 방식 대상 — 바꿀 때 위치·크기·안쪽 여백을 그 슬라이드에 적어 넣는다(모양 그대로, 레이아웃 불변), 보고 "물려받던 제목 — 적어 넣음". 제목 정보가 여백·**채움**을 레이아웃(위치가 없는 자리 표시자도) → 마스터에서 물려받는다 — 전에는 채움을 슬라이드에서만 봐 `--balance` 가 '회색 띠 아님' 으로 조용히 건너뛰었다. **D1** `diff` 가 '의도하지 않은 글 변경' 을 상자별 글 모음으로(순서 무시·조각 합침 같음). **D2** `bake-autofit` 결함: pt 고정 줄 간격(`spcPts`) 문단에 `lnSpc` 를 하나 더 넣어 문단마다 줄 간격이 두 개가 됐다(재현 확인) — 이제 그 pt 에서 lnSpcReduction 비율만 뺀다. 넘침 계산이 pt 줄 간격을 읽는다(전에는 무시하고 글자 크기 × 1.22 로 쟀다) |
+| `deck_toolkit.py`(K14) | 16.32 | **K14** `adopt-house-look` 에 `--recolor 색,색`(지정한 색만 테마 글자색 — 빨강 등은 그대로), `--title-band --band-height 인치 \| --like N`(제목 띠 높이·위아래 여백 같게, 물려받는 제목은 적어 넣음), `--drop-title-rule`(띠 안 가로선 하나 지움 — 둘 이상이면 알림), `--push-content [--gap 0.1] [--min-pt 12]`(띠 아래 간격보다 위의 상자·그림을 한 덩어리로 내림, 아래를 넘는 글상자는 넘는 만큼 글자 비율로 줄이고 상자를 슬라이드 안으로, 그림은 옮기기만). 기본은 내리지도 지우지도 않고 [참고] 로 알림. dry-run 은 사본 덱에서 실제로 해 보고 저장하지 않는다 |
+| `test_toolkit.py` | 16.32 | 178개(+2): 물려받는 제목 키우기·균형(적어 넣음·레이아웃 불변·채움 물려받음), diff 상자 순서·조각 합침은 같은 글·진짜 변경은 잡음, bake pt 줄 간격(중복 없음·2700→2160·글자 55%), K14(색·띠·밑줄·본문 내림·글자 비율·아래 이름표 그대로·기본은 알림만) |
+| `DECK_SPEC.md` | 16.32 | 판 기록 |
 
 ## 2. 회신 항목별 답
 
 | 항목 | 반영 |
 |---|---|
-| K11 나누기 — 메모 규칙 | 두 장 모두(사용자 결정). 넘김 문법은 발표 제안대로(`나눈 뒤(2/2) 대본:`), 2/2 글상자 지우기는 `나눈 뒤(2/2) 상자 지우기:` 로(지금 문법의 해설 상자는 앞에 복제에만) |
-| K11 제목 번호 | 선택 작업어 `제목에 번호` |
-| K12 흰 글자·글상자 제목 | deck 16.31 `adopt-house-look` — 대안(`배경 원천대로`)은 만들지 않음(사용자는 통일을 원함) |
-| 참고: 기준 덱 화면 80–88 제목 넘침 | 도구 변경 없음 — `title-bands`(발표 미리보기 중) |
+| K13 물려받는 제목도 title-bands 로 | deck 16.32. 원인 둘: 위치가 없으면 도구가 '상속 — 바꾸지 않음' 으로 돌려보냈고, `--balance` 는 채움을 슬라이드에서만 봐 레이아웃이 칠한 회색 띠를 못 알아봤다 |
+| 참고: 원래 덱 제목 넘침 36화면 | 도구 변경 없음 — 발표·사용자가 따로 |
+| D1 diff 상자 순서 | deck 16.32 — 발표 제안대로 |
+| K14 가져온 해설 슬라이드 — 제목 띠 + 그 아래 본문, 색 | deck 16.32 `adopt-house-look` 옵션 넷. 사용자 결정 두 가지(빨강 남김·옛 밑줄 지움) — 도구 기본값은 '알림만'(발표가 옵션으로 켠다). §0-C 에 예외 한 줄 |
+| K14 참고: 화면 149·250 bake 안 함 | 도구 변경 없음(발표가 대상에서 뺀다) — D2 결함 수정은 그대로 넣었다 |
+| D2 bake 뒤 넘침 추정 2곳 | **결함 하나 확인**: pt 고정 줄 간격 문단에 lnSpc 중복(Google 내보내기 상자에 흔하다 — 두 상자 이름이 `Google Shape;…`). 고쳤다. 넘침 계산도 pt 줄 간격을 읽게 했다. **남은 불확실**: PowerPoint 의 자동 맞춤이 pt 줄 간격·문단 앞 간격(spcBef pt)을 글자 비율로 줄이는지 명세로는 알 수 없다 — 도구는 명세 문구대로 줄 간격에서 축소 비율만 뺀다. 두 화면(148·249)은 bake 를 다시 한 뒤 사용자가 PowerPoint·Google Slides 로 본다 |
 
 ## 3. 받을 파일
 
-zip 두 개: `v2.32_GitHub.zip`(GitHub 에 전부), `v2.32_코드전용.zip`(코드 프로젝트 파일을 전부 지우고 5개).
+zip 두 개: `v2.33_GitHub.zip`(GitHub 에 전부), `v2.33_코드전용.zip`(코드 프로젝트 파일을 전부 지우고 5개).
 
 <!-- sets:begin — release.py 가 만든다. 손으로 고치지 않는다 -->
 ### 저자 (7)
@@ -36,8 +36,8 @@ zip 두 개: `v2.32_GitHub.zip`(GitHub 에 전부), `v2.32_코드전용.zip`(코
 | `CLAIM_GRAPH.md` | v15.8.1 | `ca0bd5652f32` | — |
 | `verify_toolkit.py` | v1.3.4 | `e703af6d5418` | — |
 | `test_verify_toolkit.py` | v1.3.4 | `aba65de39d87` | — |
-| `TOOLS_MANIFEST.md` | v52 | `3159d8b88421` | ○ |
-| `RELEASE.md` | v2.32 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v53 | `8ad8bb712d53` | ○ |
+| `RELEASE.md` | v2.33 | — | 이 문서 |
 
 ### 발표 (11)
 | 파일 | 판 | 해시 | 변경 |
@@ -45,14 +45,14 @@ zip 두 개: `v2.32_GitHub.zip`(GitHub 에 전부), `v2.32_코드전용.zip`(코
 | `claim_graph.py` | v15.8.1 | `dc3ac0780b61` | — |
 | `test_claim_graph.py` | v15.8.1 | `bcfe1c1e42d6` | — |
 | `CLAIM_GRAPH.md` | v15.8.1 | `ca0bd5652f32` | — |
-| `deck_toolkit.py` | v16.31 | `6a87e0849537` | ○ |
-| `test_toolkit.py` | v16.31 | `cb14d97150dc` | ○ |
-| `DECK_SPEC.md` | v16.31 | `297ef9629d53` | ○ |
-| `handoff.py` | v2.0 | `642269d51cc5` | ○ |
-| `test_handoff.py` | v2.0 | `3c660a5a654c` | ○ |
-| `HANDOFF_FORMAT.md` | v2.0 | `577b9f35e9d9` | ○ |
-| `TOOLS_MANIFEST.md` | v52 | `3159d8b88421` | ○ |
-| `RELEASE.md` | v2.32 | — | 이 문서 |
+| `deck_toolkit.py` | v16.32 | `2e810da2db3a` | ○ |
+| `test_toolkit.py` | v16.32 | `218c6138bb7c` | ○ |
+| `DECK_SPEC.md` | v16.32 | `d5b80329a1e2` | ○ |
+| `handoff.py` | v2.0 | `642269d51cc5` | — |
+| `test_handoff.py` | v2.0 | `3c660a5a654c` | — |
+| `HANDOFF_FORMAT.md` | v2.0 | `577b9f35e9d9` | — |
+| `TOOLS_MANIFEST.md` | v53 | `8ad8bb712d53` | ○ |
+| `RELEASE.md` | v2.33 | — | 이 문서 |
 
 ### 리뷰어 (6)
 | 파일 | 판 | 해시 | 변경 |
@@ -61,8 +61,8 @@ zip 두 개: `v2.32_GitHub.zip`(GitHub 에 전부), `v2.32_코드전용.zip`(코
 | `test_claim_graph.py` | v15.8.1 | `bcfe1c1e42d6` | — |
 | `CLAIM_GRAPH.md` | v15.8.1 | `ca0bd5652f32` | — |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v52 | `3159d8b88421` | ○ |
-| `RELEASE.md` | v2.32 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v53 | `8ad8bb712d53` | ○ |
+| `RELEASE.md` | v2.33 | — | 이 문서 |
 
 ### 교과서 (5)
 | 파일 | 판 | 해시 | 변경 |
@@ -70,8 +70,8 @@ zip 두 개: `v2.32_GitHub.zip`(GitHub 에 전부), `v2.32_코드전용.zip`(코
 | `textbook.py` | v0.5 | `5f916620c6c0` | — |
 | `test_textbook.py` | v0.5 | `4b2da8dfcecb` | — |
 | `TEXTBOOK.md` | v0.5 | `d441d67eea3e` | — |
-| `TOOLS_MANIFEST.md` | v52 | `3159d8b88421` | ○ |
-| `RELEASE.md` | v2.32 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v53 | `8ad8bb712d53` | ○ |
+| `RELEASE.md` | v2.33 | — | 이 문서 |
 
 ### 코드 (22)
 | 파일 | 판 | 해시 | 변경 |
@@ -79,34 +79,34 @@ zip 두 개: `v2.32_GitHub.zip`(GitHub 에 전부), `v2.32_코드전용.zip`(코
 | `claim_graph.py` | v15.8.1 | `dc3ac0780b61` | — |
 | `test_claim_graph.py` | v15.8.1 | `bcfe1c1e42d6` | — |
 | `CLAIM_GRAPH.md` | v15.8.1 | `ca0bd5652f32` | — |
-| `deck_toolkit.py` | v16.31 | `6a87e0849537` | ○ |
-| `test_toolkit.py` | v16.31 | `cb14d97150dc` | ○ |
-| `DECK_SPEC.md` | v16.31 | `297ef9629d53` | ○ |
+| `deck_toolkit.py` | v16.32 | `2e810da2db3a` | ○ |
+| `test_toolkit.py` | v16.32 | `218c6138bb7c` | ○ |
+| `DECK_SPEC.md` | v16.32 | `d5b80329a1e2` | ○ |
 | `verify_toolkit.py` | v1.3.4 | `e703af6d5418` | — |
 | `test_verify_toolkit.py` | v1.3.4 | `aba65de39d87` | — |
-| `handoff.py` | v2.0 | `642269d51cc5` | ○ |
-| `test_handoff.py` | v2.0 | `3c660a5a654c` | ○ |
-| `HANDOFF_FORMAT.md` | v2.0 | `577b9f35e9d9` | ○ |
+| `handoff.py` | v2.0 | `642269d51cc5` | — |
+| `test_handoff.py` | v2.0 | `3c660a5a654c` | — |
+| `HANDOFF_FORMAT.md` | v2.0 | `577b9f35e9d9` | — |
 | `textbook.py` | v0.5 | `5f916620c6c0` | — |
 | `test_textbook.py` | v0.5 | `4b2da8dfcecb` | — |
 | `TEXTBOOK.md` | v0.5 | `d441d67eea3e` | — |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v52 | `3159d8b88421` | ○ |
+| `TOOLS_MANIFEST.md` | v53 | `8ad8bb712d53` | ○ |
 | `CODE_PROJECT_README.md` | v5 | `6db694b44ea6` | — |
-| `HISTORY.md` | — | `ec37b3e2c993` | ○ |
+| `HISTORY.md` | — | `0ae8f5dc1218` | ○ |
 | `release.py` | — | `00abde82a376` | — |
 | `GITHUB_README.md` | — | `a338fce401db` | — |
-| `PRIVATE_TERMS.txt` | — | `d2562278023a` | — |
-| `RELEASE.md` | v2.32 | — | 이 문서 |
+| `PRIVATE_TERMS.txt` | — | `6e8c2862cf5e` | ○ |
+| `RELEASE.md` | v2.33 | — | 이 문서 |
 <!-- sets:end -->
 
 ## 4. 각 프로젝트 대화창이 첫 세션에서 할 일
 
-1. 발표: 인터벤션 v1 화면 25–33 에 `adopt-house-look --screens 25-33 --dry-run` → 사용자와 목록 → 적용 → `title-bands --balance --like {원래 제목 화면}` 으로 새 제목 띠 → 전후 diff(글·노트 불변, 색·제목만). 화면 10 은 영상의학에 나누기 넘김을 요청(나눌 문단 k·두 장 대본 — HANDOFF_FORMAT v2.0).
-2. 영상의학: 넘김 문법에 `나누기` 가 생겼다(HANDOFF_FORMAT v2.0 — GitHub).
-3. 저자·리뷰어·교과서: 도구 변경 없음.
+1. 발표: 인터벤션 **대본 v2 에서 다시**(발표 계획대로) — 화면 26–34 `adopt-house-look --screens 26-34 --recolor 92D050,FFC000 --title-band --like 35 --drop-title-rule --push-content --dry-run` → 사용자와 → 적용. 이어서 인터벤션 화면 80–88(근골격 95·96 도)에 `title-bands --dry-run`(필요하면 `--shrink-bottom-inset`·`--balance --like N`) — 이제 "물려받던 제목 — 적어 넣음" 줄이 나와야 한다. **D2**: v1 에서 bake 한 화면 148·249 는 v2.32 bake 로 lnSpc 가 두 개일 수 있다 — 원래 판(bake 전)에서 v2.33 로 다시 bake 하고 `overflow` 로 본 뒤 사용자 화면 확인.
+2. 그 밖의 프로젝트: 도구 변경 없음.
 
 ## 5. 검증하지 않은 것
 
-- `adopt-house-look` 은 fixture 한 장으로만. 실제 인터벤션 slide338–346 의 흰 글자가 run 에 직접 지정된 색인지(그러면 지운다), 도형·표·레이아웃에서 오는 색인지(그러면 못 바꾼다)는 dry-run 에서 드러난다. 제목 글상자 고르기(가장 위·가장 큰 글자)는 글상자가 여럿인 슬라이드에서 틀릴 수 있어 애매하면 옮기지 않는다.
-- 나누기 뒤 넘침이 실제로 줄었는지는 보고서 줄로 본다 — 1/2 에 남은 문단이 여전히 길면 줄지 않는다.
+- K13 은 python-pptx 기본 템플릿(마스터에서 위치를 물려받음)으로만. 인터벤션 slideLayout19 처럼 레이아웃이 위치·채움을 따로 가진 경우는 발표 dry-run 에서 본다.
+- D2 의 PowerPoint 자동 맞춤 의미(pt 줄 간격·문단 앞 간격을 줄이는지)는 확인하지 않았다.
+- K14 는 python-pptx fixture 한 장으로(제목은 마스터에서 물려받음, 본문 글상자 하나, 가로선 하나, 아래 이름표). 실제 slide338–346 의 본문이 여러 상자·그림일 때 한 덩어리로 내린 뒤 서로 겹치지 않는지, 글자 비율로 줄인 뒤 줄바꿈이 달라지는지는 dry-run·사용자 화면으로 본다.
