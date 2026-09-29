@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.7'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.8'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -700,11 +700,15 @@ def _mapdraw_compact(claims, text=False):
         node_lines[cid] = '%s%s"%s"%s' % (nid[cid], a, '<br/>'.join(_mm(x) for x in lab), b)
     for g, members in groups.items():
         L.append('  subgraph %s["%s"]' % (gid[g], _mm(g)))
+        if len(groups) > 1:
+            L.append('    direction LR')
         L += ['    ' + node_lines[cid] for cid in members]
         L.append('  end')
     L += ['  ' + line for cid, line in node_lines.items() if not by_id[cid].get('group')]
     for up, typ, cid in drawn:
         L.append('  %s %s %s' % (nid[up], _EDGE_ARROW.get(typ, '-->'), nid[cid]))
+    if len(groups) > 1:                 # v16.8 (사용자 09-29): 보이지 않는 연결로 묶음을 처음 나온 순서대로 위→아래(계단) — 순서가 뒤집히고
+        L.append('  ' + ' ~~~ '.join(gid[g] for g in groups))   # 결론 선이 다른 묶음을 가로지르던 것(가짜 증례 3개로 재 봄: 가로지름 2 → 0)
     for role, style in _ROLE_COLOR.items():
         ids = [nid[cid] for cid in by_id if cid in linked and by_id[cid].get('role') == role and by_id[cid].get('status') not in ('superseded', 'excluded')]
         if ids:

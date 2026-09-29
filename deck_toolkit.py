@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.43'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.44'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -4816,15 +4816,22 @@ _FONT_CACHE = {}
 
 
 def _parse_screens(spec, n):
-    """'3,5-9' → {3,5,6,7,8,9} (1..n 안)."""
-    out = set()
+    """'3,5-9' → {3,5,6,7,8,9}. v16.44 (코드 리뷰 ⑬): 1..n 밖이거나 숫자가 아니면 멈춘다 — 전에는 조용히 버렸고,
+    따로 풀던 명령에서는 0 이 마지막 화면(order[-1])이 됐다."""
+    out, bad = set(), []
     for part in str(spec).split(','):
         part = part.strip()
-        if '-' in part:
-            a, b = part.split('-', 1); out |= set(range(int(a), int(b) + 1))
-        elif part:
-            out.add(int(part))
-    return {k for k in out if 1 <= k <= n}
+        try:
+            if '-' in part:
+                a, b = part.split('-', 1); out |= set(range(int(a), int(b) + 1))
+            elif part:
+                out.add(int(part))
+        except ValueError:
+            bad.append(part)
+    bad += [str(k) for k in sorted(out) if not 1 <= k <= n]
+    if bad:
+        raise SystemExit('[멈춤] 화면 번호 %s 는 이 덱에 없다 — 1-%d 안에서 준다' % (', '.join(bad[:10]), n))
+    return out
 
 
 def _text_width_pt(text, size_pt, font_path=None):
@@ -6121,9 +6128,8 @@ def main():
                        sources=srcs, match_text=args.match_text, memo_only=args.memo_only)
         sys.exit(1 if any(f or g for _, f, g in r['notes'].values()) or r['sldnum_lost'] or r['unintended'] or r['unmatched'] else 0)
     elif args.cmd == 'bake-autofit':
-        dk = Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]; scr = []
-        for part in args.screens.split(','):
-            a, _, b = part.partition('-'); scr += list(range(int(a), int(b or a) + 1))
+        dk = Deck.open(args.pptx); order = [s for s, _, _ in dk.order() if s]
+        scr = sorted(_parse_screens(args.screens, len(order)))     # v16.44: 따로 풀던 것 — 0 이 마지막 화면이 됐다
         for k in scr:
             print('화면 %d: 자동 맞춤 비율을 적어 넣은 상자 %d개' % (k, dk.bake_autofit(order[k - 1])))
         out = args.o or _default_out(args.pptx, '_baked'); dk.save(out)
@@ -6349,9 +6355,7 @@ def main():
                       ', '.join(str(pos.get(sn, '?')) for sn, _, _, _ in rows[:15]) + (' …' if len(rows) > 15 else '')))
         scr = None
         if args.screens:
-            scr = []
-            for part in args.screens.split(','):
-                a, _, b = part.partition('-'); scr += list(range(int(a), int(b or a) + 1))
+            scr = sorted(_parse_screens(args.screens, len([s for s, _, _ in dk.order() if s])))   # v16.44
         print('=== 제목 점검 ===')
         bad = check_title_template(dk, prof, screens=scr)
         if args.apply:

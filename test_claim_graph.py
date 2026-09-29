@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.7'
+EXPECT_VERSION = '16.8'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -874,6 +874,11 @@ def t_v166_excluded_ddx_and_case_kind():
     md = CGm.mapdraw(copy.deepcopy(g))
     blk = md.split('```mermaid')[1].split('```')[0]
     assert 'subgraph g1["c1"]' in blk and 'subgraph g2["c2"]' in blk and blk.count('  end') == 2, blk   # 증례마다 묶음
+    assert '  g1 ~~~ g2' in blk and blk.count('direction LR') == 2, blk                          # v16.8: 처음 나온 순서로 위→아래(보이지 않는 연결)
+    rev = CGm.mapdraw([x for x in g if x['group'] == 'c2'] + [x for x in g if x['group'] == 'c1'])
+    assert 'subgraph g1["c2"]' in rev and '  g1 ~~~ g2' in rev, rev                             # 처음 나온 순서 = 파일 순서
+    one = CGm.mapdraw([x for x in g if x['group'] == 'c1'])
+    assert '~~~' not in one and 'direction LR' not in one, one                                  # 실패 길: 묶음 하나면 연결·방향을 넣지 않는다
     assert '"ex<br/>claim·mid<br/>배제"' in blk and 'stroke-dasharray' in blk and 'fill:#ffffff' in blk, blk
     rc = [l for l in blk.splitlines() if l.strip().startswith('class ') and l.strip().endswith(' r_claim')][0]
     ex_nid = 'n3'

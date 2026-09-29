@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.43'
+EXPECT_VERSION = '16.44'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -2370,6 +2370,26 @@ def t_v1642_polish_text_changed_not_saved():
         assert e.code == 1 and not os.path.exists(o), (e.code, os.path.exists(o))            # 실패 길: 저장하지 않고 1
     finally:
         T.merge_runs = real; sys.argv = old
+
+
+def t_v1644_screens_out_of_range():
+    # 코드 리뷰 ⑬: 화면 번호가 범위 밖이면 조용히 버렸고(fit-layout 등), bake-autofit·titles 는 --screens 0 이 마지막 화면(order[-1])이 됐다
+    n = len([s for s, _, _ in T.Deck.open(SRC, wd('scr13')).order() if s])
+    assert T._parse_screens('1,2-3', n) == {1, 2, 3}                                           # 성공 길
+    for bad in ('0', str(n + 1), '2-%d' % (n + 5), 'x'):
+        try:
+            T._parse_screens(bad, n); assert False, bad
+        except SystemExit as e:
+            assert '화면 번호' in str(e) and ('1-%d' % n) in str(e), (bad, str(e))            # 실패 길: 멈추고 범위를 말한다
+    o = out('bake13.pptx')
+    if os.path.exists(o):
+        os.remove(o)
+    r = cli('bake-autofit', SRC, '--screens', '0', '-o', o)
+    assert r.returncode != 0 and '화면 번호' in (r.stdout + r.stderr) and not os.path.exists(o), (r.returncode, r.stdout[-200:], r.stderr[-200:])
+    r = cli('bake-autofit', SRC, '--screens', '1', '-o', o)
+    assert r.returncode == 0 and os.path.exists(o), r.stderr[-300:]
+    r = cli('fit-layout', SRC, '-o', out('fl13.pptx'), '--screens', str(n + 3), '--dry-run')
+    assert r.returncode != 0 and '화면 번호' in (r.stdout + r.stderr), (r.returncode, r.stdout[-200:], r.stderr[-200:])
 
 
 def t_unmapped_sites():
