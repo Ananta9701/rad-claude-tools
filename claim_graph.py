@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.10'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.11'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -588,8 +588,13 @@ def gaps_table(claims, name='원고'):
             L.append('| G%02d-%s | `%s` | %s | %s | %s | %s |  |  |  |  |' % (k, d, cid, role, ' / '.join(ks).replace('|', '/'), d, terms))
     if not find:
         L.append('| — | 없음 |  |  |  |  |  |  |  |  |')
-    L += ['', '## 2. 인용 있음 — sources 미기입 %d개' % len(fill), '',
-          '> 원고에 이미 인용 `[n]` 이 있다 — 새 논문을 찾는 공백이 아니라, 그 인용 문헌의 DOI 를 적어 받고 판정해 sources 에 기입할 것. 후보 DOI 칸에 인용 문헌 DOI.', '',
+    # v16.11 (다음 할 일 ③, 실물 v9): 인용 있음 + 다른 공백(약한 고리·외톨이 등)은 1부로 간다 — 머리 줄 수와 2부 제목 수가 달라 보이지 않게 적는다
+    both = [(k, cid) for k, (cid, _, ks, _) in enumerate(find, 1) if GAP_CITED in ks]
+    L += ['', '## 2. 인용 있음 — sources 미기입 %d개%s' % (len(fill), (' (+ 다른 공백과 겹쳐 1부에 간 %d개)' % len(both)) if both else ''), '']
+    if both:
+        L += ['> 인용 있음 %d개 중 %d개는 다른 공백과 겹쳐 1부에 있다 — %s. 그 주장도 인용 문헌 DOI 를 1부 받침 줄의 후보 DOI 칸에 적는다.'
+              % (len(fill) + len(both), len(both), ' · '.join('G%02d `%s`' % kv for kv in both)), '']
+    L += ['> 원고에 이미 인용 `[n]` 이 있다 — 새 논문을 찾는 공백이 아니라, 그 인용 문헌의 DOI 를 적어 받고 판정해 sources 에 기입할 것. 후보 DOI 칸에 인용 문헌 DOI.', '',
           '| 번호 | 주장 | 역할 | 공백 | 방향 | 검색어 | 후보 DOI | 출처 | 입수 | 판정 |', '|---|---|---|---|---|---|---|---|---|---|']
     for k, (cid, role, ks, terms) in enumerate(fill, len(find) + 1):
         L.append('| G%02d-기입 | `%s` | %s | %s | 기입 | %s |  |  |  |  |' % (k, cid, role, GAP_CITED, terms))

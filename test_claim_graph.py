@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.10'
+EXPECT_VERSION = '16.11'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -833,6 +833,35 @@ def t_v165_mapgraph_sources_store():
     assert hard == ['k: sources[3]: 문헌 10.1000/zzz 가 보관소에 없다 — 원문을 받지 않은 근거는 sources 에 넣지 않는다(작업표에 둔다)'], ps   # [필수]
     assert any(p.startswith('[참고] k: sources[2]: 문헌 10.1000/a 판정') for p in ps) and not any('sources[1]' in p for p in ps), ps
     assert not [p for p in CGm.mapgraph(copy.deepcopy(g), io.StringIO())[0] if '보관소' in p or '판정' in p]   # 보관소를 안 주면 전처럼
+
+
+def t_v1611_gaps_part2_title_counts_overlap():
+    # 다음 할 일 ③(09-29 실물 v9): 머리 줄은 "인용 있음 6" 인데 2부 제목은 "2개" — 나머지 4개는 다른 공백과 겹쳐 1부로 갔다는 말이 없었다
+    g = [{'id': 'c1', 'role': 'claim', 'statement': 'X is higher [12,14].', 'depends_on': []},
+         {'id': 'c2', 'role': 'claim', 'statement': 'Y is linked [7].', 'depends_on': []},
+         {'id': 'c3', 'role': 'claim', 'statement': 'Z plausibly follows', 'depends_on': []},
+         {'id': 'c4', 'role': 'background', 'statement': 'W [3]', 'confidence': 'low', 'depends_on': []},
+         {'id': 'c5', 'role': 'claim', 'statement': 'V [5]', 'confidence': 'low', 'depends_on': []},
+         {'id': 'd', 'role': 'main', 'sources': [{'kind': '문헌', 'what': '10.1/a'}, {'kind': '문헌', 'what': '10.1/b'}],
+          'depends_on': [{'id': x, 'type': 'premise'} for x in ('c1', 'c2', 'c4', 'c5')] + [{'id': 'c3', 'type': 'context'}]}]
+    md = CGm.gaps_table(copy.deepcopy(g), 'T')
+    assert '문헌 없음(인용 있음 — sources 미기입) 4' in md.splitlines()[2], md.splitlines()[2]
+    p1, p2 = md.split('## 2. 인용 있음')
+    assert p2.startswith(' — sources 미기입 2개 (+ 다른 공백과 겹쳐 1부에 간 2개)\n'), p2[:120]            # 2 + 2 = 머리 줄 4
+    note = [l for l in p2.splitlines() if l.startswith('> 인용 있음 4개 중 2개')]
+    assert len(note) == 1 and 'G02 `c4`' in note[0] and 'G03 `c5`' in note[0] and '받침 줄' in note[0], p2
+    assert '| G02-받침 | `c4`' in p1 and '| G03-받침 | `c5`' in p1, p1
+    # 겹친 것이 없으면 제목·알림은 전과 같다
+    g2 = [c for c in copy.deepcopy(g) if c['id'] not in ('c4', 'c5')]
+    g2[-1]['depends_on'] = [e for e in g2[-1]['depends_on'] if e['id'] not in ('c4', 'c5')]
+    md2 = CGm.gaps_table(g2, 'T')
+    assert '## 2. 인용 있음 — sources 미기입 2개\n' in md2 and '겹쳐' not in md2, md2
+    # 작업표 → 검증지시 는 제목·알림 줄과 상관없이 표 줄만 읽는다
+    row = next(l for l in md.splitlines() if l.startswith('| G02-받침'))
+    c = [x.strip() for x in row.strip().strip('|').split('|')]
+    c[5], c[6], c[7] = 'W', '10.1000/zz', '사람'                                                 # 검색어 · 후보 DOI · 출처
+    ins, notes = CGm.gaps_to_instr(md.replace(row, '| ' + ' | '.join(c) + ' |'), 'T')
+    assert 'doi:10.1000/zz' in ins and '| G02-받침 | 1 | c4 받침(사람) | W |' in ins, (ins, notes)
 
 
 def t_v1610_mapfreeze_sources_missing_doi_stops():
