@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.4
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.5
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -156,6 +156,29 @@ rebuttal 간선이 없으면.
 `impact f-calc` 가 감별 1·결론·배제·감별 2 화면을 "다시 볼 자리" 로 낸다(도구로 확인). mapgraph [참고] 는 셋 — 감별 2 의 premise 없음
 (**배제된 감별은 premise 가 없는 것이 정상**), 소견 두 개의 caveat 없음(증례에서는 흔하다) — 무시해도 된다.
 
+## 3-4. 근거 공백 작업표 `gaps` (v16.5, 사용자 09-29 — 큰 방향 가)
+
+`claim_graph.py gaps --claims X.json -o 작업표.md` — 그래프에서 근거가 빈 곳을 뽑아 **문헌 찾기 작업표**로 낸다. 작업표 주인은 **저자·리뷰어 각자**(자기 그래프).
+
+| 공백 | 기준 |
+|---|---|
+| 문헌 없음 | role 이 **claim·main·background** 인데 `sources` 에 문헌·교과서 근거가 없음. **evidence(우리 결과)는 뺀다** |
+| 근거 하나 | 문헌·교과서 근거가 1개(claim·main·background) **또는** 받치는 간선(premise·support)이 1개(main·claim) — 둘 중 하나라도 |
+| 약한 고리 | confidence low 인 주장에 다른 주장이 premise·support 로 기댐 |
+| 외톨이 | 간선이 하나도 없음(그래프 전체에 간선이 없으면 줄마다 내지 않고 표 머리에 한 줄) |
+
+공백마다 **받침·반박 두 줄**. 칸: 번호 · 주장 · 역할 · 공백 · 방향 · 검색어(keys 에서 — 다듬어 쓴다) · 후보 DOI · 출처 · 입수 · 판정. 철회한 주장은 뺀다.
+
+**규칙(사용자 09-29)**: 후보 논문은 **작업표에만** 적는다. 대화창 웹 검색·Gemini 조사로 찾은 것은 출처 칸에 **"AI 제안"**.
+**DOI 확인 → 원문 입수(literature) → 리뷰어 판정**을 거친 것만 `sources` 로 옮긴다. 받침만 찾지 말고 반박 줄도 찾는다(없으면 판정 칸에 "찾았으나 없음").
+
+`claim_graph.py gaps --to-instr 작업표.md -o 검증지시.md [--name 원고]` — 채운 표에서 **후보 DOI 가 있고 판정이 빈 줄**만 literature 검증지시
+(`## 참고문헌` · `## 확인할 주장`)로 바꾼다(같은 DOI 는 한 번). 알림: 후보 칸에 DOI 가 없는 줄, 받침 줄만 채우고 반박 줄이 빈 공백.
+그다음은 LITERATURE 대로(Cowork: plan → oa → 받기 → ingest → locate → 리뷰어 판정).
+
+**sources 강제** — `mapgraph --claims X.json --sources <문헌 보관소>`: 문헌 근거의 DOI 가 보관소에 없으면 **[필수]**(원문을 받지 않은 근거),
+판정(`verdict`)이 없으면 **[참고]**(리뷰어 판정 대기). 보관소를 주지 않으면 전처럼.
+
 ## 3-3. 관계도 그림 `mapdraw` (v16, 전체 그림 v16.1)
 
 `claim_graph.py mapdraw --claims X.json -o 관계도.md [--impact ID …] [--text] [--all-edges]` — Mermaid 글이 든 md 를 쓴다.
@@ -189,6 +212,7 @@ rebuttal 간선이 없으면.
 | 참고 | extract 가 만든 proposed 후보가 확정되지 않음 |
 | 참고 | **약한 고리**: premise/support 간선의 상류가 confidence=low. weight 내림차순 |
 | 참고 | 간선 weight 가 type 기본값이 아님 |
+| 필수 (v16.5, `--sources`) | 문헌 근거의 DOI 가 문헌 보관소에 없음. [참고]: 판정(verdict)이 없음 |
 | 필수 (v16) | `sources` 가 목록이 아님 / kind·verdict 값 오류 / 문헌·교과서·기타인데 what 이 비었음 |
 | 참고 (v16.1) | 간선이 하나도 없는 주장(외톨이) — 한 줄에 이름 목록. 주장이 하나뿐이면 알리지 않는다. **그래프 전체에 간선이 없으면 이름 대신 "간선이 하나도 없는 그래프(주장 N개)" 한 줄**(v16.2) — 이때 주장별 간선 [참고](role=main/claim 인데 premise 없음 · evidence 인데 caveat 없음)도 줄마다 내지 않고 이 줄에 개수로 합친다(v16.3) |
 | 참고 (v16) | sources 에 at 이 없음 / 덱 근거가 `slide:N`(파일 번호) / `반대 방향` 판정인데 rebuttal 간선 없음 / caveat 간선이 role=rebuttal 을 가리킴 |
@@ -208,6 +232,7 @@ pptx 는 `deck_toolkit.py <명령> deck.pptx --claims ...`, docx/md 는 `claim_g
 | `mapcheck doc --claims [--nums] [--nums-sep "|"]` | 자리를 다 고친 뒤 | keys/forbidden 대조 + 그래프 검사. `--nums` 면 evidence 수치가 자리에 있는지도. `--nums-sep` 은 evidence 에서 그 구분자 **앞쪽만** 검사(v15.5) — "원고 값 | 재현 값" 용법용, 구분자는 사용자가 선언한다 (교정용, 심사 형식 지적의 대부분이 이 유형) |
 | `mapfreeze doc --claims -o [--sources 폴더]` | 검증을 **실제로** 마친 뒤 | 해시 기록 = "확인했다" 선언. `--sources` 면 근거 원문도(§3-2). 폴더 없이 다시 freeze 하면 전 근거 기록은 그대로 |
 | `mapstale doc --claims [--sources 폴더]` | 그 뒤 어떤 편집이든 한 뒤 | v16: `--sources` 면 근거 원문 `[같음]`·`[변환]`·`[변경]`(§3-2). [변경] 주장, [필수]/[참고] 하류, 기록 없는 새 주장. v15.5: freeze 가 `verified.keys` 해시를 함께 적어 **keys 만 바꾼 그래프도 [변경]**(구판 freeze 는 그 해시가 없어 검사 안 함). 출력 끝에 "실제로 바뀐 주장의 자리(직접)"를 하류 전파와 구분해 낸다 |
+| `gaps --claims -o 작업표.md` · `gaps --to-instr 작업표.md -o 검증지시.md` | 근거 채우기 전 | 근거 공백 작업표 · 채운 표 → literature 검증지시 (§3-4, v16.5) |
 | `mapdraw --claims -o 관계도.md [--impact ID …] [--text] [--all-edges]` | 설명·검토용 그림 | Mermaid 글(§3-3, v16 · 전체 그림 v16.1) |
 | `mapdiff a.json b.json --labels 저자 리뷰어 [--pairs a1=b1,…] [--save-pairs]` | 독립으로 쓴 두 그래프 대조 | v16: `--save-pairs` 는 짝을 a 의 `pairs_with` 에 적고, 다음부터 `--pairs` 없이 쓴다. sites·keys 겹침으로 짝지어 (a) 양쪽 (b) 한쪽만 (c) 다른 쪽만, 간선 type·weight 차이, caveat 부착 차이. 간선·caveat 차이 줄의 **`?` 접두는 상대 그래프에 짝이 없는 노드 id** 를 뜻한다(v15.4.3 문서화) — 예 `?within-participant-design` 은 그 노드가 (b)/(c) 목록에 있다는 신호이므로 먼저 `--pairs` 로 짝을 확인한다. v15.4: role 계열(claim/evidence/caveat/…)이 다르면 짝짓지 않음. **명명만 다른 주장은 자동으로 못 잡는다** — (b)(c)가 크면 사람이 짝을 만들어 `--pairs`로 넘긴다. **반대 방향 오류도 있다**(v15.4.4): 의미상 대응하는 두 주장의 role 을 서로 다르게 쓰면(한쪽 main, 다른 쪽 claim) 같은 계열이라 짝지어져 (a) 에 들어가고, 그 상대의 진짜 짝은 (c) 에 남는다 — (a) 목록도 id 쌍을 눈으로 보고 어긋난 쌍은 `--pairs` 로 고정한다(실물: 저자 `group-a-b-distinct`(main) ↔ 리뷰어 `claim-mechanism-x`(claim)) — 문자열 `a1=b1,a2=b2`, json 파일 `{"a_id": "b_id"}`, 또는 한 줄에 `a_id=b_id` 인 텍스트 파일(v15.4.1). **1:N 짝**은 같은 a_id 를 반복(`s10=nested,s10=delta-r2`) 또는 json 값을 리스트로 — 한쪽이 한 노드로 묶은 것을 다른 쪽이 둘로 나눈 경우(v15.5), 출력에 `nested+delta-r2` 로 표시 |
 | `remap-refs --claims X.json --map refmap.json -o Y.json [--force]` | 참고문헌 재번호 뒤 | `verify_toolkit renumber` 가 낸 매핑으로 statement·evidence 의 `[n-m]`·keys 의 `refs n-m` 치환. `mapcheck` 는 `refs n-m` key 를 리터럴이 아니라 인용번호로 보고 자리의 대괄호 인용(`[26-28]`·`[26–28]`·`[24,26-28]`)을 펼쳐 대조한다(v15.4.2) — **그래프의 `doc` 이 가리키는 판의 번호 체계에 맞는 매핑만** 적용할 것. keys 의 순수 숫자("42", "29-31")는 **어떤 옵션으로도 건드리지 않는다**(v15.4.1 — 실물에서 참여자 수 42 가 바뀔 뻔함) — 인용번호 key 는 `refs 29-31` 로 쓸 것. 적용한 매핑을 상위 `refs_maps_applied` 에 기록하고 같은 매핑을 두 번 적용하려 하면 중단(`--force` 로 강행). **손으로 재번호한 그래프에는 표지가 없으므로 돌리지 말 것** — 돌리면 한 단계 더 밀린다. verified 있는 주장이 바뀌면 mapfreeze 재실행 경고 |

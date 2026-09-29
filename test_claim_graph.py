@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.4'
+EXPECT_VERSION = '16.5'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -755,6 +755,100 @@ def t_v164_case_example_in_doc_is_valid():
     assert [r[0] for r in CGm.impact(cl, ['f-calc'], io.StringIO())] == ['ddx-gran', 'dx', 'rb-malig', 'ddx-malig']
     md = CGm.mapdraw(cl)
     assert '-- 반박 --x' in md and 'classDef r_rebuttal' in md and 'classDef r_main' in md, md
+
+
+
+GAPG = [
+    {'id': 'm', 'role': 'main', 'sources': [{'kind': '문헌', 'what': '10.1000/a', 'at': 'p.1'}, {'kind': '문헌', 'what': '10.1000/b', 'at': 'p.2'}],
+     'depends_on': [{'id': 'e', 'type': 'premise'}, {'id': 'lowc', 'type': 'support'}, {'id': 'k', 'type': 'premise'}]},
+    {'id': 'k', 'role': 'claim', 'keys': ['alpha term', 'beta term'], 'depends_on': [{'id': 'e', 'type': 'premise'}, {'id': 'b', 'type': 'support'}]},
+    {'id': 'k2', 'role': 'claim', 'sources': [{'kind': '문헌', 'what': '10.1000/c'}, {'kind': '교과서', 'what': '책', 'at': 'p.5'}],
+     'depends_on': [{'id': 'e', 'type': 'support'}]},
+    {'id': 'b', 'role': 'background', 'sources': [{'kind': '문헌', 'what': '10.1000/d', 'at': 'p.3'}], 'depends_on': []},
+    {'id': 'e', 'role': 'evidence', 'depends_on': []},
+    {'id': 'lowc', 'role': 'claim', 'confidence': 'low', 'sources': [{'kind': '문헌', 'what': '10.1000/e'}, {'kind': '문헌', 'what': '10.1000/f'}],
+     'depends_on': [{'id': 'e', 'type': 'premise'}, {'id': 'b', 'type': 'premise'}]},
+    {'id': 'x', 'role': 'method', 'depends_on': []},
+    {'id': 'old', 'role': 'claim', 'status': 'superseded', 'depends_on': []},
+]
+
+
+def t_v165_find_gaps():
+    # 사용자 09-29 (가): 문헌 없음(claim·main·background 만) · 근거 하나(sources 1 또는 받침 간선 1) · 약한 고리 · 외톨이
+    rows, noedge = CGm.find_gaps(copy.deepcopy(GAPG))
+    got = {cid: ks for cid, _, ks, _ in rows}
+    assert not noedge and set(got) == {'k', 'k2', 'b', 'lowc', 'x'}, got                    # m 은 sources 2·받침 3 — 공백 없음
+    assert got['k'] == ['문헌 없음'], got                                                     # 받침 간선 2 라 '근거 하나' 는 아님
+    assert got['k2'] == ['근거 하나 — 받침 간선 1(e)'], got                                    # 교과서도 원문 근거로 센다(sources 2)
+    assert got['b'] == ['근거 하나 — sources 1'], got
+    assert got['lowc'][0].startswith('약한 고리 — confidence low, 기대는 주장 1(m)'), got
+    assert got['x'] == ['외톨이'], got
+    assert 'e' not in got and 'old' not in got                                               # evidence 는 문헌 공백에서 빼고, 철회는 뺀다
+    assert dict((c, t_) for c, _, _, t_ in rows)['k'] == 'alpha term; beta term'
+    rows, noedge = CGm.find_gaps([{'id': 'p', 'role': 'claim'}, {'id': 'q', 'role': 'claim'}])   # 간선 0 그래프: 외톨이를 줄마다 내지 않는다
+    assert noedge and all('외톨이' not in ks for _, _, ks, _ in rows) and len(rows) == 2, rows
+
+
+def t_v165_gaps_table_and_to_instr():
+    md = CGm.gaps_table(copy.deepcopy(GAPG), '시험원고')
+    rows = [l for l in md.splitlines() if l.startswith('| G')]
+    assert len(rows) == 10 and rows[0].startswith('| G01-받침 | `k`') and rows[1].startswith('| G01-반박 | `k`'), rows[:2]   # 공백마다 받침·반박
+    assert 'AI 제안' in md and '반박 줄도' in md and 'evidence' in md, md[:600]
+    # 채운 표: G01 받침은 AI 제안 DOI, 반박은 비움 · G02 받침은 DOI 없이 글만 · G03 받침은 이미 판정 · G04 받침·반박이 같은 DOI
+    fill = {'G01-받침': ('https://doi.org/10.1234/ABC.5', 'AI 제안', ''), 'G02-받침': ('Kim 2020 어딘가', 'AI 제안', ''),
+            'G03-받침': ('10.9/zz', '사람', '부합'), 'G04-받침': ('10.1234/abc.5', '사람', ''), 'G04-반박': ('10.5555/r1', 'AI 제안', '')}
+    out = []
+    for l in md.splitlines():
+        c = [x.strip() for x in l.strip().strip('|').split('|')]
+        if c and c[0] in fill:
+            cand, src, ver = fill[c[0]]; c[6], c[7], c[9] = cand, src, ver
+            l = '| ' + ' | '.join(c) + ' |'
+        out.append(l)
+    instr, notes = CGm.gaps_to_instr('\n'.join(out), '시험원고')
+    assert '1. 후보 G01-받침 (AI 제안). doi:10.1234/abc.5' in instr and '2. 후보 G04-반박 (AI 제안). doi:10.5555/r1' in instr, instr
+    assert '10.9/zz' not in instr and instr.count('doi:10.1234/abc.5') == 1, instr           # 판정 있는 줄은 빼고, 같은 DOI 는 한 번
+    assert '| G04-받침 | 1 |' in instr and '| G04-반박 | 2 |' in instr, instr
+    assert any('G01: 받침 줄만' in n for n in notes) and any('G02-받침: 후보 칸에 DOI 가 없다' in n for n in notes), notes   # 실패 길: 알림
+    assert not any('G04' in n for n in notes), notes
+    try:                                                                                        # literature 가 있는 세트면 그 파서로 읽힌다
+        import literature as LT
+    except ImportError:
+        return
+    refs, cl = LT.parse_refs(instr), LT.parse_claims(instr)
+    assert [r['doi'] for r in refs] == ['10.1234/abc.5', '10.5555/r1'] and [c['refs'] for c in cl] == [[1], [1], [2]], (refs, cl)
+    assert cl[0]['terms'] == ['alpha term', 'beta term'], cl
+
+
+def t_v165_mapgraph_sources_store():
+    import tempfile
+    root = tempfile.mkdtemp(prefix='cggs_')
+    d = os.path.join(root, '10.1000_a'); os.makedirs(d)
+    open(os.path.join(d, 'meta.md'), 'w', encoding='utf8').write('<!-- lit: doi=10.1000/a pages=1 blank=0 sha=aa -->\n')
+    g = [{'id': 'k', 'role': 'claim', 'depends_on': [], 'sources': [
+        {'kind': '문헌', 'what': '10.1000/a', 'at': 'p.1', 'verdict': '부합'},
+        {'kind': '문헌', 'what': '10.1000/a', 'at': 'p.2'},
+        {'kind': '문헌', 'what': '10.1000/zzz', 'at': 'p.1', 'verdict': '부합'}]}]
+    ps = CGm.mapgraph(copy.deepcopy(g), io.StringIO(), sources=root)[0]
+    hard = [p for p in ps if not p.startswith('[참고]')]
+    assert hard == ['k: sources[3]: 문헌 10.1000/zzz 가 보관소에 없다 — 원문을 받지 않은 근거는 sources 에 넣지 않는다(작업표에 둔다)'], ps   # [필수]
+    assert any(p.startswith('[참고] k: sources[2]: 문헌 10.1000/a 판정') for p in ps) and not any('sources[1]' in p for p in ps), ps
+    assert not [p for p in CGm.mapgraph(copy.deepcopy(g), io.StringIO())[0] if '보관소' in p or '판정' in p]   # 보관소를 안 주면 전처럼
+
+
+def t_v165_gaps_cli():
+    import json, tempfile
+    d = tempfile.mkdtemp(prefix='cggc_')
+    cg = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'claim_graph.py')
+    A = os.path.join(d, 'a.json'); json.dump({'doc': 'Doc_v1.docx', 'claims': GAPG}, open(A, 'w'), ensure_ascii=False)
+    run = lambda *a: subprocess.run([sys.executable, cg] + list(a), capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    r = run('gaps', '--claims', A, '-o', os.path.join(d, 't.md'))
+    assert r.returncode == 0 and '공백 5' in r.stdout and '# Doc_v1 — 근거 공백 작업표' in open(os.path.join(d, 't.md'), encoding='utf8').read(), (r.stdout, r.stderr)
+    r = run('gaps', '--to-instr', os.path.join(d, 't.md'), '-o', os.path.join(d, 'i.md'), '--name', 'Doc_v1')
+    assert r.returncode == 0 and '> 원고: Doc_v1' in open(os.path.join(d, 'i.md'), encoding='utf8').read(), r.stdout
+    r = run('gaps', '-o', os.path.join(d, 'x.md'))
+    assert r.returncode == 2 and '--claims' in r.stdout, r.stdout                           # 실패 길: 입력 없음
+    r = run('mapgraph', '--claims', A, '--sources', d)
+    assert r.returncode == 1 and '보관소에 없다' in r.stdout, r.stdout                          # 보관소에 없는 문헌 근거 = [필수] → 1
 
 
 def run():

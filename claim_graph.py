@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.4'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.5'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -239,8 +239,9 @@ def _supersedes(c):
     return [x for x in (sp if isinstance(sp, list) else [sp]) if isinstance(x, dict)]
 
 
-def _source_problems(c, edges):
-    """v16 근거 칸 검사 — kind·what 필수, at 권장, verdict 는 정해진 넷, 덱 자리는 sldId."""
+def _source_problems(c, edges, root=None):
+    """v16 근거 칸 검사 — kind·what 필수, at 권장, verdict 는 정해진 넷, 덱 자리는 sldId.
+    v16.5 (사용자 09-29): root(문헌 보관소)를 주면 문헌 근거의 DOI 가 보관소에 없을 때 [필수], 판정(verdict)이 없으면 [참고]."""
     out, srcs = [], c.get('sources')
     if srcs is None:
         return out
@@ -262,6 +263,14 @@ def _source_problems(c, edges):
             out.append('[참고] %s: 덱 자리 %s 는 파일 번호 — 화면이 밀리면 틀린다. slide@sldId 로(deck_toolkit mapcheck --to-sldid)' % (tag, x['at']))
         if x.get('verdict') == '반대 방향' and not any(t == 'rebuttal' for _, t, _ in edges.get(c['id'], [])):
             out.append('[참고] %s: 반대 방향 근거 — 반박 노드를 만들어 type rebuttal 로 걸지 확인' % tag)
+        if root and x.get('kind') == '문헌' and x.get('what'):
+            try:
+                _source_file(root, x)
+            except (KeyError, OSError):
+                out.append('%s: 문헌 %s 가 보관소에 없다 — 원문을 받지 않은 근거는 sources 에 넣지 않는다(작업표에 둔다)' % (tag, x['what']))
+            else:
+                if not x.get('verdict'):
+                    out.append('[참고] %s: 문헌 %s 판정(verdict)이 없다 — 리뷰어 판정 대기' % (tag, x['what']))
     return out
 
 
@@ -317,8 +326,8 @@ def _sccs(claims):
     return out
 
 
-def mapgraph(claims, stream=sys.stdout):
-    """구조 검사 + 위상 순서. 반환 (문제목록, 순서)."""
+def mapgraph(claims, stream=sys.stdout, sources=None):
+    """구조 검사 + 위상 순서. 반환 (문제목록, 순서). sources(v16.5) = 문헌 보관소 — 주면 문헌 근거가 보관소에 있는지·판정이 있는지도."""
     ids = {c['id'] for c in claims}
     problems = []
     edges = _edges(claims)
@@ -362,7 +371,7 @@ def mapgraph(claims, stream=sys.stdout):
             hint = _forbidden_hints(_supersedes(c)[-1].get('statement', ''))
             problems.append('%s: supersedes 가 있는데 forbidden 이 비어 있음 — 옛 문구를 넣지 않으면 '
                             'mapcheck 가 옛 주장을 통과시킨다. 후보: %s' % (c['id'], ' / '.join(hint) or '-'))
-        problems.extend(_source_problems(c, edges))
+        problems.extend(_source_problems(c, edges, sources))
         if c.get('role') in ('main', 'claim') and not any(t == 'premise' for _, t, _ in edges[c['id']]) and noedge:
             folded['premise'] += 1
         elif c.get('role') in ('main', 'claim') and not any(t == 'premise' for _, t, _ in edges[c['id']]):
@@ -490,6 +499,110 @@ def impact(claims, changed, stream=sys.stdout):
     if not rows:
         print('  하류 주장 없음 — 바뀐 주장의 자리만 고치면 됨', file=stream)
     return [(cid, s, path) for cid, (s, path) in rows]
+
+
+# ----------------------------------------------------------------------------
+# 근거 공백 목록 (v16.5) — 문헌 찾기 작업표. 사용자 09-29: AI 가 제안한 논문은 DOI 확인 → 원문 입수 → 리뷰어 판정을
+# 거친 것만 sources 에 들어간다. 이 도구는 작업표를 만들고(gaps) 채운 표를 literature 검증지시로 바꿀 뿐, sources 를 고치지 않는다.
+# ----------------------------------------------------------------------------
+
+LIT_ROLES = ('claim', 'main', 'background')      # 문헌 공백을 보는 역할 — evidence(우리 결과)는 뺀다(사용자 09-29)
+_DOI = re.compile(r'\b(10\.\d{4,9}/[^\s|,;<>"]+)', re.I)
+
+
+def _lit(c):
+    return [x for x in (c.get('sources') or []) if isinstance(x, dict) and x.get('kind') in ('문헌', '교과서')]
+
+
+def find_gaps(claims):
+    """공백 목록 [(id, role, [공백 종류], 검색어)]. 종류: 문헌 없음 · 근거 하나(sources 1 또는 받침 간선 1) · 약한 고리 · 외톨이.
+    철회(superseded)한 주장은 뺀다. 간선이 하나도 없는 그래프는 외톨이를 줄마다 내지 않는다(요약은 표 머리에)."""
+    edges = _edges(claims)
+    rev = _dependents(claims)
+    noedge = len(claims) > 1 and not any(edges.values())
+    by_id = {c['id']: c for c in claims}
+    out = []
+    for c in claims:
+        if c.get('status') == 'superseded':
+            continue
+        cid, role, kinds = c['id'], c.get('role'), []
+        lit = _lit(c)
+        if role in LIT_ROLES and not lit:
+            kinds.append('문헌 없음')
+        backing = [u for u, t, _ in edges[cid] if t in ('premise', 'support')]
+        one = []
+        if role in LIT_ROLES and len(lit) == 1:
+            one.append('sources 1')
+        if role in ('main', 'claim') and len(backing) == 1:
+            one.append('받침 간선 1(%s)' % backing[0])
+        if one:
+            kinds.append('근거 하나 — ' + ' · '.join(one))
+        leaning = [d for d, t, _ in rev.get(cid, []) if t in ('premise', 'support')]
+        if c.get('confidence') == 'low' and leaning:
+            kinds.append('약한 고리 — confidence low, 기대는 주장 %d(%s)' % (len(leaning), ', '.join(leaning[:3])))
+        if not noedge and not edges[cid] and not rev.get(cid) and len(claims) > 1:
+            kinds.append('외톨이')
+        if kinds:
+            terms = '; '.join(c.get('keys', [])[:4]) or (c.get('statement') or '')[:60]
+            out.append((cid, role or '-', kinds, terms))
+    return out, noedge
+
+
+def gaps_table(claims, name='원고'):
+    """작업표 md. 공백마다 받침·반박 두 줄. 사람이 채울 칸: 검색어(다듬기) · 후보 DOI · 출처(AI 제안/사람) · 입수 · 판정."""
+    rows, noedge = find_gaps(claims)
+    kinds = {}
+    for _, _, ks, _ in rows:
+        for k in ks:
+            kinds[k.split(' — ')[0]] = kinds.get(k.split(' — ')[0], 0) + 1
+    L = ['# %s — 근거 공백 작업표' % name, '',
+         '> claim_graph.py v%s gaps. 주장 %d개 중 공백 %d개(%s).%s' % (
+             __version__, len(claims), len(rows), ' · '.join('%s %d' % kv for kv in kinds.items()) or '없음',
+             ' 간선이 하나도 없는 그래프 — 외톨이·받침 간선 공백은 관계를 적은 뒤에 다시.' if noedge else ''),
+         '> **규칙(사용자 09-29)**: 후보 논문은 이 표에만 적는다. **AI 가 제안한 논문(대화창 웹 검색·Gemini 조사)은 출처 칸에 "AI 제안"** — '
+         'DOI 확인 → 원문 입수(literature) → 리뷰어 판정을 거친 것만 claims 의 sources 에 옮긴다. 받침만 찾지 말고 **반박 줄도 찾는다**(없으면 판정 칸에 "찾았으나 없음").',
+         '> 문헌 공백은 claim·main·background 만 본다(evidence = 우리 결과는 뺀다). 채운 표 → `claim_graph.py gaps --to-instr 이 표.md -o 검증지시.md` → literature(Cowork).', '',
+         '| 번호 | 주장 | 역할 | 공백 | 방향 | 검색어 | 후보 DOI | 출처 | 입수 | 판정 |', '|---|---|---|---|---|---|---|---|---|---|']
+    for k, (cid, role, ks, terms) in enumerate(rows, 1):
+        for d in ('받침', '반박'):
+            L.append('| G%02d-%s | `%s` | %s | %s | %s | %s |  |  |  |  |' % (k, d, cid, role, ' / '.join(ks).replace('|', '/'), d, terms.replace('|', '/')))
+    if not rows:
+        L.append('')
+        L.append('공백 없음.')
+    return '\n'.join(L) + '\n'
+
+
+def gaps_to_instr(table_md, name='원고'):
+    """채운 작업표 → literature 검증지시 md(## 참고문헌 · ## 확인할 주장). 후보 DOI 가 있고 판정이 빈 줄만. 반환 (md, 알림 목록)."""
+    refs, rows, notes, filled = {}, [], [], {}
+    for line in table_md.splitlines():
+        c = [x.strip() for x in line.strip().strip('|').split('|')]
+        if len(c) < 10 or not re.match(r'^G\d+-(받침|반박)$', c[0]):
+            continue
+        num, cid, direction, terms, cand, src, verdict = c[0], c[1].strip('`'), c[4], c[5], c[6], c[7], c[9]
+        g = num.split('-')[0]
+        filled.setdefault(g, {})[direction] = bool(cand or verdict)
+        dois = [d.rstrip('.').lower() for d in _DOI.findall(cand)]
+        if cand and not dois:
+            notes.append('%s: 후보 칸에 DOI 가 없다("%s") — DOI 를 확인해 적는다' % (num, cand[:40]))
+        if not dois or verdict:
+            continue
+        ns = []
+        for d in dois:
+            if d not in refs:
+                refs[d] = (len(refs) + 1, num, src)
+            ns.append(refs[d][0])
+        rows.append('| %s | %s | %s %s(%s) | %s |' % (num, ', '.join(map(str, ns)), cid, direction, src or '출처 미기재', terms))
+    for g, d in sorted(filled.items()):
+        if d.get('받침') and not d.get('반박'):
+            notes.append('%s: 받침 줄만 채웠다 — 반박 줄도 찾는다(없으면 판정 칸에 "찾았으나 없음")' % g)
+    L = ['# 검증지시 — %s 근거 공백' % name, '', '> 원고: %s' % name,
+         '> claim_graph.py v%s gaps --to-instr. 후보 %d편 — **AI 제안 후보는 아직 근거가 아니다**: 받아서 locate 한 뒤 리뷰어가 판정한다.' % (__version__, len(refs)), '',
+         '## 참고문헌', '']
+    for d, (n, num, src) in sorted(refs.items(), key=lambda kv: kv[1][0]):
+        L.append('%d. 후보 %s (%s). doi:%s' % (n, num, src or '출처 미기재', d))
+    L += ['', '## 확인할 주장', '', '| 주장 | 문헌 | 원고 문장(짧게) | 찾을 말 |', '|---|---|---|---|'] + rows + ['']
+    return '\n'.join(L), notes
 
 
 # ----------------------------------------------------------------------------
@@ -1588,6 +1701,11 @@ def main():
     ap = argparse.ArgumentParser(description='주장 의존 그래프 (문서 독립)')
     sub = ap.add_subparsers(dest='cmd', required=True)
     g = sub.add_parser('mapgraph'); g.add_argument('--claims', required=True)
+    g.add_argument('--sources', default=None, help='문헌 보관소 — 문헌 근거가 보관소에 없으면 [필수], 판정이 없으면 [참고] (v16.5)')
+    gp = sub.add_parser('gaps', help='근거 공백 작업표 · 채운 표 → literature 검증지시 (v16.5)')
+    gp.add_argument('--claims', default=None); gp.add_argument('-o', required=True)
+    gp.add_argument('--to-instr', default=None, metavar='작업표.md', help='채운 작업표를 literature 검증지시로')
+    gp.add_argument('--name', default=None, help='원고 이름(검증지시의 "> 원고:" 줄) — 없으면 claims 의 doc')
     i = sub.add_parser('impact'); i.add_argument('--claims', required=True); i.add_argument('ids', nargs='+')
     i.add_argument('--sites', action='store_true', help='자리 목록만 한 줄에 하나씩 (v15.5, 저자 v48 목록 검증용)')
     dr = sub.add_parser('mapdraw', help='관계도 Mermaid 글(md) — 전체 또는 --impact 주장 경로 (v16)')
@@ -1625,8 +1743,20 @@ def main():
     if a.cmd == 'selfcheck':
         r = selfcheck(a.dir, run_tests=a.tests, role=a.role, compare=a.compare)
         sys.exit(0 if r['ok'] else 1)
+    if a.cmd == 'gaps':
+        if a.to_instr:
+            md, notes = gaps_to_instr(open(a.to_instr, encoding='utf8').read(), a.name or '원고')
+            open(a.o, 'w', encoding='utf8').write(md)
+            for n_ in notes:
+                print('[참고] %s' % n_)
+            print('저장: %s' % a.o); sys.exit(0)
+        if not a.claims:
+            print('[중단] gaps 는 --claims(작업표 만들기) 또는 --to-instr(검증지시로) 가 필요하다'); sys.exit(2)
+        name, _, cl = load_claims_meta(a.claims)
+        open(a.o, 'w', encoding='utf8').write(gaps_table(cl, a.name or doc_name(name or '원고')))
+        print('저장: %s (공백 %d)' % (a.o, len(find_gaps(cl)[0]))); sys.exit(0)
     if a.cmd == 'mapgraph':
-        probs, _ = mapgraph(load_claims(a.claims))
+        probs, _ = mapgraph(load_claims(a.claims), sources=a.sources)
         sys.exit(1 if any(not p.startswith('[참고]') for p in probs) else 0)
     elif a.cmd == 'impact':
         if a.sites:
