@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.39'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.40'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -6398,9 +6398,9 @@ def main():
     elif args.cmd == 'impact':
         impact(load_claims(args.claims), args.ids)
     elif args.cmd == 'mapfreeze':
-        dn, note, cl = load_claims_meta(args.claims)
+        meta, cl = CG.load_claims_full(args.claims)          # v16.40 (코드 리뷰 ⑧): 맨 위 칸(refs_maps_applied 등)을 그대로 — 전에는 deck·note 만 남겼다
         mapfreeze(Deck.open(args.pptx), cl)
-        print('기록 완료: %s' % save_claims(args.o, cl, dn, note))
+        print('기록 완료: %s' % save_claims(args.o, cl, meta=meta))   # doc 그래프가 deck 으로 바뀌던 것도 없어진다
     elif args.cmd == 'mapstale':
         r = mapstale(Deck.open(args.pptx), load_claims(args.claims))
         sys.exit(1 if (r['changed'] or r['unverified']) else 0)

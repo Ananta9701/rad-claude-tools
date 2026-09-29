@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.5'
+EXPECT_VERSION = '0.6'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 
@@ -221,6 +221,28 @@ def t_v04_oa_api_and_zero_loose_and_mathfont():
     assert 'F_ISF(표기 차이로 0회일 수 있음 — 밑줄·하이픈·공백 무시하면 1회)' in loc, loc
     # 수식 글꼴 치환 표시
     assert LT.mathfont_count('a ¼ b þ c ðxÞ') == 4
+
+
+def t_v06_locate_section_markers():
+    # 코드 리뷰 09-28 ⑪: oa 로 받은 paper.md(쪽 표지 없이 절 표지 [§ …])에서 locate 가 후보 문단을 하나도 내지 못했다
+    import json
+    d, instr = _fixture()
+    store, out = os.path.join(d, 'store'), os.path.join(d, 'out')
+    def fake_get(url, timeout=30):
+        if 'unpaywall' in url:
+            return json.dumps({'best_oa_location': None}).encode()
+        if 'search?query=DOI' in url:
+            return json.dumps({'resultList': {'result': [{'pmcid': 'PMC7654321', 'isOpenAccess': 'Y', 'inEPMC': 'Y'}]}} if 'xyz456' in url else {'resultList': {'result': []}}).encode()
+        return JATS
+    LT.oa(instr, 'me@example.invalid', store, out, fetch=True, getter=fake_get, sleep=0, stream=io.StringIO())
+    ins = _write(os.path.join(d, 'i6.md'), INSTR.replace('| C2 | 3, 4 | 예측 정확도 | accuracy, fracture healing |', '| C2 | 2 | 민감도 | Sensitivity, 88% |'))
+    loc = open(LT.locate(ins, store, out, stream=io.StringIO()), encoding='utf8').read()
+    part = loc[loc.index('## C2'):]
+    assert '[§ Results] 맞은 말 2/2' in part and '찾을 말이 든 문단 없음' not in part, part   # 성공 길: 절 표지로 나눈 후보
+    ins2 = _write(os.path.join(d, 'i7.md'), INSTR.replace('| C2 | 3, 4 | 예측 정확도 | accuracy, fracture healing |', '| C2 | 2 | 없는 말 | zzqq |'))
+    loc = open(LT.locate(ins2, store, out, stream=io.StringIO()), encoding='utf8').read()
+    part = loc[loc.index('## C2'):]
+    assert '찾을 말이 든 문단 없음' in part and '원문 전체에서 0회: zzqq' in part, part            # 실패 길: 없는 말은 전처럼
 
 
 JATS_TABLE = (b'<article><front><article-meta><title-group><article-title>T</article-title></title-group></article-meta></front><body>'

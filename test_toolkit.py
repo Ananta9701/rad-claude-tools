@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.39'
+EXPECT_VERSION = '16.40'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -2292,6 +2292,26 @@ def t_freeze_then_stale_pptx():
     r = T.mapstale(d, g, io.StringIO()); assert r['changed'] == [] and r['unverified'] == [], r
     d.set_notes(7, ['note y changed'])
     r = T.mapstale(d, g, io.StringIO()); assert r['changed'] == ['b'] and [x[0] for x in r['suspect']] == ['c'], r
+
+def t_v1640_deck_mapfreeze_keeps_top_level():
+    # 코드 리뷰 09-28 ⑧: deck_toolkit mapfreeze 가 claims.json 맨 위 칸(refs_maps_applied·version 등)을 버리고 doc→deck 으로 바꿨다
+    import copy, json
+    d = T.Deck.open(SRC, wd('fzk')); d.set_title(7, 'title x'); d.set_notes(7, ['note y']); d.set_notes(8, ['z'])
+    src = os.path.join(TMP, 'deck_edit_fzk.pptx'); d.save(src)
+    cj = os.path.join(TMP, 'fzk_claims.json'); oj = os.path.join(TMP, 'fzk_out.json')
+    meta = {'deck': 'deck_edit_fzk', 'note': 'n', 'refs_maps_applied': [{'map': 'm.md', 'sha': 'abc'}], 'version': 'v5'}
+    json.dump(dict(meta, claims=copy.deepcopy(GRAPH)), open(cj, 'w', encoding='utf8'), ensure_ascii=False)
+    r = cli('mapfreeze', src, '--claims', cj, '-o', oj)
+    assert r.returncode == 0, (r.stdout, r.stderr)
+    out = json.load(open(oj, encoding='utf8'))
+    for k, v in meta.items():                                   # 성공 길: 맨 위 칸이 그대로
+        assert out.get(k) == v, (k, out.get(k))
+    assert all('verified' in c for c in out['claims'])
+    bad = copy.deepcopy(GRAPH); bad[0]['sites'] = ['slide:999']   # 실패 길: 없는 화면이면 기록하지 않고 멈춘다
+    json.dump(dict(meta, claims=bad), open(cj, 'w', encoding='utf8'), ensure_ascii=False)
+    os.remove(oj); r = cli('mapfreeze', src, '--claims', cj, '-o', oj)
+    assert r.returncode != 0 and 'slide:999' in (r.stdout + r.stderr) and not os.path.exists(oj), (r.returncode, r.stdout, r.stderr)
+
 
 def t_unmapped_sites():
     d = T.Deck.open(SRC, wd('us')); d.set_body(7, T.Body().line('one').line('two').line('three'))

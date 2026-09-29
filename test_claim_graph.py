@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '15.8.3'
+EXPECT_VERSION = '15.8.4'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -434,6 +434,27 @@ def t_v1583_selfcheck_unreadable_manifest_fails():
     assert '통과 — 작업 시작 가능' not in buf.getvalue()
 
 
+def t_v1584_unreadable_sites_not_unchanged():
+    # 코드 리뷰 09-28 ⑦: 읽을 수 없는 자리(지운 슬라이드·바뀐 절 제목)가 freeze·stale 두 번 다 None 이면 '바뀐 것 없음'
+    import copy
+    texts = {'s:1': 'alpha text', 's:2': 'beta text'}
+    def resolve(site):
+        return texts[site]
+    g = [{'id': 'x', 'statement': 'X', 'evidence': 'e', 'sites': ['s:1', 's:gone']}]
+    try:                                                   # 실패 길: 읽을 수 없는 자리가 있으면 검증 기록을 하지 않는다
+        CGm.mapfreeze(resolve, copy.deepcopy(g), at='2026-01-01'); assert False, '멈추지 않았다'
+    except SystemExit as e:
+        assert 's:gone' in str(e) and '읽지 못' in str(e), e
+    old = copy.deepcopy(g)                                 # 구판 freeze 가 None 을 적어 둔 그래프 — 여전히 못 읽으면 알린다
+    old[0]['verified'] = {'at': '2026-01-01', 'sites': {'s:1': CGm._fingerprint('alpha text'), 's:gone': None},
+                          'evidence': CGm._fingerprint('e|X')}
+    buf = io.StringIO(); r = CGm.mapstale(resolve, old, buf)
+    assert r['changed'] == ['x'] and '읽을 수 없다' in buf.getvalue(), (r, buf.getvalue())
+    ok = [{'id': 'y', 'statement': 'Y', 'evidence': 'e', 'sites': ['s:1', 's:2']}]   # 성공 길: 다 읽히면 전처럼
+    CGm.mapfreeze(resolve, ok, at='2026-01-01')
+    r = CGm.mapstale(resolve, ok, io.StringIO()); assert r['changed'] == [] and r['unverified'] == [], r
+
+
 def t_claim_graph_cli():
     p = '/tmp/cg_cli.json'
     CGm.save_claims(p, copy.deepcopy(GRAPH))
@@ -461,11 +482,17 @@ def t_claim_graph_cli():
     for args in (['mapgraph', '--claims', p], ['scaffold', '--claims', p], ['mapreport', '--claims', p],
                  ['extract', MD, '-o', '/tmp/cg_ex.json'], ['mapdiff', p, p], ['mapcheck', MD, '--claims', p, '--nums'] if False else ['mapdiff', p, p],
                  ['mapcheck', MD, '--claims', p] if False else ['impact', '--claims', p, 'a'],
-                 ['mapfreeze', MD, '--claims', p, '-o', '/tmp/cg_fz.json'],
+                 ['mapfreeze', MD, '--claims', '/tmp/cg_docg.json', '-o', '/tmp/cg_fz.json'],
                  ['mapstale', MD, '--claims', '/tmp/cg_fz.json']):
+        if args[0] == 'mapfreeze':   # v15.8.4: 원고(md)에서 읽히는 자리로 — 덱 자리(slide:7) 그래프는 이제 멈춘다(아래)
+            json.dump({'doc': 'cg_doc', 'claims': [{'id': 'a', 'statement': 'A', 'evidence': 'e', 'sites': ['doc:sec:Results']}]},
+                      open('/tmp/cg_docg.json', 'w', encoding='utf8'))
         r = subprocess.run([sys.executable, os.path.join(here, 'claim_graph.py')] + args,
                            capture_output=True, text=True)
         assert r.returncode == 0, (args, r.stderr[-400:])
+    r = subprocess.run([sys.executable, os.path.join(here, 'claim_graph.py'), 'mapfreeze', MD, '--claims', p, '-o', '/tmp/cg_fz2.json'],
+                       capture_output=True, text=True)
+    assert r.returncode != 0 and 'slide:7' in (r.stdout + r.stderr), (r.returncode, r.stderr[-300:])   # 읽지 못하는 자리 → 멈춤
 
 
 def t_confidence_and_weight_rules():

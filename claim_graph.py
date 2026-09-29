@@ -42,7 +42,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '15.8.3'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '15.8.4'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -574,13 +574,20 @@ def mapfreeze(resolve, claims, at=None):
     """검증 완료 선언. 자리 텍스트와 statement/evidence 의 해시를 기록."""
     import datetime
     at = at or datetime.date.today().isoformat()
+    # v15.8.4 (코드 리뷰 09-28): 읽을 수 없는 자리를 None 으로 적으면, 나중에도 못 읽을 때 '바뀐 것 없음' 이 된다 — 먼저 다 읽고, 하나라도
+    # 못 읽으면 아무것도 기록하지 않고 멈춘다
+    fps, bad = {}, []
     for c in claims:
-        fp = {}
         for site in c.get('sites', []):
             try:
-                fp[site] = _fingerprint(resolve(site))
-            except Exception:
-                fp[site] = None
+                fps[(c['id'], site)] = _fingerprint(resolve(site))
+            except Exception as e:
+                bad.append('%s: %s (%s)' % (c['id'], site, type(e).__name__))
+    if bad:
+        raise SystemExit('[멈춤] 자리를 읽지 못해 검증 기록(mapfreeze)을 하지 않았다 — 지운 화면·바뀐 절 제목이면 sites 를 먼저 고친다:\n  '
+                         + '\n  '.join(bad[:20]))
+    for c in claims:
+        fp = {site: fps[(c['id'], site)] for site in c.get('sites', [])}
         c['verified'] = {'at': at, 'sites': fp,
                          'evidence': _fingerprint(c.get('evidence', '') + '|' + c.get('statement', '')),
                          # v15.5: keys 만 바꾼 그래프(mapstale 0 · mapcheck 실패)를 잡기 위한 별도 해시.
@@ -603,7 +610,7 @@ def mapstale(resolve, claims, stream=sys.stdout):
             try:
                 now = _fingerprint(resolve(site))
             except Exception:
-                now = None
+                changed.append(c['id']); detail.append('%s: %s 자리를 읽을 수 없다(지운 화면·바뀐 절 제목?)' % (c['id'], site)); break   # v15.8.4
             if v.get('sites', {}).get(site) != now:
                 changed.append(c['id']); detail.append('%s: %s 텍스트가 바뀜' % (c['id'], site)); break
     print('=== 검증 이후 변경 ===', file=stream)

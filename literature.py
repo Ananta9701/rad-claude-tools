@@ -20,7 +20,7 @@ import shutil
 import sys
 import unicodedata
 
-__version__ = '0.5'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.6'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
 
 DOI_RE = re.compile(r'\b(10\.\d{4,9}/[^\s"<>]+)', re.I)
 PMID_RE = re.compile(r'\bPMID:?\s*(\d{5,9})\b', re.I)
@@ -371,7 +371,7 @@ def locate(instr_path, store, out, top=3, stream=sys.stdout):
             if not key or not os.path.exists(os.path.join(store, key, 'paper.md')):
                 L += ['- 문헌 %d: **원문 없음**(못 받음 — 입수 불가 문헌으로)' % n, '']; continue
             md = open(os.path.join(store, key, 'paper.md'), encoding='utf8').read()
-            parts = re.split(r'^(\[p\.[^\]]*\])$', md, flags=re.M)
+            parts = re.split(r'^(\[p\.[^\]]*\]|\[§ [^\]]*\])$', md, flags=re.M)   # v0.6 (코드 리뷰 ⑪): oa md 의 절 표지도
             cands = []
             for k in range(1, len(parts) - 1, 2):
                 mark = parts[k]
