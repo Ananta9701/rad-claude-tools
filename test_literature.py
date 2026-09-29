@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.8.2'
+EXPECT_VERSION = '0.8.3'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 
@@ -421,6 +421,57 @@ def t_cli():
     r = subprocess.run([sys.executable, os.path.join(HERE, 'literature.py'), 'ingest', instr, '--inbox', os.path.join(d, 'nope'),
                         '--store', os.path.join(d, 's'), '--out', os.path.join(d, 'o')], capture_output=True, text=True, env=env)
     assert r.returncode != 0 and 'inbox' in (r.stdout + r.stderr)
+
+
+def t_v083_oa_lookup_failure_not_none():
+    """리뷰어 09-29 2번: 조회 실패(네트워크·차단·이메일 오류)를 'OA 없음' 과 나눈다 — 실패면 다시 조회, 없음이면 브라우저·사용자."""
+    import json, urllib.error
+    d, instr = _fixture()
+    store, out = os.path.join(d, 'store'), os.path.join(d, 'out')
+    def down(url, timeout=30):
+        raise urllib.error.URLError('connect_rejected')
+    buf = io.StringIO()
+    res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=down, sleep=0, stream=buf))
+    assert res == {1: 'err', 2: 'err', 3: 'nodoi', 4: 'nodoi'}, res                                # 실패 길: 둘 다 막힘
+    t = buf.getvalue()
+    assert 'OA 없음' not in t and t.count('조회 못 함 — 다시 조회') == 2 and 'URLError' in t, t
+    assert '조회 못 함 2편' in t, t
+    def up422(url, timeout=30):                                                                    # 한쪽만 실패 + 다른 쪽 '없음' → 아직 모른다
+        if 'unpaywall' in url:
+            raise urllib.error.HTTPError(url, 422, 'Unprocessable', {}, None)
+        if 'search?query=DOI' in url:
+            return json.dumps({'resultList': {'result': []}}).encode()
+        raise AssertionError(url)
+    buf = io.StringIO()
+    res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=up422, sleep=0, stream=buf))
+    t = buf.getvalue()
+    assert res[1] == 'err' and res[2] == 'err', res
+    assert 'Unpaywall HTTPError 422' in t and 'OA 없음' not in t, t
+    def up_down_ep_ok(url, timeout=30):                                                            # 한쪽 실패여도 찾았으면 찾은 것
+        if 'unpaywall' in url:
+            raise urllib.error.URLError('x')
+        if 'search?query=DOI' in url:
+            return json.dumps({'resultList': {'result': [{'pmcid': 'PMC7654321', 'isOpenAccess': 'Y', 'inEPMC': 'Y'}]}} if 'xyz456' in url else {'resultList': {'result': []}}).encode()
+        raise AssertionError(url)
+    buf = io.StringIO()
+    res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=up_down_ep_ok, sleep=0, stream=buf))
+    t = buf.getvalue()
+    assert res[1] == 'err' and res[2] == 'xml', res
+    assert 'Europe PMC 전문 XML(PMC7654321) · (Unpaywall 조회 못 함 URLError — OA PDF 는 모름)' in t, t
+    assert '조회 못 함 1편' in t, t
+    def ok_none(url, timeout=30):                                                                  # 성공 길: 둘 다 답했고 없음 → OA 없음
+        if 'unpaywall' in url:
+            return json.dumps({'best_oa_location': None}).encode()
+        return json.dumps({'resultList': {'result': []}}).encode()
+    buf = io.StringIO()
+    res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=ok_none, sleep=0, stream=buf))
+    t = buf.getvalue()
+    assert res[1] == 'none' and res[2] == 'none', res
+    assert t.count('OA 없음 — 브라우저') == 2 and '조회 못 함' not in t, t
+    def html200(url, timeout=30):                                                                  # 프록시가 200 으로 HTML 을 주면 조회 실패
+        return b'<html>blocked</html>'
+    res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=html200, sleep=0, stream=io.StringIO()))
+    assert res[1] == 'err', res
 
 
 if __name__ == '__main__':

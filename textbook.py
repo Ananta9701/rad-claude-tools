@@ -27,7 +27,7 @@ import time
 import unicodedata
 from collections import Counter
 
-__version__ = '0.7.1'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.7.2'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
 
 TOC_WORDS = re.compile(r'차\s*[례려레]|목\s*차|c\s*o\s*n\s*t\s*e\s*n\s*t\s*s', re.I)   # v0.2: OCR '차려'·'C O N T E N T S'
 NUM_LINE = re.compile(r'^\s*[-–—]?\s*(\d{1,4})\s*[-–—]?\s*$')
@@ -774,10 +774,10 @@ def split(folder, plan_dir, plan_name, out, only=None, skip=(), recursive=False,
         if not _md_ok(os.path.join(bdir(k, b), 'INDEX.md'), INDEX_HEAD):
             todo.append((k, b, pf))
     preflight(folder, [b for _, b, _ in todo])
-    done, left, rate = 0, [], 0.08
+    done, left, rate, failed = 0, [], 0.08, {}
     for k, b, pf in todo:
         path = os.path.join(folder, b)
-        if done:
+        if done or failed:
             try:
                 est = len(load_pypdf().PdfReader(path, strict=False).pages) * rate
             except Exception:
@@ -788,14 +788,15 @@ def split(folder, plan_dir, plan_name, out, only=None, skip=(), recursive=False,
         t1 = time.time()
         cp = subprocess.run([sys.executable, os.path.abspath(__file__), '_split_one', path, pf, bdir(k, b), short_name(b), '--part', str(part)],
                             capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
-        if cp.returncode != 0:
-            print('  [오류] %s' % ('Killed(메모리 부족 추정)' if cp.returncode in (-9, 137) else ((cp.stderr or '').strip().splitlines() or [''])[-1][:200]),
-                  file=stream)
-        else:
-            try:
-                rate = max(rate, (time.time() - t1) / float(len(load_pypdf().PdfReader(path, strict=False).pages)))
-            except Exception:
-                pass
+        if cp.returncode != 0:       # v0.7.2 (코드 리뷰 17): 실패는 '남음' 과 나누어 요약 INDEX 에 까닭까지 — 전에는 '이번 실행' 에 세고 '(남음)' 으로 적었다
+            failed[b] = 'Killed(메모리 부족 추정)' if cp.returncode in (-9, 137) else 'rc=%d %s' % (
+                cp.returncode, ((cp.stderr or '').strip().splitlines() or [''])[-1][:200])
+            print('  [오류] %s' % failed[b], file=stream)
+            continue
+        try:
+            rate = max(rate, (time.time() - t1) / float(len(load_pypdf().PdfReader(path, strict=False).pages)))
+        except Exception:
+            pass
         done += 1
     rows = []
     for k, b in sel:
@@ -804,14 +805,16 @@ def split(folder, plan_dir, plan_name, out, only=None, skip=(), recursive=False,
             m = INDEX_HEAD.match(open(ip, encoding='utf8').readline())
             rows.append('| %02d | %s | `%s/INDEX.md` | %s | %s |' % (k, short_name(b), os.path.basename(bdir(k, b)), m.group(2), m.group(3)))
         else:
-            rows.append('| %02d | %s | (%s) | | |' % (k, short_name(b), '장 표 없음' if b in noplan else '남음'))
+            rows.append('| %02d | %s | (%s) | | |' % (k, short_name(b), '장 표 없음' if b in noplan else
+                                                     ('실패 — %s. 고친 뒤 같은 명령' % _cell(failed[b])) if b in failed else '남음'))
     S = ['# 교과서 분할 — INDEX', '',
          '> textbook.py v%s split. 책 → 그 책 폴더의 `INDEX.md` → 장 md 하나. 글자는 OCR 이다 — 인용은 원본 쪽 그림으로 확인.' % __version__,
          '> 낱말 찾기: 대화창은 Drive 검색(이 폴더 안 `fullText contains`), Cowork 는 `textbook.py search`.', '',
          '| # | 책 | 목차 | 파일 | 쪽 |', '|---|---|---|---|---|'] + rows
-    S += ['', '이번 실행 %d권 · 남은 책 %d권 · %.0f 초' % (done, sum(1 for r in rows if '(남음)' in r), time.time() - t0), '']
+    S += ['', '이번 실행 %d권 · 실패 %d권 · 남은 책 %d권 · %.0f 초' % (done, len(failed), sum(1 for r in rows if '(남음)' in r), time.time() - t0), '']
     open(os.path.join(out, 'INDEX.md'), 'w', encoding='utf8').write('\n'.join(S))
     print('\n'.join(S), file=stream)
+    split.failed = failed
     return done, left
 
 
@@ -1045,6 +1048,7 @@ if __name__ == '__main__':
         split_book(a.path, a.plan_md, a.book_dir, a.label, part=a.part)
     elif a.cmd == 'split':
         split(a.folder, a.plan_dir, a.plan_name, a.out, a.only, a.skip, a.recursive, a.budget, a.part)
+        sys.exit(1 if split.failed else 0)      # v0.7.2: 실패한 책이 있으면 rc=1(남은 책만 있으면 0 — 같은 명령을 다시)
     elif a.cmd == 'page':
         if not page_images(a.folder, a.book, a.out, a.pdf, a.printed, a.split, a.recursive, 'png' if a.png else 'jpg',
                            render=a.render, dpi=a.dpi, max_px=a.max_px, name=a.name):

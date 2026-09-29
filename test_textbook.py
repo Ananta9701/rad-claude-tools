@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import textbook as TB          # noqa: E402
 
-EXPECT_VERSION = '0.7.1'
+EXPECT_VERSION = '0.7.2'
 TMP = tempfile.mkdtemp(prefix='ttb_')
 
 
@@ -535,6 +535,46 @@ def t_v05_split_part_option():
     TB.split(d, pdir, 'pl', out, part=2, stream=io.StringIO())
     names = sorted(os.listdir(os.path.join(out, '01_h book')))
     assert '01_Liver_1.md' in names and '01_Liver_3.md' in names and '02_Kidney_3.md' in names, names
+
+
+def t_v072_split_failure_paths():
+    """코드 리뷰 17: split 실패 길 — 하위 프로세스 실패는 '남음' 이 아니라 '실패'(까닭과 함께), 이번 실행 수에 넣지 않고 rc=1."""
+    d, pdir = _split_setup('sf')
+    pf = os.path.join(pdir, 'pl_01.md'); good = open(pf, encoding='utf8').read()
+    open(pf, 'w', encoding='utf8').write(good.splitlines()[0] + '\n\n(장 표를 지웠다)\n')      # 첫 줄은 온전 → 장 표 빔 → 하위 프로세스 ValueError
+    out = os.path.join(TMP, 'sf_out'); buf = io.StringIO()
+    done, left = TB.split(d, pdir, 'pl', out, stream=buf)
+    top = open(os.path.join(out, 'INDEX.md'), encoding='utf8').read()
+    assert done == 0 and left == [], (done, left)                                            # 실패 길: 실패한 책을 '이번 실행' 에 세지 않는다
+    assert '(실패 — ' in top and '장 표가 비었다' in top and '(남음)' not in top, top
+    assert '이번 실행 0권 · 실패 1권 · 남은 책 0권' in top, top
+    assert not os.path.exists(os.path.join(out, '01_h book', 'INDEX.md'))
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1')
+    cli = [sys.executable, os.path.join(HERE, 'textbook.py'), 'split', d, '--plan-dir', pdir, '--plan-name', 'pl', '--out', out]
+    r = subprocess.run(cli, capture_output=True, text=True, env=env)
+    assert r.returncode == 1 and '실패 1권' in r.stdout, (r.returncode, r.stdout[-400:], r.stderr[-300:])
+    open(pf, 'w', encoding='utf8').write(good)                                                   # 성공 길: 장 표를 고치고 같은 명령
+    r = subprocess.run(cli, capture_output=True, text=True, env=env)
+    assert r.returncode == 0 and '이번 실행 1권 · 실패 0권 · 남은 책 0권' in r.stdout, (r.returncode, r.stdout[-400:])
+    assert '(실패' not in open(os.path.join(out, 'INDEX.md'), encoding='utf8').read()
+
+
+def t_v072_split_noplan_and_budget():
+    """장 표 없음(plan 오류)은 '장 표 없음' 으로, 예산을 넘긴 책은 '남음' 으로 — 실패와 섞지 않는다."""
+    d, pdir = _split_setup('sb')
+    import shutil
+    shutil.copy(os.path.join(d, 'h book.pdf'), os.path.join(d, 'k book.pdf'))
+    shutil.copy(os.path.join(pdir, 'pl_01.md'), os.path.join(pdir, 'pl_02.md'))
+    out = os.path.join(TMP, 'sb_out')
+    done, left = TB.split(d, pdir, 'pl', out, budget=0, stream=io.StringIO())                     # 첫 책은 늘 한다, 둘째는 예산 넘김
+    top = open(os.path.join(out, 'INDEX.md'), encoding='utf8').read()
+    assert done == 1 and left == ['k book.pdf'], (done, left)
+    assert '| 02 | k book | (남음) |' in top and '실패 0권 · 남은 책 1권' in top, top
+    pf2 = os.path.join(pdir, 'pl_02.md'); t = open(pf2, encoding='utf8').read()
+    open(pf2, 'w', encoding='utf8').write(t.replace('error=no', 'error=yes', 1))
+    done, left = TB.split(d, pdir, 'pl', out, stream=io.StringIO())
+    top = open(os.path.join(out, 'INDEX.md'), encoding='utf8').read()
+    assert done == 0 and '| 02 | k book | (장 표 없음) |' in top and '실패 0권 · 남은 책 0권' in top, top
 
 
 if __name__ == '__main__':

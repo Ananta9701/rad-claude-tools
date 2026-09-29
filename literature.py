@@ -20,7 +20,7 @@ import shutil
 import sys
 import unicodedata
 
-__version__ = '0.8.2'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.8.3'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
 
 DOI_RE = re.compile(r'\b(10\.\d{4,9}/[^\s"<>]+)', re.I)
 PMID_RE = re.compile(r'\bPMID:?\s*(\d{5,9})\b', re.I)
@@ -496,6 +496,12 @@ def check(instr_path, inbox, out=None, stream=sys.stdout, store=None):
 UA = 'rad-claude-tools literature.py (research verification; one request per second)'
 
 
+def _err_name(e):
+    """조회 실패의 짧은 이름 — HTTP 오류는 상태 번호까지(422 = 이메일 거부, 403 = 차단 등)."""
+    code = getattr(e, 'code', None)
+    return '%s %s' % (type(e).__name__, code) if isinstance(code, int) else type(e).__name__
+
+
 def _get(url, timeout=30):
     import urllib.request
     req = urllib.request.Request(url, headers={'User-Agent': UA})
@@ -741,20 +747,22 @@ def oa(instr_path, email, store, out, fetch=False, sleep=1.0, getter=None, strea
                 note = '다시 변환(%s — 옛 변환은 목록·상자 글·부록이 빠지거나 낱말이 붙었다)' % JATS_MD
             rows.append('| %d | %s %s | %s | 보관소에 있음 `%s` | %s |' % (r['n'], r['author'], r['year'], r['doi'], by_doi[r['doi']], note))
             res.append((r['n'], 'redo' if note else 'have')); continue
-        up, ep = {}, {}
+        up, ep, err = {}, {}, {}
         try:
             up = json.loads(get('https://api.unpaywall.org/v2/%s?email=%s' % (r['doi'], email)))
+            if not isinstance(up, dict):
+                raise ValueError('dict 아님')
         except Exception as e:
-            up = {'_err': type(e).__name__}
+            up, err['Unpaywall'] = {}, _err_name(e)
         time.sleep(sleep)
         try:
             q = get('https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI:%%22%s%%22&format=json&resultType=lite' % r['doi'])
             hits = json.loads(q).get('resultList', {}).get('result', [])
             ep = hits[0] if hits else {}
         except Exception as e:
-            ep = {'_err': type(e).__name__}
+            ep, err['Europe PMC'] = {}, _err_name(e)
         time.sleep(sleep)
-        loc = (up.get('best_oa_location') or {}) if isinstance(up, dict) else {}
+        loc = up.get('best_oa_location') or {}
         pdf = loc.get('url_for_pdf') or ''
         pmcid = ep.get('pmcid') or r['pmc'] or ''
         xml_ok = bool(pmcid) and ep.get('isOpenAccess') == 'Y' and ep.get('inEPMC') == 'Y'
@@ -763,8 +771,15 @@ def oa(instr_path, email, store, out, fetch=False, sleep=1.0, getter=None, strea
             what.append('Europe PMC 전문 XML(%s)' % pmcid)
         if pdf:
             what.append('OA PDF %s' % pdf)
+        # v0.8.3 (리뷰어 09-29 2번): 조회 실패는 'OA 없음' 이 아니다 — 실패면 다시 조회, 없음이면 브라우저·사용자.
+        # 한쪽이 찾았으면 찾은 것(못 본 쪽은 덧붙임), 아무것도 못 찾았는데 한쪽이라도 실패했으면 '조회 못 함'.
+        miss = ' · '.join('%s %s' % kv for kv in err.items())
+        if what and 'Unpaywall' in err and not pdf:
+            what.append('(Unpaywall 조회 못 함 %s — OA PDF 는 모름)' % err['Unpaywall'])
+        if what and 'Europe PMC' in err and not xml_ok:
+            what.append('(Europe PMC 조회 못 함 %s — 전문 XML 은 모름)' % err['Europe PMC'])
         if not what:
-            what.append('OA 없음 — 브라우저(doi.org)·구독이면 사용자' + (' [조회 오류 %s]' % (up.get('_err') or ep.get('_err')) if up.get('_err') or ep.get('_err') else ''))
+            what.append(('조회 못 함 — 다시 조회(%s)' % miss) if err else 'OA 없음 — 브라우저(doi.org)·구독이면 사용자')
         got = ''
         if fetch and xml_ok:
             try:
@@ -783,12 +798,16 @@ def oa(instr_path, email, store, out, fetch=False, sleep=1.0, getter=None, strea
                 got = 'XML 받기 실패 %s' % type(e).__name__
             time.sleep(sleep)
         rows.append('| %d | %s %s | %s | %s | %s |' % (r['n'], r['author'], r['year'], r['doi'], ' · '.join(what), got))
-        res.append((r['n'], 'xml' if xml_ok else ('pdf' if pdf else 'none')))
+        res.append((r['n'], 'xml' if xml_ok else ('pdf' if pdf else ('err' if err else 'none'))))
     if store and os.path.isdir(store):
         _write_store_index(store)
     L = ['# %s — 공식 API 조회(OA)' % name, '',
          '> literature.py v%s oa — Unpaywall·Europe PMC(캡차 없는 공식 경로). 남은 것은 받을 목록의 브라우저 순서(doi.org)로, 구독은 사용자.' % __version__, '',
          '| 번호 | 첫 저자·해 | DOI | 찾은 것 | 받음 |', '|---|---|---|---|---|'] + rows + ['']
+    nerr = sum(1 for _, x in res if x == 'err')
+    if nerr:
+        L += ['**조회 못 함 %d편** — OA 가 없다는 뜻이 아니다. 네트워크·차단(프록시)·이메일 오류(HTTPError 422)일 수 있다. '
+              '같은 명령을 다시 돌린다(보관소에 받은 것은 건너뜀). 계속 막히면 브라우저로(규약 2b).' % nerr, '']
     os.makedirs(out, exist_ok=True)
     open(os.path.join(out, '%s_OA조회.md' % name), 'w', encoding='utf8').write('\n'.join(L))
     print('\n'.join(L), file=stream)
