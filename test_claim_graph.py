@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.9'
+EXPECT_VERSION = '16.10'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -833,6 +833,53 @@ def t_v165_mapgraph_sources_store():
     assert hard == ['k: sources[3]: 문헌 10.1000/zzz 가 보관소에 없다 — 원문을 받지 않은 근거는 sources 에 넣지 않는다(작업표에 둔다)'], ps   # [필수]
     assert any(p.startswith('[참고] k: sources[2]: 문헌 10.1000/a 판정') for p in ps) and not any('sources[1]' in p for p in ps), ps
     assert not [p for p in CGm.mapgraph(copy.deepcopy(g), io.StringIO())[0] if '보관소' in p or '판정' in p]   # 보관소를 안 주면 전처럼
+
+
+def t_v1610_mapfreeze_sources_missing_doi_stops():
+    # 사용자 09-29: mapfreeze --sources 가 보관소에 없는 DOI 를 만나면 mapgraph 처럼 [필수] — 아무것도 기록하지 않고 멈춘다(전에는 [참고] 뒤 기록)
+    import json, tempfile
+    root = tempfile.mkdtemp(prefix='cgfz_')
+    _store(root, md=NEW_PDF_MD)                                                          # 10.1000/abc 만 보관소에 있다
+    ok = [{'id': 's', 'statement': 'S', 'evidence': 'e', 'sites': [], 'keys': [], 'depends_on': [],
+           'sources': [{'kind': '문헌', 'what': '10.1000/abc', 'at': '[p.e12 · PDF 2]', 'verdict': '부합'},
+                       {'kind': '문헌', 'what': 'https://doi.org/10.1000/ABC', 'at': '[p.e11 · PDF 1]', 'verdict': '부합'}]}]
+    bad = copy.deepcopy(ok); bad[0]['sources'].append({'kind': '문헌', 'what': '10.1000/zzz', 'at': 'p.1', 'verdict': '부합'})
+    bad.append({'id': 't', 'statement': 'T', 'sites': [], 'keys': [], 'depends_on': [], 'sources': [{'kind': '문헌', 'what': '10.1000/yyy'}]})
+    # 성공 길: 모두 보관소에 있으면(대문자·https://doi.org/ 도 같은 DOI) 기록한다
+    out = io.StringIO(); CGm.mapfreeze(lambda s_: '', ok, sources=root, stream=out)
+    assert len(ok[0]['verified']['sources']) == 2 and '[참고]' not in out.getvalue(), (ok[0]['verified'], out.getvalue())
+    # 실패 길: 하나라도 없으면 SystemExit — 어느 주장에도 verified 가 생기지 않는다
+    before = copy.deepcopy(bad)
+    try:
+        CGm.mapfreeze(lambda s_: '', bad, sources=root, stream=io.StringIO()); assert False, '멈추지 않았다'
+    except SystemExit as e:
+        msg = str(e)
+    assert msg.startswith('[멈춤] [필수] 근거 문헌 2곳') and 's: sources[3]: 문헌 10.1000/zzz' in msg and 't: sources[1]: 문헌 10.1000/yyy' in msg, msg
+    assert '10.1000/abc' not in msg and bad == before, bad
+    # 보관소 폴더를 잘못 주어도(없는 폴더) 멈춘다 — 조용히 근거 없이 기록하지 않는다
+    try:
+        CGm.mapfreeze(lambda s_: '', copy.deepcopy(ok), sources=os.path.join(root, 'nope'), stream=io.StringIO()); assert False
+    except SystemExit as e:
+        assert '근거 문헌 2곳' in str(e), e
+    # --sources 를 안 주면 전처럼(문헌 근거는 보지 않고 기록)
+    b2 = copy.deepcopy(bad); CGm.mapfreeze(lambda s_: '', b2)
+    assert all('verified' in c and 'sources' not in c['verified'] for c in b2), b2
+    # 교과서 근거를 못 찾는 것은 전처럼 [참고](결정은 문헌 DOI 만)
+    tb = [{'id': 'q', 'statement': 'Q', 'sites': [], 'keys': [], 'depends_on': [], 'sources': [{'kind': '교과서', 'what': '없는책', 'at': 'p.1'}]}]
+    out = io.StringIO(); CGm.mapfreeze(lambda s_: '', tb, sources=root, stream=out)
+    assert 'verified' in tb[0] and '[참고] 근거 원문 1곳' in out.getvalue(), out.getvalue()
+    # CLI: 종료 코드 1, 출력 파일을 만들지 않는다
+    d = tempfile.mkdtemp(prefix='cgfzc_')
+    cg = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'claim_graph.py')
+    doc = os.path.join(d, 'Doc_v1.md'); open(doc, 'w', encoding='utf8').write('# Doc\n\ntext\n')
+    A = os.path.join(d, 'a.json'); json.dump({'doc': 'Doc_v1.md', 'claims': before}, open(A, 'w'), ensure_ascii=False)
+    O = os.path.join(d, 'o.json')
+    run = lambda *a: subprocess.run([sys.executable, cg] + list(a), capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    r = run('mapfreeze', doc, '--claims', A, '--sources', root, '-o', O)
+    assert r.returncode == 1 and '[필수]' in r.stderr and '10.1000/zzz' in r.stderr and not os.path.exists(O), (r.returncode, r.stdout, r.stderr)
+    json.dump({'doc': 'Doc_v1.md', 'claims': ok}, open(A, 'w'), ensure_ascii=False)
+    r = run('mapfreeze', doc, '--claims', A, '--sources', root, '-o', O)
+    assert r.returncode == 0 and os.path.exists(O) and '기록 완료' in r.stdout, (r.stdout, r.stderr)
 
 
 def t_v165_gaps_cli():

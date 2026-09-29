@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.9'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.10'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -1070,6 +1070,21 @@ def mapfreeze(resolve, claims, at=None, sources=None, stream=None):
     if bad:
         raise SystemExit('[멈춤] 자리를 읽지 못해 검증 기록(mapfreeze)을 하지 않았다 — 지운 화면·바뀐 절 제목이면 sites 를 먼저 고친다:\n  '
                          + '\n  '.join(bad[:20]))
+    # v16.10 (사용자 09-29): --sources(문헌 보관소)를 주었는데 문헌 근거의 DOI 가 보관소에 없으면 mapgraph --sources 처럼 [필수] — 아무것도
+    # 기록하지 않고 멈춘다. 전에는 [참고] 로만 알리고 나머지를 기록해, 원문 없는 근거가 검증된 그래프에 남았다
+    if sources is not None:
+        nodoi = []
+        for c in claims:
+            for k, x in enumerate(c.get('sources') or [], 1):
+                if isinstance(x, dict) and x.get('kind') == '문헌' and x.get('what'):
+                    try:
+                        _source_file(sources, x)
+                    except (KeyError, OSError):
+                        nodoi.append('%s: sources[%d]: 문헌 %s' % (c['id'], k, x['what']))
+        if nodoi:
+            raise SystemExit('[멈춤] [필수] 근거 문헌 %d곳이 보관소(%s)에 없어 검증 기록(mapfreeze)을 하지 않았다 — 원문을 받지 않은 근거는 '
+                             'sources 에서 빼 작업표에 두거나, 보관소에 받은 뒤 다시 한다(mapgraph --sources 와 같은 규칙):\n  %s'
+                             % (len(nodoi), sources, '\n  '.join(nodoi[:20]) + ('\n  … 외 %d곳' % (len(nodoi) - 20) if len(nodoi) > 20 else '')))
     src_rec, src_skip = {}, []
     for c in claims:                      # v16: 근거 원문 — 폴더를 준 때만. 못 읽는 근거는 기록하지 않고 알린다(근거 칸은 선택)
         old = (c.get('verified') or {}).get('sources', {})

@@ -1,23 +1,23 @@
-# RELEASE v2.66 — manifest v86 — 2026-09-29
+# RELEASE v2.67 — manifest v87 — 2026-09-29
 
-> **v2.66** — 빨간 도형 검사와 `빨간 도형도 뺌`(사용자 09-29 — 14번 뒤, 형식 (나) 선택). v2.63 부터 `strip_color` 가 글자 색만 지워 문제 화면(앞에 복제)에 정답을 가리키는 빨간 화살표·동그라미가 남을 수 있다 — 이제 **남으면 적용 보고에 [확인]**, 넘김 설명에 **`빨간 도형도 뺌`** 이면 복제본에서 뺀다. deck_toolkit 16.46 · handoff 2.2. 이전 판 내용은 `HISTORY.md`.
+> **v2.67** — Mac 에서도 테스트 전부 통과(글꼴 찾기)와 `mapfreeze --sources` 의 [필수] 멈춤(사용자 09-29). Mac(Claude Code Local)에는 `fc-list` 도 DejaVu 글꼴도 없어 test_toolkit 3건이 실패했다(398/401) — 건너뛰지 않고, `fc-list` 가 없으면 글꼴 폴더를 훑어 같은 색인을 만들고 테스트는 그 컴퓨터에 실제로 있는 글꼴(Linux DejaVu Sans · Mac Arial)로 같은 논리를 시험한다. 덱 테마 글꼴 파일을 못 찾아 근사 계산으로 넘어가면 [참고] 한 줄. `mapfreeze --sources` 는 보관소에 없는 DOI 를 만나면 `mapgraph --sources` 처럼 아무것도 기록하지 않고 멈춘다.
 
 ## 1. 바뀐 것
 
 | 도구 | 판 | 내용 |
 |---|---|---|
-| `deck_toolkit.py` | 16.46 | `Deck.red_shapes(n, 색='FF0000')` — 도형 속성(`p:spPr`)의 채움·선이 그 색인 도형(sp·cxnSp·pic) 이름 목록, 글자 색은 보지 않는다. `Deck.strip_red_shapes(n, 색)` — 그 도형을 모두 지우고 쓰던 rels 도 뺀다(이름이 겹쳐도 — `delete_shape` 는 한 이름에 하나만). rels 정리는 `delete_shape` 와 같은 함수(`_drop_rels`)로 |
-| `DECK_SPEC.md` | 16.46 | 머리에 한 줄, §0-B-3 첫 제시 줄 |
-| `handoff.py` | 2.2 | `앞에 복제` 설명에 `빨간 도형도 뺌` → 복제본에서 빨간 도형 모두 뺌(원본 화면 그대로, 새 슬라이드·가져옴의 앞에 복제도). 안 적었는데 남으면 보고 표 `빨간 도형(복제본)` 에 `[확인] 화면 N 복제본(slideM)에 빨간 도형 k개 남음: 이름… — 정답 표시면 넘김에 "빨간 도형도 뺌"`. 앞에 복제 없이 쓰면 경고 |
-| `HANDOFF_FORMAT.md` | 2.2 | `앞에 복제` 줄에 `빨간 도형도 뺌` · 해설 상자는 글로 찾는다는 것 |
-| 테스트 | — | test_toolkit 1(찾기: 도형 채움·선·connector 선·소문자는 잡고 글자 빨강·파란 상자는 아님, 이름 겹친 둘 모두 빼기, 두 번째 0), test_handoff 1(적은 화면은 복제본만 빼고 원본 그대로 · 안 적은 화면은 [확인] 에 이름 · 앞에 복제 없이 쓰면 경고) |
+| `deck_toolkit.py` | 16.47 | 글꼴 색인: `fc-list` 가 없거나 비면 `FONT_DIRS`(`/System/Library/Fonts`·`/Library/Fonts`·`~/Library/Fonts`, fc-list 없는 Linux 의 `/usr/share/fonts`·`~/.fonts` 등)를 훑어 글꼴 파일의 이름 표(nameID 16·1 family — 지역 이름 포함, 17·2 style)로 fc-list 와 같은 색인. `.ttf`·`.otf`·`.ttc`·`.otc`, 모음의 둘째 이후 글꼴은 `x.ttc#N`(PIL 로 열 때 index). `fc-list` 가 있으면 전과 같다(같은 fc-list 출력에서 옛·새 색인이 같음을 확인). `overflow`·`fit-layout`·`fit-corner-boxes`: 테마 본문 글꼴 파일을 못 찾아 근사 모델로 잰 화면이 있으면 `[참고] 덱 테마 글꼴 "…" 파일을 이 컴퓨터에서 찾지 못해 …` 한 줄(돌려주는 문제 목록·종료 코드는 그대로). `theme_fonts_missing` 도 fc-list 가 없으면 이 색인으로(전에는 빈 목록) |
+| `DECK_SPEC.md` | 16.47 | 머리에 한 줄, v16.13 글꼴 찾기 줄 |
+| `claim_graph.py` | 16.10 | `mapfreeze --sources`: 문헌 근거의 DOI 가 보관소에 없으면 **[필수] — 아무것도 기록하지 않고 멈춤**(종료 코드 1, `-o` 파일 안 만듦, 없는 곳을 모두 적음). 보관소 폴더를 잘못 준 때도 멈춘다. `--sources` 가 없을 때·교과서 근거를 못 찾을 때·보관소에 있는 문헌의 `at` 을 못 찾을 때는 전과 같다 |
+| `CLAIM_GRAPH.md` | 16.10 | §3-2 근거 칸 · 명령표 `mapfreeze` 줄 |
+| 테스트 | — | test_toolkit: 글꼴 3건(overflow_font_path · v1613 · v1614)을 이 컴퓨터에 있는 Regular·Bold 짝 글꼴로(건너뜀 없음) + 2(fc-list 없이 실제 글꼴 폴더에서 같은 글꼴·굵은 짝 · 실제 Regular·Bold 로 만든 .ttc 두 글꼴과 `#1` · OTTO 머리 · 망가진·잘린 파일 · theme_fonts_missing · 근사 모델 알림 있음/없음 · CLI 세 명령의 [참고] 한 줄과 `--font-path` 면 없음). test_claim_graph 1(모두 있으면 기록 · 하나라도 없으면 멈추고 아무 주장에도 verified 없음 · 없는 폴더 · `--sources` 없으면 전처럼 · 교과서 못 찾음은 [참고] · CLI 종료 코드 1 과 출력 파일 없음) |
 
 ## 2. 회신 항목별 답
 
 | 항목 | 반영 |
 |---|---|
-| 사용자 09-29: 문제 화면에 남은 빨간 도형 검사 | 위 [확인] |
-| 사용자 09-29: 넘김에서 정답 도형 빼기 — (나) `빨간 도형도 뺌` | 위 handoff 2.2 |
+| 사용자 09-29: mapfreeze `--sources` 가 보관소에 없는 DOI 면 mapgraph 처럼 [필수]로 멈춤 | 위 claim_graph 16.10 |
+| 사용자 09-29(Mac Local 점검): test_toolkit 글꼴 3건 — 건너뛰지 말고 Linux·Mac 모두 실제 글꼴로, fc-list 없으면 Mac 글꼴 폴더, 근사 계산이면 [참고] 한 줄 | 위 deck_toolkit 16.47 |
 
 ## 3. 받을 파일
 
@@ -27,38 +27,38 @@
 ### 저자 (7)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.9 | `c57862ed2485` | — |
-| `test_claim_graph.py` | v16.9 | `4cee6ef82a26` | — |
-| `CLAIM_GRAPH.md` | v16.9 | `af7dde0cafca` | — |
+| `claim_graph.py` | v16.10 | `47f516373f16` | ○ |
+| `test_claim_graph.py` | v16.10 | `5817f71b4016` | ○ |
+| `CLAIM_GRAPH.md` | v16.10 | `539acf8f59bc` | ○ |
 | `verify_toolkit.py` | v1.3.7 | `0833539073f1` | — |
 | `test_verify_toolkit.py` | v1.3.7 | `ac6e42ed2103` | — |
-| `TOOLS_MANIFEST.md` | v86 | `97e5e0b864ac` | ○ |
-| `RELEASE.md` | v2.66 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v87 | `3c29bec0bc9d` | ○ |
+| `RELEASE.md` | v2.67 | — | 이 문서 |
 
 ### 발표 (11)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.9 | `c57862ed2485` | — |
-| `test_claim_graph.py` | v16.9 | `4cee6ef82a26` | — |
-| `CLAIM_GRAPH.md` | v16.9 | `af7dde0cafca` | — |
-| `deck_toolkit.py` | v16.46 | `8277344bf38c` | ○ |
-| `test_toolkit.py` | v16.46 | `3dd49a2f30da` | ○ |
-| `DECK_SPEC.md` | v16.46 | `2647cfab6cfc` | ○ |
-| `handoff.py` | v2.2 | `d8b5305111f4` | ○ |
-| `test_handoff.py` | v2.2 | `7b2a11d55b3a` | ○ |
-| `HANDOFF_FORMAT.md` | v2.2 | `92fb4a11e9bb` | ○ |
-| `TOOLS_MANIFEST.md` | v86 | `97e5e0b864ac` | ○ |
-| `RELEASE.md` | v2.66 | — | 이 문서 |
+| `claim_graph.py` | v16.10 | `47f516373f16` | ○ |
+| `test_claim_graph.py` | v16.10 | `5817f71b4016` | ○ |
+| `CLAIM_GRAPH.md` | v16.10 | `539acf8f59bc` | ○ |
+| `deck_toolkit.py` | v16.47 | `8b1ab74de52c` | ○ |
+| `test_toolkit.py` | v16.47 | `819595d18946` | ○ |
+| `DECK_SPEC.md` | v16.47 | `61bbe8c12ef1` | ○ |
+| `handoff.py` | v2.2 | `d8b5305111f4` | — |
+| `test_handoff.py` | v2.2 | `7b2a11d55b3a` | — |
+| `HANDOFF_FORMAT.md` | v2.2 | `92fb4a11e9bb` | — |
+| `TOOLS_MANIFEST.md` | v87 | `3c29bec0bc9d` | ○ |
+| `RELEASE.md` | v2.67 | — | 이 문서 |
 
 ### 리뷰어 (6)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.9 | `c57862ed2485` | — |
-| `test_claim_graph.py` | v16.9 | `4cee6ef82a26` | — |
-| `CLAIM_GRAPH.md` | v16.9 | `af7dde0cafca` | — |
+| `claim_graph.py` | v16.10 | `47f516373f16` | ○ |
+| `test_claim_graph.py` | v16.10 | `5817f71b4016` | ○ |
+| `CLAIM_GRAPH.md` | v16.10 | `539acf8f59bc` | ○ |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v86 | `97e5e0b864ac` | ○ |
-| `RELEASE.md` | v2.66 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v87 | `3c29bec0bc9d` | ○ |
+| `RELEASE.md` | v2.67 | — | 이 문서 |
 
 ### 교과서 (5)
 | 파일 | 판 | 해시 | 변경 |
@@ -66,8 +66,8 @@
 | `textbook.py` | v0.7.2 | `446049895c66` | — |
 | `test_textbook.py` | v0.7.2 | `93d75911d86c` | — |
 | `TEXTBOOK.md` | v0.7.2 | `4bfff4aa0771` | — |
-| `TOOLS_MANIFEST.md` | v86 | `97e5e0b864ac` | ○ |
-| `RELEASE.md` | v2.66 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v87 | `3c29bec0bc9d` | ○ |
+| `RELEASE.md` | v2.67 | — | 이 문서 |
 
 ### 문헌 (5)
 | 파일 | 판 | 해시 | 변경 |
@@ -75,23 +75,23 @@
 | `literature.py` | v0.8.4 | `0585dbb787b0` | — |
 | `test_literature.py` | v0.8.4 | `940eca6399e2` | — |
 | `LITERATURE.md` | v0.8.4 | `e35c0d149938` | — |
-| `TOOLS_MANIFEST.md` | v86 | `97e5e0b864ac` | ○ |
-| `RELEASE.md` | v2.66 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v87 | `3c29bec0bc9d` | ○ |
+| `RELEASE.md` | v2.67 | — | 이 문서 |
 
 ### 코드 (25)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.9 | `c57862ed2485` | — |
-| `test_claim_graph.py` | v16.9 | `4cee6ef82a26` | — |
-| `CLAIM_GRAPH.md` | v16.9 | `af7dde0cafca` | — |
-| `deck_toolkit.py` | v16.46 | `8277344bf38c` | ○ |
-| `test_toolkit.py` | v16.46 | `3dd49a2f30da` | ○ |
-| `DECK_SPEC.md` | v16.46 | `2647cfab6cfc` | ○ |
+| `claim_graph.py` | v16.10 | `47f516373f16` | ○ |
+| `test_claim_graph.py` | v16.10 | `5817f71b4016` | ○ |
+| `CLAIM_GRAPH.md` | v16.10 | `539acf8f59bc` | ○ |
+| `deck_toolkit.py` | v16.47 | `8b1ab74de52c` | ○ |
+| `test_toolkit.py` | v16.47 | `819595d18946` | ○ |
+| `DECK_SPEC.md` | v16.47 | `61bbe8c12ef1` | ○ |
 | `verify_toolkit.py` | v1.3.7 | `0833539073f1` | — |
 | `test_verify_toolkit.py` | v1.3.7 | `ac6e42ed2103` | — |
-| `handoff.py` | v2.2 | `d8b5305111f4` | ○ |
-| `test_handoff.py` | v2.2 | `7b2a11d55b3a` | ○ |
-| `HANDOFF_FORMAT.md` | v2.2 | `92fb4a11e9bb` | ○ |
+| `handoff.py` | v2.2 | `d8b5305111f4` | — |
+| `test_handoff.py` | v2.2 | `7b2a11d55b3a` | — |
+| `HANDOFF_FORMAT.md` | v2.2 | `92fb4a11e9bb` | — |
 | `textbook.py` | v0.7.2 | `446049895c66` | — |
 | `test_textbook.py` | v0.7.2 | `93d75911d86c` | — |
 | `TEXTBOOK.md` | v0.7.2 | `4bfff4aa0771` | — |
@@ -99,22 +99,23 @@
 | `test_literature.py` | v0.8.4 | `940eca6399e2` | — |
 | `LITERATURE.md` | v0.8.4 | `e35c0d149938` | — |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v86 | `97e5e0b864ac` | ○ |
+| `TOOLS_MANIFEST.md` | v87 | `3c29bec0bc9d` | ○ |
 | `CODE_PROJECT_README.md` | v5 | `cbffb6ca85db` | — |
-| `HISTORY.md` | — | `4bd91ccf7da7` | ○ |
-| `release.py` | — | `0a430411a738` | — |
+| `HISTORY.md` | — | `bb3a9d7c7819` | ○ |
+| `release.py` | — | `9edb619b0a0b` | ○ |
 | `GITHUB_README.md` | — | `c81d29504e46` | — |
 | `PRIVATE_TERMS.txt` | — | `6e8c2862cf5e` | — |
-| `RELEASE.md` | v2.66 | — | 이 문서 |
+| `RELEASE.md` | v2.67 | — | 이 문서 |
 <!-- sets:end -->
 
 ## 4. 각 프로젝트 대화창이 첫 세션에서 할 일
 
-1. 모든 역할: selfcheck 로 manifest v86 이상.
-2. 영상의학: 정답을 가리키는 빨간 화살표·동그라미가 있는 `앞에 복제` 화면은 설명에 **`빨간 도형도 뺌`** 을 적는다(예: `앞에 복제(정답 표시 제거) — 해설 상자 없음 · 빨간 도형도 뺌`). 문제가 화살표를 묻는 화면에는 적지 않는다. 09-29 통보의 임시 메모(`정답 도형 있음 — …`)는 이제 필요 없다.
-3. 발표·발표 Cowork: 적용 보고의 `빨간 도형(복제본)` 줄에 `[확인]` 이 있으면 그 도형이 정답 표시인지 보고, 그렇다면 영상의학에 알리거나 `Deck.strip_red_shapes(n)` 으로 뺀다.
+1. 모든 역할: selfcheck 로 manifest v87 이상.
+2. 저자·발표·리뷰어: `mapfreeze … --sources <문헌 보관소>` 가 `[멈춤] [필수] 근거 문헌 N곳이 보관소에 없어` 로 멈추면, 적힌 근거를 sources 에서 빼 작업표(gaps)에 두거나 문헌 역할에 원문을 받아 달라고 한 뒤 다시 freeze 한다. 그 전에는 검증 기록이 생기지 않는다.
+3. 발표(Mac 에서 도구를 돌리는 곳): `overflow` 끝에 `[참고] 덱 테마 글꼴 "…" 파일을 이 컴퓨터에서 찾지 못해` 가 나오면 그 판정은 근사 계산이다 — 글꼴을 설치하거나 `--font-path` 로 준다. 최종 기준은 전처럼 PowerPoint.
 
 ## 5. 검증하지 않은 것
 
-- 실제 풀이 덱으로는 돌리지 않았다 — 가짜 슬라이드로만. 빨강을 FF0000 이 아닌 색(예: C00000)·테마 색으로 칠한 도형은 잡지 않는다.
-- 그룹 안의 빨간 도형은 그 도형만 빼고 그룹은 남긴다(그룹 틀 크기는 그대로) — 실물에서 보기 확인 안 함.
+- 이번 판은 Mac(macOS 26 · Python 3.12·3.10)에서 빌드했다. Linux 컨테이너에서는 돌리지 않았다 — 대신 Mac 에서 Linux 형식의 `fc-list` 출력(이 Mac 의 글꼴 371개)을 흉내 내 옛·새 색인이 같고 테스트가 그 길로도 통과함을 확인했다. 첫 Linux 환경(클라우드·Cowork)의 selfcheck `--tests` 결과로 확인한다.
+- Mac 의 내려받기 글꼴(시스템 설정에서 받는 것, `/System/Library/AssetsV2` 아래)은 훑지 않는다. 테스트에서 `.otf` 는 이름 표 읽기만(가짜 OTTO 머리) 본다 — 실제 CFF 글꼴은 이 Mac 에서 손으로만 확인했다(시스템 `.otf` 38개·`.ttc` 128개 모두 색인에 들어가고, `.otf` 하나로 글자폭을 잼). Linux 컨테이너에 같은 글꼴이 있다는 보장이 없어 테스트에는 넣지 않았다.
+- 실제 덱(Pretendard·맑은 고딕 테마)을 Mac 에서 돌린 적은 없다 — 그 글꼴이 이 Mac 에 없어 [참고] 한 줄이 나올 것으로 예상.

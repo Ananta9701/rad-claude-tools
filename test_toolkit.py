@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.46'
+EXPECT_VERSION = '16.47'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -681,16 +681,24 @@ def t_normautofit_scale_warning():
     probs = T.check_text_overflow(d, stream=io.StringIO())
     assert any('70%' in p and '자동 축소' in p for p in probs), probs
 
+def _real_font():
+    """v16.47: 이 컴퓨터에 실제로 있는 Regular·Bold 짝 글꼴 — Linux 컨테이너는 DejaVu Sans(전과 같음), Mac 은 Arial 등.
+    같은 논리를 그 글꼴로 시험한다(건너뛰지 않는다). 반환 (family, Regular 경로, Bold 경로)."""
+    idx = T._font_file_index()
+    for fam in ('DejaVu Sans', 'Arial', 'Liberation Sans', 'Helvetica', 'Noto Sans'):
+        reg = idx.get(fam.lower())
+        if reg and T._bold_sibling(reg):
+            return fam, reg, T._bold_sibling(reg)
+    raise AssertionError('Regular·Bold 짝 글꼴이 없다 — 이 컴퓨터 글꼴 확인(색인 %d 이름)' % len(idx))
+
 def t_overflow_font_path():
-    import glob
-    fonts = glob.glob('/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf')
-    assert fonts, 'DejaVuSans.ttf 없음 — 컨테이너 폰트 확인'
-    assert T._est_lines_font('short', 16, 5 * 914400, fonts[0]) == 1
-    assert T._est_lines_font(' '.join(['word'] * 60), 16, 3 * 914400, fonts[0]) > 3
+    fam, reg, _ = _real_font()
+    assert T._est_lines_font('short', 16, 5 * 914400, reg) == 1
+    assert T._est_lines_font(' '.join(['word'] * 60), 16, 3 * 914400, reg) > 3
     d = T.Deck.open(SRC, wd('ofp'))
-    a = T.check_text_overflow(d, stream=io.StringIO()); b = T.check_text_overflow(d, stream=io.StringIO(), font_path=fonts[0])
+    a = T.check_text_overflow(d, stream=io.StringIO()); b = T.check_text_overflow(d, stream=io.StringIO(), font_path=reg)
     assert isinstance(a, list) and isinstance(b, list)
-    r = cli('overflow', SRC, '--font-path', fonts[0]); assert r.returncode == 0 and 'DejaVuSans' in r.stdout
+    r = cli('overflow', SRC, '--font-path', reg); assert r.returncode == 0 and os.path.basename(reg) in r.stdout, r.stdout[-400:]
 
 def t_audit_residue_per_paragraph():
     # 전평 수용검사 2-1: 색 강조로 쪼개진 run 'A '·'.' 은 잔재가 아니다; 문단 전체가 한 글자면 잔재
@@ -1405,16 +1413,18 @@ def t_v1612_height_model_lnspc_spcbef_and_eomi():
 def t_v1613_overflow_uses_theme_font_file_and_model_tolerance():
     import glob
     d = T.Deck.open(SRC, wd('tf'))
-    # 테마 본문 글꼴을 컨테이너에 있는 DejaVu Sans 로 → 자동으로 그 파일을 쓴다
+    # 테마 본문 글꼴을 이 컴퓨터에 있는 글꼴(Linux DejaVu Sans · Mac Arial 등)로 → 자동으로 그 파일을 쓴다
+    fam, reg, _ = _real_font()
     for tp in glob.glob(os.path.join(d.dir, 'ppt/theme/theme*.xml')):
         x = open(tp, encoding='utf8').read()
-        x = re.sub(r'(<a:minorFont><a:latin typeface=")[^"]*', r'\g<1>DejaVu Sans', x, 1)
+        x = re.sub(r'(<a:minorFont><a:latin typeface=")[^"]*', lambda m: m.group(1) + fam, x, 1)
         open(tp, 'w', encoding='utf8').write(x)
     sn = [s for s, _, _ in d.order()][0]
     fpth = T._theme_body_font_file(d, sn)
-    assert fpth and 'DejaVuSans' in fpth, fpth
+    assert fpth == reg, (fpth, reg)
     buf = io.StringIO(); T.check_text_overflow(d, stream=buf)
-    assert 'DejaVuSans' in buf.getvalue() and '덱 테마 글꼴 자동' in buf.getvalue(), buf.getvalue()[-400:]
+    assert os.path.basename(reg) in buf.getvalue() and '덱 테마 글꼴 자동' in buf.getvalue(), buf.getvalue()[-400:]
+    assert '[참고] 덱 테마 글꼴' not in buf.getvalue(), buf.getvalue()[-400:]         # v16.47: 찾았으면 근사 모델 알림 없음
     # 글꼴 파일이 없으면 모델로 계산하고, 상자 높이 5% 이내의 슬라이드 밖 넘침은 [참고]
     e = T.Deck.open(SRC, wd('tf2'))
     for tp in glob.glob(os.path.join(e.dir, 'ppt/theme/theme*.xml')):
@@ -1438,9 +1448,13 @@ def t_v1613_overflow_uses_theme_font_file_and_model_tolerance():
         over = top + T._estimated_height(sh) - H
         if 0.01 * sh['h'] < over < 0.05 * sh['h']:
             break
-    probs = T.check_text_overflow(e, stream=io.StringIO())
+    buf = io.StringIO(); probs = T.check_text_overflow(e, stream=buf)
     mine = [p for p in probs if 'LowBox' in p and '슬라이드 밖' in p]
     assert mine and all(p.startswith('[참고]') and '글꼴 폭 모델' in p for p in mine), mine
+    # v16.47: 못 찾으면 조용히 넘어가지 않는다 — 글꼴 이름을 적은 [참고] 한 줄(돌려주는 목록에는 넣지 않는다)
+    note = [l.strip() for l in buf.getvalue().splitlines() if l.strip().startswith('[참고] 덱 테마 글꼴')]
+    assert len(note) == 1 and '"NoSuchFont Zz"' in note[0] and '--font-path' in note[0], buf.getvalue()[-600:]
+    assert not any(p.startswith('[참고] 덱 테마 글꼴') for p in probs)
 
 def t_v1614_layout_insert_like_spacing_bold():
     # S1: 같은 덱 복제는 원천 레이아웃 유지, layout= 명시, set_layout 은 자리 고정
@@ -1475,12 +1489,13 @@ def t_v1614_layout_insert_like_spacing_bold():
         assert '<a:spcPts val="300"/>' in ppr and '<a:spcPct val="90000"/>' in ppr and ppr.count('spcBef>') == 2, ppr
         assert ppr.index('lnSpc') < ppr.index('spcBef') and (('buChar' not in ppr) or ppr.index('spcBef') < ppr.index('buChar'))
     e.save('/tmp/t2.pptx'); assert T.validate('/tmp/t2.pptx', SRC) is not False
-    # 굵은 run 은 굵은 글꼴로 — DejaVu Bold 는 Regular 보다 넓다
-    reg = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'
-    assert T._bold_sibling(reg) and 'Bold' in T._bold_sibling(reg)
+    # 굵은 run 은 굵은 글꼴로 — Bold 는 Regular 보다 넓다(Linux DejaVu Sans · Mac Arial 등, 이 컴퓨터에 있는 글꼴)
+    fam, reg, bold = _real_font()
+    assert bold != reg and 'Bold' in T._pil_font(bold, 18).getname()[1], (bold, T._pil_font(bold, 18).getname())
     txt = 'Glomus jugulare paraganglioma with bone erosion'
+    assert T._text_width_pt(txt, 18, bold) > T._text_width_pt(txt, 18, reg)
     w = int(3.62 * 914400)
-    assert T._est_lines_font_runs([(txt, True)], 18, w, reg, T._bold_sibling(reg)) >= T._est_lines_font_runs([(txt, False)], 18, w, reg, T._bold_sibling(reg))
+    assert T._est_lines_font_runs([(txt, True)], 18, w, reg, bold) >= T._est_lines_font_runs([(txt, False)], 18, w, reg, bold)
 
 def t_v1615_lead_space_whole_strict_sldnum_eomi():
     # R1: 수준 표시 뒤 첫 공백만 구분자 — 들여쓰기 대신 쓴 앞 공백을 지키고, body_notation → replace_paragraph_like 왕복에서 글이 같다
@@ -2458,6 +2473,90 @@ def t_v1646_red_shapes_find_and_strip():
     assert d.red_shapes(7, 'FF0000') == [] and 'Blue Box' in y and 'red text' in ''.join(d.texts(7)) and 'val="FF0000"' in y
     assert d.strip_red_shapes(7, 'FF0000') == 0
     d.save('/tmp/rs.pptx'); assert T.validate('/tmp/rs.pptx', SRC) is not False
+
+def t_v1647_font_index_without_fc_list():
+    # 사용자 09-29: fc-list 가 없는 곳(Mac)은 글꼴 폴더를 훑는다 — .ttf·.otf·.ttc 를 읽고, 못 찾으면 [참고] 한 줄
+    import struct
+    fam, reg, bold = _real_font()                 # fc-list 가 있으면 fc-list 색인(Linux 그대로), 없으면 폴더 색인
+    real_run, real_dirs = T.subprocess.run, T.FONT_DIRS
+    def no_fc(cmd, *a, **k):
+        if cmd and cmd[0] == 'fc-list':
+            raise FileNotFoundError('fc-list')
+        return real_run(cmd, *a, **k)
+    def fresh(dirs):
+        T.FONT_DIRS = dirs; T._FONT_FILES = None; T._FONT_STYLES.clear(); T._FONT_CACHE.clear()
+        return T._font_file_index()
+    # 글꼴 모음(.ttc) 을 실제 Regular·Bold 파일로 만든다 — 표 위치를 머리 뒤로 민다
+    def sfnt(path):
+        b = open(path, 'rb').read(); assert b[:4] in (b'\x00\x01\x00\x00', b'true'), path
+        return b
+    def ttc(fonts):
+        head = 12 + 4 * len(fonts); offs, body = [], b''
+        for b in fonts:
+            off = head + len(body); offs.append(off)
+            nt = struct.unpack('>H', b[4:6])[0]; hdr = bytearray(b[:12 + 16 * nt])
+            for k in range(nt):
+                o = 12 + 16 * k + 8; hdr[o:o + 4] = struct.pack('>I', struct.unpack('>I', hdr[o:o + 4])[0] + off)
+            body += bytes(hdr) + b[12 + 16 * nt:]
+            body += b'\0' * (-len(body) % 4)
+        return b'ttcf' + struct.pack('>HHI', 1, 0, len(fonts)) + struct.pack('>%dI' % len(fonts), *offs) + body
+    fdir = wd('fonts'); os.makedirs(fdir)
+    open(os.path.join(fdir, 'Pair.ttc'), 'wb').write(ttc([sfnt(reg), sfnt(bold)]))
+    odir = wd('fonts_otf'); os.makedirs(odir)            # 같은 family 가 색인에서 겹치지 않게 다른 폴더
+    b = bytearray(sfnt(reg)); b[:4] = b'OTTO'; open(os.path.join(odir, 'Only.otf'), 'wb').write(bytes(b))   # CFF 머리 — name 표는 같다
+    open(os.path.join(fdir, 'Junk.ttf'), 'wb').write(b'not a font')
+    open(os.path.join(fdir, 'Cut.ttc'), 'wb').write(b'ttcf\0\1\0\0\0\0\0\2')                           # 잘린 모음
+    try:
+        T.subprocess.run = no_fc
+        # ① 실제 글꼴 폴더(Mac 셋 + Linux 흔한 자리)만으로 같은 글꼴·굵은 짝을 찾는다
+        idx = fresh(real_dirs)
+        assert idx.get(fam.lower()) and T._bold_sibling(idx[fam.lower()]), (fam, idx.get(fam.lower()))
+        assert 'Bold' in T._pil_font(T._bold_sibling(idx[fam.lower()]), 18).getname()[1]
+        # ② .ttc 두 글꼴 · .otf · 망가진 파일
+        assert [st for _, _, st in T._sfnt_faces(os.path.join(fdir, 'Pair.ttc'))][1] == 'Bold'
+        assert T._sfnt_faces(os.path.join(odir, 'Only.otf'))[0][1][0] == fam and T._sfnt_faces(os.path.join(fdir, 'Junk.ttf')) == []
+        assert T._sfnt_faces(os.path.join(fdir, 'Cut.ttc')) == []
+        idx = fresh((fdir,))
+        pair = os.path.join(fdir, 'Pair.ttc')
+        assert idx[fam.lower()] == pair, idx
+        bs = T._bold_sibling(pair); assert bs == pair + '#1', bs
+        assert T._pil_font(bs, 18).getname()[1] == T._pil_font(bold, 18).getname()[1]
+        txt = 'Glomus jugulare paraganglioma with bone erosion'
+        assert T._text_width_pt(txt, 18, bs) == T._text_width_pt(txt, 18, bold) > T._text_width_pt(txt, 18, pair)
+        # ③ theme_fonts_missing: 전에는 fc-list 가 없으면 [] (빠진 글꼴 없음처럼 보였다)
+        d = T.Deck.open(SRC, wd('fnx'))
+        for tp in __import__('glob').glob(os.path.join(d.dir, 'ppt/theme/theme*.xml')):
+            x = open(tp, encoding='utf8').read()
+            x = re.sub(r'(<a:minorFont><a:latin typeface=")[^"]*', lambda m: m.group(1) + fam, x, 1)
+            x = re.sub(r'(<a:majorFont><a:latin typeface=")[^"]*', r'\g<1>NoSuchFont Zz', x, 1)
+            open(tp, 'w', encoding='utf8').write(x)
+        o = out('fnx.pptx'); d.save(o)
+        miss = T.theme_fonts_missing(o)
+        assert 'NoSuchFont Zz' in miss and fam not in miss, miss
+        # ④ 근사 모델 알림 — 찾으면 '', 못 찾으면 한 줄
+        sns = [s_ for s_, _, _ in d.order()]
+        assert T.model_font_note(d, sns) == ''
+        idx = fresh(())
+        n = T.model_font_note(d, sns)
+        assert n.startswith('[참고] 덱 테마 글꼴 "%s"' % fam) and '%d장' % len(sns) in n, n
+    finally:
+        T.subprocess.run = real_run; fresh(real_dirs)
+        T._FONT_FILES = None; T._FONT_STYLES.clear()
+
+def t_v1647_cli_model_font_note():
+    # fit-corner-boxes·fit-layout·overflow: 테마 글꼴(Calibri — 컨테이너·Mac 기본에 없음)을 못 찾으면 [참고] 한 줄
+    d = T.Deck.open(SRC, wd('cmn'))
+    for tp in __import__('glob').glob(os.path.join(d.dir, 'ppt/theme/theme*.xml')):
+        x = open(tp, encoding='utf8').read()
+        open(tp, 'w', encoding='utf8').write(re.sub(r'(<a:minorFont><a:latin typeface=")[^"]*', r'\g<1>NoSuchFont Zz', x, 1))
+    o = out('cmn.pptx'); d.save(o)
+    for args in (('fit-corner-boxes', o, '-o', out('cmn_fc.pptx'), '--dry-run'), ('fit-layout', o, '-o', out('cmn_fl.pptx'), '--screens', '1', '--dry-run'),
+                 ('overflow', o)):
+        r = cli(*args)
+        assert r.returncode == 0 and len([l for l in r.stdout.splitlines() if '[참고] 덱 테마 글꼴 "NoSuchFont Zz"' in l]) == 1, (args[0], r.stdout[-500:], r.stderr[-300:])
+    fam, reg, _ = _real_font()
+    r = cli('overflow', o, '--font-path', reg)                  # 글꼴 파일을 주면 알림 없음
+    assert r.returncode == 0 and '[참고] 덱 테마 글꼴' not in r.stdout, r.stdout[-500:]
 
 # ---------------------------------------------------------------- 실행 (한 번만)
 tests = [(n[2:], f) for n, f in list(globals().items()) if n.startswith('t_')]

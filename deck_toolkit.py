@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.46'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.47'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -4861,6 +4861,19 @@ INSET_EMU = 91440           # 기본 좌우 여백 (0.1 inch)
 _FONT_CACHE = {}
 
 
+def _pil_font(path, size_pt):
+    """글꼴 파일을 PIL 로 연다(10 px/pt, 캐시). v16.47: 글꼴 모음(.ttc·.otc)의 두 번째 이후 글꼴은 색인이 'x.ttc#N' 으로 적는다."""
+    key = (path, int(size_pt * 10))
+    if key not in _FONT_CACHE:
+        from PIL import ImageFont
+        m = re.match(r'^(.+\.(?:ttc|otc))#(\d+)$', path, re.I)
+        if m and not os.path.exists(path):
+            _FONT_CACHE[key] = ImageFont.truetype(m.group(1), size=int(size_pt * 10), index=int(m.group(2)))
+        else:
+            _FONT_CACHE[key] = ImageFont.truetype(path, size=int(size_pt * 10))
+    return _FONT_CACHE[key]
+
+
 def _parse_screens(spec, n):
     """'3,5-9' → {3,5,6,7,8,9}. v16.44 (코드 리뷰 ⑬): 1..n 밖이거나 숫자가 아니면 멈춘다 — 전에는 조용히 버렸고,
     따로 풀던 명령에서는 0 이 마지막 화면(order[-1])이 됐다."""
@@ -4886,11 +4899,7 @@ def _text_width_pt(text, size_pt, font_path=None):
         return 0.0
     if font_path:
         try:
-            from PIL import ImageFont
-            key = (font_path, int(size_pt * 10))
-            if key not in _FONT_CACHE:
-                _FONT_CACHE[key] = ImageFont.truetype(font_path, size=int(size_pt * 10))
-            return _FONT_CACHE[key].getlength(text) / 10.0
+            return _pil_font(font_path, size_pt).getlength(text) / 10.0
         except Exception:
             pass
     ko = len(re.findall(r'[\uac00-\ud7a3]', text))
@@ -4902,11 +4911,7 @@ def _est_lines_font(text, size_pt, width_emu, font_path):
     `_est_lines` 의 0.5em 모델보다 정확하지만 PowerPoint 의 커닝·자간과는 여전히 다르다."""
     if not text.strip():
         return 0
-    from PIL import ImageFont
-    key = (font_path, int(size_pt * 10))
-    if key not in _FONT_CACHE:
-        _FONT_CACHE[key] = ImageFont.truetype(font_path, size=int(size_pt * 10))   # 10 px/pt 로 재고 pt 로 환산
-    f = _FONT_CACHE[key]
+    f = _pil_font(font_path, size_pt)   # 10 px/pt 로 재고 pt 로 환산
     width_pt = width_emu / 12700.0
     def w(s):
         return f.getlength(s) / 10.0
@@ -4922,13 +4927,7 @@ def _est_lines_font(text, size_pt, width_emu, font_path):
 
 def _est_lines_font_runs(runs, size_pt, width_emu, font_path, bold_path=None):
     """v16.14 (발표 §5): 굵은 run 은 굵은 글꼴 파일로 잰다 — 교육목표 항목 이름이 굵은데 Regular 로 재서 줄바꿈을 적게 셌을 수 있다."""
-    from PIL import ImageFont
-    def font(pth):
-        key = (pth, int(size_pt * 10))
-        if key not in _FONT_CACHE:
-            _FONT_CACHE[key] = ImageFont.truetype(pth, size=int(size_pt * 10))
-        return _FONT_CACHE[key]
-    fr = font(font_path); fb = font(bold_path) if bold_path else fr
+    fr = _pil_font(font_path, size_pt); fb = _pil_font(bold_path, size_pt) if bold_path else fr
     width_pt = width_emu / 12700.0
     words, cur = [], 0.0          # 공백으로 나뉜 단어의 폭(여러 run 에 걸친 단어는 조각 폭의 합)
     for text, bold in runs:
@@ -5103,6 +5102,9 @@ def check_text_overflow(deck, tol=1.04, headroom=None, stream=sys.stdout, font_p
           (' / 글꼴 파일이 없어 모델로 계산한 슬라이드 %d장 — 그 슬라이드의 작은 넘침은 [참고]' % len(model_only)) if used_fonts and model_only else ''), file=stream)
     print('  * 가정: 줄 높이 = 글자 크기 × %.2f × 줄 간격(문단 → 레이아웃·마스터 lnSpc), 문단 앞·뒤 간격(spcBef·spcAft) 포함, 글자 크기는 '
           '문단 → 레이아웃·마스터 단계별' % LINE_FACTOR, file=stream)
+    note = model_font_note(deck, sorted(model_only), ' 또는 --font-path 로 주면') if model_only else ''
+    if note:
+        print('  %s' % note, file=stream)
     return uniq
 
 
@@ -5416,7 +5418,7 @@ _FONT_STYLES = {}
 
 
 def _bold_sibling(path):
-    """같은 글꼴의 굵은 파일(Bold → SemiBold). 파일 이름의 Regular 를 바꿔 보고, 없으면 fc-list 색인에서. 없으면 None."""
+    """같은 글꼴의 굵은 파일(Bold → SemiBold). 파일 이름의 Regular 를 바꿔 보고, 없으면 글꼴 색인(fc-list 또는 글꼴 폴더)에서. 없으면 None."""
     if not path:
         return None
     for w in ('Bold', 'SemiBold'):
@@ -5431,11 +5433,81 @@ def _bold_sibling(path):
     return None
 
 
+# v16.47: fc-list 가 없는 곳(Mac)에서 훑는 글꼴 폴더 — Mac 셋, 그리고 fc-list 없는 Linux 의 흔한 자리
+FONT_DIRS = ('/System/Library/Fonts', '/Library/Fonts', '~/Library/Fonts',
+             '/usr/share/fonts', '/usr/local/share/fonts', '~/.fonts', '~/.local/share/fonts')
+FONT_EXTS = ('.ttf', '.otf', '.ttc', '.otc')
+
+
+def _sfnt_faces(path):
+    """글꼴 파일의 name 표를 읽는다 → [(색인, [family 이름 — 지역 이름 포함], 첫 style)]. 모음(.ttc·.otc)은 글꼴마다 하나.
+    fc-list 와 같게: family 는 nameID 16(typographic)·1, style 은 영어 nameID 17 이 있으면 그것, 없으면 2. 못 읽으면 []."""
+    import struct
+    faces = []
+    try:
+        with open(path, 'rb') as f:
+            tag = f.read(4)
+            if tag == b'ttcf':
+                f.seek(8); n = struct.unpack('>I', f.read(4))[0]
+                offs = struct.unpack('>%dI' % n, f.read(4 * n))
+            elif tag in (b'\x00\x01\x00\x00', b'OTTO', b'true'):
+                offs = (0,)
+            else:
+                return []
+            for i, off in enumerate(offs):
+                f.seek(off + 4); nt = struct.unpack('>H', f.read(2))[0]
+                f.seek(off + 12); d = f.read(16 * nt)
+                rec = next((struct.unpack('>II', d[k + 8:k + 16]) for k in range(0, len(d) - 15, 16) if d[k:k + 4] == b'name'), None)
+                if not rec:
+                    continue
+                f.seek(rec[0]); t = f.read(rec[1])
+                cnt, so = struct.unpack('>HH', t[2:6])
+                fams, style = [], {}
+                for k in range(cnt):
+                    pid, eid, lid, nid, ln, o = struct.unpack('>6H', t[6 + 12 * k:18 + 12 * k])
+                    if nid not in (1, 2, 16, 17):
+                        continue
+                    raw = t[so + o:so + o + ln]
+                    if pid in (0, 3):
+                        v = raw.decode('utf-16-be', 'ignore')
+                    elif pid == 1 and eid == 0:
+                        v = raw.decode('mac_roman', 'ignore')
+                    else:
+                        continue
+                    v = v.replace('\x00', '').strip()
+                    if not v:
+                        continue
+                    if nid in (1, 16):
+                        fams.append((0 if nid == 16 else 1, v))
+                    elif pid == 0 or (pid == 3 and lid == 0x409) or (pid == 1 and lid == 0):
+                        style.setdefault(nid, v)
+                names = []
+                for _, v in sorted(fams, key=lambda q: q[0]):
+                    if v not in names:
+                        names.append(v)
+                if names:
+                    faces.append((i, names, style.get(17) or style.get(2) or ''))
+    except Exception:
+        return faces
+    return faces
+
+
 def _font_file_index():
-    """{소문자 글꼴 이름: 파일 경로} — fc-list 의 family(여러 이름·지역 이름 포함). 굵기 별 파일은 Regular 를 우선."""
+    """{소문자 글꼴 이름: 파일 경로} — fc-list 의 family(여러 이름·지역 이름 포함). 굵기 별 파일은 Regular 를 우선.
+    v16.47: fc-list 가 없거나 비면(Mac) FONT_DIRS 를 훑어 글꼴 파일의 name 표로 같은 색인을 만든다(.ttf·.otf·.ttc·.otc —
+    모음의 두 번째 이후 글꼴은 'x.ttc#N')."""
     global _FONT_FILES
     if _FONT_FILES is None:
         _FONT_FILES = {}
+
+        def add(path, fams, first):
+            regular = first in ('Regular', 'Normal', 'Book', 'Roman', '') or os.path.basename(path).lower().endswith(('-regular.otf', '-regular.ttf'))
+            for fam in fams:
+                k = fam.strip().lower()
+                if k and (k not in _FONT_FILES or regular):
+                    _FONT_FILES[k] = path
+                if k:
+                    _FONT_STYLES.setdefault((k, first.lower()), path)
         try:
             out = subprocess.run(['fc-list', ':', 'family', 'style', 'file'], capture_output=True, text=True).stdout
         except Exception:
@@ -5446,13 +5518,16 @@ def _font_file_index():
                 continue
             path, fams, style = m.group(1), m.group(2), (m.group(3) or '')
             first = style.split(',')[0].strip()        # 'ExtraLight,Regular' 처럼 뒤에 Regular 가 붙는 굵기가 있다 — 첫 이름으로
-            regular = first in ('Regular', 'Normal', 'Book', 'Roman', '') or os.path.basename(path).lower().endswith(('-regular.otf', '-regular.ttf'))
-            for fam in fams.split(','):
-                k = fam.strip().lower()
-                if k and (k not in _FONT_FILES or regular):
-                    _FONT_FILES[k] = path
-                if k:
-                    _FONT_STYLES.setdefault((k, first.lower()), path)
+            add(path, fams.split(','), first)
+        if not out.strip():
+            for top in FONT_DIRS:
+                for root, dirs, files in os.walk(os.path.expanduser(top)):
+                    dirs.sort()
+                    for fn in sorted(files):
+                        if fn.lower().endswith(FONT_EXTS):
+                            fp = os.path.join(root, fn)
+                            for i, fams, first in _sfnt_faces(fp):
+                                add(fp if i == 0 else '%s#%d' % (fp, i), fams, first)
     return _FONT_FILES
 
 
@@ -5477,12 +5552,42 @@ def _theme_body_font_file(deck, slide_no):
     return None
 
 
+def _theme_body_font_names(deck, slide_no):
+    """그 슬라이드 테마의 본문 글꼴 이름(minor ea·latin, 빈 것 빼고). 못 읽으면 []."""
+    mp = _master_of(deck, slide_no)
+    mr = os.path.join(os.path.dirname(mp), '_rels', os.path.basename(mp) + '.rels') if mp else ''
+    t = re.search(r'Target="\.\./theme/([^"]+)"', open(mr, encoding='utf8').read()) if mr and os.path.exists(mr) else None
+    tp = os.path.join(deck.dir, 'ppt/theme', t.group(1)) if t else None
+    if not tp or not os.path.exists(tp):
+        return []
+    minor = re.search(r'<a:minorFont>(.*?)</a:minorFont>', open(tp, encoding='utf8').read(), re.S)
+    return [v for v in re.findall(r'<a:(?:ea|latin) typeface="([^"+][^"]*)"', minor.group(1))] if minor else []
+
+
+def model_font_note(deck, slides, hint=''):
+    """v16.47 (사용자 09-29): 테마 본문 글꼴 파일을 못 찾아 글자폭을 근사 모델로 잰 슬라이드가 있으면 '[참고] …' 한 줄, 없으면 ''.
+    조용히 모델로 넘어가지 않게 — Mac 에는 fc-list 가 없고 덱 글꼴(Calibri·Pretendard 등)도 없을 수 있다."""
+    miss, names = [], []
+    for sn in slides:
+        if not _theme_body_font_file(deck, sn):
+            miss.append(sn)
+            for v in _theme_body_font_names(deck, sn) or ['(테마에 이름 없음)']:
+                if v not in names:
+                    names.append(v)
+    if not miss:
+        return ''
+    return ('[참고] 덱 테마 글꼴 %s 파일을 이 컴퓨터에서 찾지 못해 슬라이드 %d장은 글자폭을 근사 모델(영문 0.5em·한글 1em)로 계산했다 — '
+            '그 글꼴을 설치하면%s 실제 폭으로 잰다' % (', '.join('"%s"' % v for v in names), len(miss), hint))
+
+
 def theme_fonts_missing(pptx):
     """v16.12 (발표 U2): 덱 테마 글꼴(major/minor latin·ea) 중 이 시스템에 없는 것. 없으면 LibreOffice 가 다른 글꼴로 그려 줄바꿈이 달라진다."""
     try:
         have = subprocess.run(['fc-list', ':', 'family'], capture_output=True, text=True).stdout.lower()
     except Exception:
-        return []
+        have = ''
+    if not have.strip():
+        have = set(_font_file_index())     # v16.47: fc-list 가 없는 곳(Mac)은 글꼴 폴더 색인으로 — 전에는 [] 라 '빠진 글꼴 없음' 처럼 보였다
     need = set()
     with zipfile.ZipFile(pptx) as z:
         for f in z.namelist():
@@ -6270,6 +6375,9 @@ def main():
                     res = fit_layout(dk, order[pos - 1], drop_title=True, **kw)
             for c in res:
                 print('화면 %d: %s' % (pos, c))
+        note = model_font_note(dk, [order[p - 1] for p in sorted(_parse_screens(args.screens, len(order)))])
+        if note:
+            print(note)
         target = os.path.join(tempfile_dir('flo'), 'fit.pptx') if args.dry_run else args.o
         dk.save(target)
         if args.render:
@@ -6358,6 +6466,9 @@ def main():
                     print('화면 %d "%s" %s → %s%s' % (pos, r['name'], r['old'], r['new'], ('  [참고] 겹침: %s' % ', '.join(r['overlap'])) if r['overlap'] else ''))
                 else:
                     n_sk += 1; print('[참고] 화면 %d "%s" %s' % (pos, r['name'], r['what']))
+        note = model_font_note(dk, order)
+        if note:
+            print(note)
         if not args.dry_run:
             dk.save(args.o)
         print('구석 글상자 맞춤 %d · 건너뜀 %d%s' % (n_ch, n_sk, ' (dry-run — 저장 안 함)' if args.dry_run else ' → %s' % args.o))

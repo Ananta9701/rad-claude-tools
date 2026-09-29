@@ -1,4 +1,6 @@
-# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.46)
+# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.47)
+
+> v16.47 (사용자 09-29, Mac Local): 글꼴 파일 찾기 — `fc-list` 가 없거나 비면(Mac) 글꼴 폴더(`/System/Library/Fonts`·`/Library/Fonts`·`~/Library/Fonts`, fc-list 없는 Linux 의 `/usr/share/fonts` 등)를 훑어 글꼴 파일의 이름 표로 같은 색인을 만든다 — `.ttf`·`.otf`·`.ttc`(모음의 둘째 이후 글꼴은 `x.ttc#N`)·지역 이름(예 `Apple SD 산돌고딕 Neo`) 포함. `fc-list` 가 있는 곳(Linux 컨테이너)은 전과 같다. `overflow`·`fit-layout`·`fit-corner-boxes` 가 덱 테마 글꼴 파일을 못 찾아 글자폭을 근사 모델로 잰 화면이 있으면 `[참고] 덱 테마 글꼴 "…" 파일을 이 컴퓨터에서 찾지 못해 …` 한 줄로 알린다(돌려주는 문제 목록에는 넣지 않는다 — 조용히 넘어가지 않게만). `theme_fonts_missing` 도 fc-list 가 없으면 이 색인으로 본다(전에는 빈 목록 — 빠진 글꼴 없음처럼 보였다).
 
 > v16.46 (사용자 09-29): `Deck.red_shapes(n)` — 도형 채움·선이 빨강(FF0000)인 도형 이름(글자 색은 아님), `Deck.strip_red_shapes(n)` — 그 도형을 모두 뺀다(이름이 겹쳐도). 넘김 `빨간 도형도 뺌`(handoff 2.2)이 쓴다.
 
@@ -1234,7 +1236,7 @@ v13 에서 `claim_graph.py` 로 분리해 발표·저자·리뷰어 세 프로�
   after_key=, like_key=)` — 이웃(같은 수준) 문단 서식으로 넣기, 다른 문단 바이트 그대로. `Deck.set_paragraph_spacing(n, before=pt,
   after=pt, line=%, key=)` — pPr 자식 순서 지킴. `overflow` 가 실제 글꼴로 잴 때 **굵은 run 은 굵은 글꼴 파일**(Bold→SemiBold)로 잰다
 - **v16.13 (발표 v2.7 수령 회신)**: `overflow` 는 `--font-path` 가 없으면 슬라이드 테마의 본문 글꼴(minor — ea, 없으면 latin)
-  파일을 시스템(`fc-list`, `~/.fonts` 포함)에서 찾아 실제 글자폭으로 계산한다. 못 찾으면 모델(영문 0.5em·한글 1em)로 하되, 슬라이드
+  파일을 시스템(`fc-list`, `~/.fonts` 포함 — v16.47: fc-list 가 없으면 글꼴 폴더)에서 찾아 실제 글자폭으로 계산한다. 못 찾으면 모델(영문 0.5em·한글 1em)로 하되, 슬라이드
   밖 넘침이 상자 높이의 5% 이내면 [심각] 이 아니라 "[참고] 글꼴 폭 모델 — PowerPoint 확인". 근거: H&N v9 교육목표 화면 49·73·80 이
   PowerPoint 에서 멀쩡한데(사용자 확인) 모델은 [심각](0.07–0.17"), Pretendard 폭으로는 상자 안 — 실제 글꼴 폭이 PowerPoint 와 맞았다.
   **v16.12 의 "LibreOffice 렌더와 2% 안" 은 보정 기준이 틀렸다** — 그 렌더가 PowerPoint 보다 보수적이었다. 앞 간격·줄 간격·상속 크기
