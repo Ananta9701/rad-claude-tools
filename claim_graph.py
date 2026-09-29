@@ -13,10 +13,10 @@ claim_graph.py — 문서(발표·원고·심사 회신)의 주장 의존 그래
 
 자리 표기
     slide:N  notes:N               (pptx, deck_toolkit 이 해석)
-    doc:p:N                        (docx, N 번째 비어있지 않은 문단. 삽입에 약함)
+    doc:p:N                        (docx, N 번째 비어있지 않은 문단 — 1부터. 삽입에 약함)
     doc:find:<문구>                (docx, 그 문구가 들어 있는 문단. 삽입에 강함 — 권장)
     doc:sec:<제목>                 (docx, 그 제목 문단부터 다음 제목 전까지)
-    doc:tbl:N                      (docx, N 번째 표 전체)
+    doc:tbl:N                      (docx, N 번째 표 전체 — 1부터, 0 이나 표 수보다 크면 읽을 수 없음)
 
 주장 하나의 항목
     id, statement, evidence, sites, keys, forbidden      (v11)
@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.8.1'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.9'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -206,8 +206,12 @@ class DocSource:
         if kind != 'doc':
             raise ValueError('docx resolver 는 doc:* 자리만 해석합니다: %s' % site)
         sub, arg = rest.split(':', 1)
-        if sub == 'p':
-            return self.paras[int(arg) - 1]
+        if sub in ('p', 'tbl'):     # v16.9 (리뷰어 09-29): 0 이 파이썬 음수 번호로 마지막 문단·표를 돌려주던 것
+            seq = self.paras if sub == 'p' else self.tables
+            n = int(arg)
+            if not 1 <= n <= len(seq):
+                raise KeyError('doc:%s:%d — 번호는 1부터 %d 까지(%s %d개)' % (sub, n, len(seq), '문단' if sub == 'p' else '표', len(seq)))
+            return seq[n - 1] if sub == 'p' else ' '.join(seq[n - 1])
         if sub == 'find':
             hits = [p for p in self.paras if arg.lower() in p.lower()]
             if not hits:
@@ -215,8 +219,6 @@ class DocSource:
             if len(hits) > 1:
                 raise KeyError('문구가 %d개 문단에 있어 모호함: %s' % (len(hits), arg))
             return hits[0]
-        if sub == 'tbl':
-            return ' '.join(self.tables[int(arg) - 1])
         if sub == 'sec':
             idx = [i for i in sorted(self.headings)
                    if self.paras[i].lower().startswith(arg.lower())]
@@ -803,6 +805,10 @@ def mapdraw(claims, changed=None, text=False, stream=sys.stdout, all_edges=False
 _NUMTOK = re.compile(r'(?<![\w.])[-−]?\d+(?:[.,]\d+)?(?:\s*%)?(?![\w])')
 
 
+_SUPPL_TAG = re.compile(r'\bSuppl(?:ementary)?\.?\s+(?:(?:Table|Fig(?:ure)?\.?|Tab\.?)\s+)?S\d+', re.I)
+_SUPPL_NUMS = re.compile(r'(\bSuppl(?:ementary)?\.?\s+(?:(?:Table|Fig(?:ure)?\.?|Tab\.?)\s+)?)(S\d+(?:(?:\s*,\s*|\s*[\-\u2013]\s*|\s+and\s+)S\d+)*)', re.I)
+
+
 def _numtokens(text):
     """evidence 문자열의 수치 토큰.
 
@@ -853,7 +859,7 @@ def mapcheck(resolve, claims, stream=sys.stdout, nums=False, nums_sep=None):
     nums_sep (v15.5, 리뷰어 요청): 사용자가 명시한 구분자 **앞쪽**만 검사한다. evidence 를
     "원고 값 | 재현 값" 으로 쓰는 리뷰어 용법에서 `--nums-sep "|"` 로 재현값을 뺀다. 구분자는 도구가
     가정하지 않고 사용자가 선언하는 것이므로 서식 의존이 아니다. 지정하지 않으면 종전대로 전체."""
-    problems, matrix = [], {}
+    problems, matrix, suppl = [], {}, []
     for c in claims:
         cid = c['id']
         keys = [k.lower() for k in c.get('keys', [])]
@@ -881,8 +887,13 @@ def mapcheck(resolve, claims, stream=sys.stdout, nums=False, nums_sep=None):
             alltxt = alltxt.replace('−', '-').replace('\u2009', ' ')
             ev_txt = c['evidence'].split(nums_sep, 1)[0] if nums_sep else c['evidence']
             missing = [t for t in _numtokens(ev_txt) if t.rstrip('%').strip() not in alltxt]
-            if missing:
+            if missing and _SUPPL_TAG.search(ev_txt):   # v16.9 (저자 3a): 보충자료 수치 — sites 는 본문만 본다
+                suppl.append((cid, len(missing)))
+            elif missing:
                 problems.append('[참고] %s: evidence 의 수치 %s 가 sites 어디에도 없음' % (cid, ', '.join(missing)))
+    if suppl:
+        problems.append('[참고] 보충자료 표지(Suppl S…)가 든 evidence %d개(%s)의 수치 %d개가 sites 에 없음 — sites 는 본문만 보므로 따로 적지 않는다'
+                        % (len(suppl), ', '.join(c for c, _ in suppl), sum(n for _, n in suppl)))
     gp, _ = mapgraph(claims, stream=open(os.devnull, 'w'))
     problems.extend(p for p in gp if not p.startswith('[참고]'))
     print('=== 주장 관계도 대조 ===', file=stream)
@@ -891,7 +902,7 @@ def mapcheck(resolve, claims, stream=sys.stdout, nums=False, nums_sep=None):
         for p in problems:
             print('  [!] %s' % p, file=stream)
     else:
-        print('  모든 주장이 선언된 자리에 반영됨', file=stream)
+        print('  모든 주장의 자리에 찾는 표현이 있음 — 주장·evidence 가 최신인지는 보지 않는다(mapstale·판 올림 때 evidence 갱신)', file=stream)   # v16.9 (저자 4)
     return problems, matrix
 
 
@@ -1428,6 +1439,57 @@ def mapdiff(a, b, label_a='A', label_b='B', stream=sys.stdout, pairs=None):
 #  keys 의 순수 숫자("42", "29-31")는 참여자 수 같은 값일 수 있어 기본은 손대지 않는다(--keys-are-refs).
 # ----------------------------------------------------------------------------
 
+def _edge(to, typ):
+    return {'id': to, 'type': typ, 'weight': EDGE_DEFAULT_WEIGHT[typ]}
+
+
+def _reaches(claims, start, goal):
+    """start 에서 depends_on 을 따라 goal 에 닿는가(순환 검사)."""
+    by = {c['id']: c for c in claims}
+    seen, todo = set(), [start]
+    while todo:
+        x = todo.pop()
+        if x == goal:
+            return True
+        if x in seen or x not in by:
+            continue
+        seen.add(x)
+        todo += [e['id'] for e in by[x].get('depends_on', []) if isinstance(e, dict)]
+    return False
+
+
+def link_claims(claims, frm, to, typ='premise'):
+    """v16.9 (저자 3c): frm 이 to 에 기댄다 — frm.depends_on 에 {to, type, weight=type 기본값}. 없는 id·같은 간선·순환은 ValueError."""
+    by = {c['id']: c for c in claims}
+    for x in (frm, to):
+        if x not in by:
+            raise ValueError('없는 주장: %s' % x)
+    if frm == to or _reaches(claims, to, frm):
+        raise ValueError('%s -> %s 는 순환을 만든다(%s 가 이미 %s 에 기댐)' % (frm, to, to, frm))
+    deps = by[frm].setdefault('depends_on', [])
+    if any(isinstance(e, dict) and e.get('id') == to for e in deps):
+        raise ValueError('%s -> %s 간선이 이미 있다 — 종류를 바꾸려면 파일에서 고친다' % (frm, to))
+    deps.append(_edge(to, typ))
+
+
+def add_claim(claims, cid, statement, role=None, evidence=None, sites=(), keys=(), deps=()):
+    """v16.9 (저자 3c): 주장 하나를 더한다. deps = [(id, type)] — weight 는 type 기본값."""
+    if any(c['id'] == cid for c in claims):
+        raise ValueError('주장 %s 가 이미 있다' % cid)
+    ids = {c['id'] for c in claims}
+    for d, typ in deps:
+        if d not in ids:
+            raise ValueError('없는 주장: %s' % d)
+    c = {'id': cid, 'statement': statement}
+    if role:
+        c['role'] = role
+    if evidence:
+        c['evidence'] = evidence
+    c.update({'sites': list(sites), 'keys': list(keys), 'depends_on': [_edge(d, typ) for d, typ in deps]})
+    claims.append(c)
+    return c
+
+
 def _refmap_load(path):
     import json
     with open(path, encoding='utf8') as f:
@@ -1462,11 +1524,13 @@ _REFS_KEY = re.compile(r'^refs?[:\s]+(\d{1,3}(?:\s*[,\-\u2013]\s*\d{1,3})*)$', r
 _BARE_RANGE = re.compile(r'^\d{1,3}(?:\s*[\-\u2013]\s*\d{1,3})?$')
 
 
-def remap_refs(claims, refmap, stream=sys.stdout):
+def remap_refs(claims, refmap, stream=sys.stdout, suppl=None):
     """claims 를 제자리에서 갱신하고 변경 목록 [(id, 필드, 이전, 이후)] 을 반환.
     매핑에 없는 번호는 그대로 두고 [경고] 로 알린다. 삭제(null)된 번호는 인용에서 빠지고, 인용이 비면 [경고].
     v15.4.1: keys 의 순수 숫자는 어떤 옵션으로도 건드리지 않는다(`--keys-are-refs` 폐기 — 실물에서 참여자 수 42 가 39 로 바뀜).
-    인용번호 key 는 `refs 29-31` 로 쓴다. 순수 숫자 key 가 대괄호 인용과 겹치면 [참고] 로만 알린다."""
+    인용번호 key 는 `refs 29-31` 로 쓴다. 순수 숫자 key 가 대괄호 인용과 겹치면 [참고] 로만 알린다.
+    v16.9 (저자 3b): suppl={옛: 새} 면 statement·evidence 의 `Suppl S{n}`(`Supplementary Table S4 and S2` 처럼 이어진 것도)을 바꾼다.
+    매핑에 없거나 삭제(None)된 보충 번호는 그대로 두고 [경고] — 글에서 지우는 것은 사람이 한다."""
     changes, warns = [], []
     def map_nums(nums, where):
         out = []
@@ -1486,15 +1550,25 @@ def remap_refs(claims, refmap, stream=sys.stdout):
             r = f(re.match(r'\s*\[(.*)\]', m.group(0)))
             return ((' ' if m.group(0).startswith(' ') else '') + r) if r else ''
         return _CITE_BRACKET.sub(g, text or '')
+    def sub_suppl(text, where):
+        def one(m):
+            n = int(m.group(1))
+            if suppl.get(n) is None:
+                warns.append('%s: 보충 S%d %s — 그대로 둠' % (where, n, '매핑에 없음' if n not in suppl else '삭제된 보충 표·그림'))
+                return m.group(0)
+            return 'S%d' % suppl[n]
+        return _SUPPL_NUMS.sub(lambda m: m.group(1) + re.sub(r'S(\d+)', one, m.group(2)), text or '')
     for c in claims:
         for fld in ('statement', 'evidence'):
             old = c.get(fld, '')
-            new = sub_text(old, '%s.%s' % (c['id'], fld))
+            new = sub_text(old, '%s.%s' % (c['id'], fld)) if refmap else old
+            if suppl and new:
+                new = sub_suppl(new, '%s.%s' % (c['id'], fld))
             if new != old:
                 c[fld] = new; changes.append((c['id'], fld, old, new))
         newkeys = []
         for k in c.get('keys', []):
-            m = _REFS_KEY.match(k)
+            m = _REFS_KEY.match(k) if refmap else None      # v16.9: --suppl 만 줄 때는 인용 key 를 보지 않는다
             if m:
                 nums = map_nums(_expand_range(m.group(1)), '%s.keys' % c['id'])
                 nk = re.sub(r'\d.*$', _compress_range(nums), k, count=1) if nums else None
@@ -1627,6 +1701,22 @@ def _manifest_parse(text):
     return (mv.group(1) if mv else None), rows, sets
 
 
+_ENV_LIBS = {'pypdf': 'pypdf', 'pillow': 'Pillow', 'python-pptx': 'python-pptx', 'python-docx': 'python-docx'}
+
+
+def _lib_versions(libs=None):
+    """'Python 3.11.15 · pypdf 5.9.0 · Pillow 12.1.1 · …' — 설치 정보만 읽고 불러오지는 않는다. 없으면 '이름 없음'."""
+    import platform
+    from importlib import metadata
+    out = [] if libs else ['Python %s' % platform.python_version()]
+    for dist, name in (libs or _ENV_LIBS).items():
+        try:
+            out.append('%s %s' % (name, metadata.version(dist)))
+        except Exception:
+            out.append('%s 없음' % name)
+    return ' · '.join(out)
+
+
 def selfcheck(folder, run_tests=False, stream=sys.stdout, role=None, compare=None):
     """세트 자가 점검. 반환 {'ok': bool, 'project': str, 'problems': [...], 'delete': [...], 'other': [...]}
     v15.7 (GitHub 배포): role='발표' 등을 주면 프로젝트를 추정하지 않고 그 역할로 본다 — GitHub 에서 받은 폴더에는 모든 도구가
@@ -1674,6 +1764,8 @@ def selfcheck(folder, run_tests=False, stream=sys.stdout, role=None, compare=Non
         except Exception:
             head = ''
         lines.append('| 받은 커밋 | `%s` | %s |' % (head[:12] + head[40:] if head else '(읽지 못함)', '○' if head else '—'))
+    # v16.9 (발표 4): '통과' 는 이 환경에서의 판정 — 판을 표에 남긴다(3.12 에서만 통과하던 사고 ⑨)
+    lines.append('| 환경 | %s | — |' % _lib_versions())
     # 2·3단계
     for f in sorted(need & set(rows)):
         p = os.path.join(folder, f)
@@ -1758,6 +1850,9 @@ def selfcheck(folder, run_tests=False, stream=sys.stdout, role=None, compare=Non
     return {'ok': ok, 'project': project, 'problems': problems, 'delete': [f for f, _ in delete], 'other': [f for f, _ in other]}
 
 
+_CLAIMS_ONLY = ('mapgraph', 'gaps', 'impact', 'mapdraw', 'mapreport', 'scaffold', 'add', 'link')
+
+
 def main():
     import argparse
     ap = argparse.ArgumentParser(description='주장 의존 그래프 (문서 독립)')
@@ -1793,15 +1888,44 @@ def main():
     d.add_argument('--pairs', help='수동 짝. 문자열 "a1=b1,a2=b2" 또는 파일 경로 — json {"a_id": "b_id"} 이거나 한 줄에 a_id=b_id 인 텍스트')
     d.add_argument('--save-pairs', action='store_true', help='--pairs 를 a 그래프의 맨 위 칸 pairs_with[b 라벨] 에 적어 둔다 — 다음부터 --pairs 없이 (v16)')
     rr = sub.add_parser('remap-refs', help='참고문헌 재번호 매핑으로 claims 의 인용번호 갱신 (v15.4, #4)')
-    rr.add_argument('--claims', required=True); rr.add_argument('--map', required=True, dest='refmap')
+    rr.add_argument('--claims', required=True); rr.add_argument('--map', default=None, dest='refmap', help='본문 인용 [n] 매핑 json')
+    rr.add_argument('--suppl', default=None, help='보충 표·그림 `Suppl S{n}` 매핑 json — 형식은 --map 과 같다 (v16.9)')
     rr.add_argument('-o', required=True)
     rr.add_argument('--force', action='store_true', help='같은 매핑이 이미 적용된 그래프에도 다시 적용 (기본은 중단 — 두 번 적용하면 번호가 두 단계 밀린다)')
+    ad = sub.add_parser('add', help='주장 하나 더하기 — 간선 weight 는 type 기본값 (v16.9)')
+    ad.add_argument('--claims', required=True); ad.add_argument('--id', required=True); ad.add_argument('--statement', required=True)
+    ad.add_argument('--role', choices=CLAIM_ROLES, default=None); ad.add_argument('--evidence', default=None)
+    ad.add_argument('--site', action='append', default=[]); ad.add_argument('--key', action='append', default=[])
+    ad.add_argument('--dep', action='append', default=[], metavar='ID[:type]', help='이 주장이 기대는 주장(type 기본 premise). 여러 번')
+    ad.add_argument('-o', required=True)
+    lk = sub.add_parser('link', help='간선 하나 — FROM 이 TO 에 기댄다, weight 는 type 기본값 (v16.9)')
+    lk.add_argument('--claims', required=True); lk.add_argument('frm', metavar='FROM'); lk.add_argument('to', metavar='TO')
+    lk.add_argument('--type', choices=EDGE_TYPES, default='premise'); lk.add_argument('-o', required=True)
     sc = sub.add_parser('selfcheck', help='세트 자가 점검: 3단계 확인 + 파일 분류 + 회신용 표 (v15.6)')
     sc.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='세트가 있는 폴더 (기본: 이 파일의 폴더, 프로젝트에서는 /mnt/project)')
     sc.add_argument('--tests', action='store_true', help='그 프로젝트의 test_*.py 도 돌린다')
     sc.add_argument('--role', default=None, help='저자 / 발표 / 리뷰어 / 코드 — GitHub 에서 받은 전체 세트에서 쓸 역할 (v15.7)')
     sc.add_argument('--compare', default=None, help='예비 폴더(예: /mnt/project)와 판·해시 대조 (v15.7)')
+    # v16.9 (발표 3): `mapgraph claims.json` 처럼 파일 이름만 주면 argparse 의 '--claims 필수' 대신 고칠 명령을 보여 준다
+    argv = sys.argv[1:]
+    if len(argv) >= 2 and argv[0] in _CLAIMS_ONLY and '--claims' not in argv and argv[1].endswith('.json'):
+        print('[중단] 파일은 --claims 로 준다: %s --claims %s %s' % (argv[0], argv[1], ' '.join(argv[2:])))
+        sys.exit(2)
     a = ap.parse_args()
+    if a.cmd in ('add', 'link'):
+        meta, cl = load_claims_full(a.claims)
+        try:
+            if a.cmd == 'add':
+                deps = [(d.split(':', 1)[0], d.split(':', 1)[1] if ':' in d else 'premise') for d in a.dep]
+                bad = [t for _, t in deps if t not in EDGE_TYPES]
+                if bad:
+                    raise ValueError('간선 종류 %s — %s 중 하나' % (', '.join(bad), '/'.join(EDGE_TYPES)))
+                add_claim(cl, a.id, a.statement, a.role, a.evidence, a.site, a.key, deps)
+            else:
+                link_claims(cl, a.frm, a.to, a.type)
+        except ValueError as e:
+            print('[중단] %s' % e); sys.exit(2)
+        print('저장: %s' % save_claims(a.o, cl, meta=meta)); sys.exit(0)
     if a.cmd == 'selfcheck':
         r = selfcheck(a.dir, run_tests=a.tests, role=a.role, compare=a.compare)
         sys.exit(0 if r['ok'] else 1)
@@ -1864,14 +1988,22 @@ def main():
             print('짝 저장: %s (pairs_with.%s)' % (save_claims(a.a, ca, meta=ma), a.labels[1]))
     elif a.cmd == 'remap-refs':
         import json
+        if not a.refmap and not a.suppl:
+            print('[중단] remap-refs 는 --map(본문 인용 [n]) 이나 --suppl(보충 S{n}) 중 하나 이상이 필요하다'); sys.exit(2)
         meta, cl = load_claims_full(a.claims)
-        tag = {'map': norm_name(a.refmap), 'sha': _hash12(a.refmap)}
-        applied = meta.get('refs_maps_applied', [])
-        if any(x.get('sha') == tag['sha'] for x in applied) and not a.force:
-            print('[중단] 이 매핑(%s, sha %s)은 이미 적용된 그래프입니다 — 두 번 적용하면 번호가 두 단계 밀립니다. 확실하면 --force' % (tag['map'], tag['sha']))
-            sys.exit(2)
-        remap_refs(cl, _refmap_load(a.refmap))
-        meta['refs_maps_applied'] = applied + [tag]
+        applied, tags = meta.get('refs_maps_applied', []), []
+        for path, kind in ((a.refmap, None), (a.suppl, 'suppl')):   # v16.9: 보충 매핑은 kind='suppl' 로 따로 기록
+            if not path:
+                continue
+            tag = {'map': norm_name(path), 'sha': _hash12(path)}
+            if kind:
+                tag['kind'] = kind
+            if any(x.get('sha') == tag['sha'] and x.get('kind') == kind for x in applied) and not a.force:
+                print('[중단] 이 매핑(%s, sha %s)은 이미 적용된 그래프입니다 — 두 번 적용하면 번호가 두 단계 밀립니다. 확실하면 --force' % (tag['map'], tag['sha']))
+                sys.exit(2)
+            tags.append(tag)
+        remap_refs(cl, _refmap_load(a.refmap) if a.refmap else {}, suppl=_refmap_load(a.suppl) if a.suppl else None)
+        meta['refs_maps_applied'] = applied + tags
         print('저장: %s' % save_claims(a.o, cl, meta=meta))
     elif a.cmd == 'extract':
         src = DocSource(a.doc)

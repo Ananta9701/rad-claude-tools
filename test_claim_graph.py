@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.8.1'
+EXPECT_VERSION = '16.9'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -950,6 +950,116 @@ def run():
     f = sum(1 for s, _, _ in results if s == 'FAIL')
     print('\n통과 %d / 건너뜀 0 / 실패 %d  (전체 %d)' % (len(results) - f, f, len(results)))   # v15.8: 건너뜀 칸을 모든 테스트에 같은 모양으로(발표 요청)
     return f
+
+
+def t_v169_nums_suppl_tagged_one_line():
+    """저자 3a: evidence 맨 앞 `Suppl S{n}` 표지(실물 15개 모두 이 모양 — 수치는 뒤 조각)의 못 찾은 수치는
+    주장마다 따로 적지 않고 한 줄로. 표지 없는 evidence 는 전처럼 주장마다."""
+    site = {'doc:p:1': 'Main text r = 0.40 only.'}
+    cl = [{'id': 's1', 'statement': 'x', 'evidence': 'Suppl S3; r = 0.63, n = 42', 'sites': ['doc:p:1'], 'keys': []},
+          {'id': 's2', 'statement': 'y', 'evidence': 'Suppl S4; 12.5%', 'sites': ['doc:p:1'], 'keys': []},
+          {'id': 'm1', 'statement': 'z', 'evidence': 'r = 0.51', 'sites': ['doc:p:1'], 'keys': []},
+          {'id': 'ok', 'statement': 'w', 'evidence': 'Suppl S5; r = 0.40', 'sites': ['doc:p:1'], 'keys': []}]
+    buf = io.StringIO()
+    probs, _ = CGm.mapcheck(_resolve_dict(site), cl, stream=buf, nums=True)
+    per = [p for p in probs if 'evidence 의 수치' in p]
+    assert per == ['[참고] m1: evidence 의 수치 0.51 가 sites 어디에도 없음'], probs          # 실패 길(옛 코드): s1·s2 도 한 줄씩
+    one = [p for p in probs if '보충자료' in p]
+    assert one == ['[참고] 보충자료 표지(Suppl S…)가 든 evidence 2개(s1, s2)의 수치 3개가 sites 에 없음 — sites 는 본문만 보므로 따로 적지 않는다'], probs
+    assert not any('ok' in p for p in probs)                                                    # 성공 길: 찾은 수치는 조용
+
+
+def t_v169_remap_refs_suppl():
+    """저자 3b: 보충 표 재번호 — `Suppl S{n}` 도 매핑으로(`--suppl`). 본문 [n] 은 건드리지 않는다."""
+    cl = [{'id': 'a', 'statement': 'A [3]', 'evidence': 'Suppl S3; r = 0.6', 'keys': []},
+          {'id': 'b', 'statement': 'B', 'evidence': 'Suppl S9; x', 'keys': []},
+          {'id': 'c', 'statement': 'C', 'evidence': 'Supplementary Table S4 and S2', 'keys': []}]
+    buf = io.StringIO()
+    ch = CGm.remap_refs(cl, {}, stream=buf, suppl={3: 4, 4: 5, 2: 2})
+    assert cl[0]['evidence'] == 'Suppl S4; r = 0.6' and cl[0]['statement'] == 'A [3]', cl[0]
+    assert cl[1]['evidence'] == 'Suppl S9; x' and 'S9 매핑에 없음' in buf.getvalue(), buf.getvalue()   # 실패 길: 없는 번호는 그대로 + 경고
+    assert cl[2]['evidence'] == 'Supplementary Table S5 and S2', cl[2]
+    assert len(ch) == 2
+    import json, subprocess
+    p = '/tmp/cg_suppl.json'; CGm.save_claims(p, [dict(c) for c in cl], meta={'doc': 'm.docx'})
+    json.dump({'map': {'4': 7}}, open('/tmp/cg_smap.json', 'w'))
+    run = lambda *a: subprocess.run([sys.executable, CGm.__file__, 'remap-refs', '--claims'] + list(a), capture_output=True, text=True)
+    r = run(p, '--suppl', '/tmp/cg_smap.json', '-o', '/tmp/cg_suppl2.json')
+    assert r.returncode == 0 and json.load(open('/tmp/cg_suppl2.json'))['claims'][0]['evidence'] == 'Suppl S7; r = 0.6', r.stdout + r.stderr
+    r = run('/tmp/cg_suppl2.json', '--suppl', '/tmp/cg_smap.json', '-o', '/tmp/cg_suppl3.json')
+    assert r.returncode == 2 and '이미 적용' in r.stdout, r.stdout                                  # 두 번 적용 거부
+    r = run(p, '-o', '/tmp/cg_suppl4.json')
+    assert r.returncode == 2 and '--map' in r.stdout and '--suppl' in r.stdout, r.stdout + r.stderr  # 둘 다 없으면 멈춤
+
+
+def t_v169_add_and_link_cli():
+    """저자 3c: add/link 가 간선 weight 를 type 기본값으로 넣는다. 없는 id·겹친 간선·순환은 멈춘다."""
+    import json, subprocess
+    p = '/tmp/cg_add.json'; CGm.save_claims(p, copy.deepcopy(GRAPH), meta={'doc': 'm.docx', 'note': 'n'})
+    run = lambda *a: subprocess.run([sys.executable, CGm.__file__] + list(a), capture_output=True, text=True)
+    r = run('add', '--claims', p, '--id', 'd', '--statement', 'D', '--role', 'claim', '--dep', 'b:support', '--dep', 'a',
+            '--site', 'notes:9', '--key', 'dee', '-o', '/tmp/cg_add2.json')
+    assert r.returncode == 0, r.stdout + r.stderr
+    d = json.load(open('/tmp/cg_add2.json'))
+    assert d['doc'] == 'm.docx' and d['note'] == 'n'                                                 # 맨 위 칸 보존
+    new = [c for c in d['claims'] if c['id'] == 'd'][0]
+    assert new['depends_on'] == [{'id': 'b', 'type': 'support', 'weight': 0.7}, {'id': 'a', 'type': 'premise', 'weight': 1.0}], new
+    assert new['sites'] == ['notes:9'] and new['keys'] == ['dee'] and new['role'] == 'claim'
+    r = run('link', '--claims', '/tmp/cg_add2.json', 'c', 'a', '--type', 'caveat', '-o', '/tmp/cg_add3.json')
+    assert r.returncode == 0, r.stdout + r.stderr
+    c = [x for x in json.load(open('/tmp/cg_add3.json'))['claims'] if x['id'] == 'c'][0]
+    assert {'id': 'a', 'type': 'caveat', 'weight': 0.5} in c['depends_on'], c
+    for args, why in ((['add', '--claims', p, '--id', 'a', '--statement', 'x', '-o', '/tmp/x.json'], '이미 있다'),
+                      (['add', '--claims', p, '--id', 'e', '--statement', 'x', '--dep', 'zz', '-o', '/tmp/x.json'], '없는 주장'),
+                      (['link', '--claims', p, 'b', 'a', '-o', '/tmp/x.json'], '이미 있다'),
+                      (['link', '--claims', p, 'a', 'c', '-o', '/tmp/x.json'], '순환'),
+                      (['link', '--claims', p, 'a', 'b', '--type', 'bogus', '-o', '/tmp/x.json'], 'invalid choice')):
+        r = run(*args)
+        assert r.returncode != 0 and why in (r.stdout + r.stderr), (args, r.stdout, r.stderr)
+
+
+def t_v169_doc_index_zero_or_out_of_range():
+    """리뷰어 3: doc:tbl:N·doc:p:N 은 1부터 — 0 은 파이썬 음수 번호로 **마지막 표·문단**을 돌려줬다(조용한 오답). 이제 알린다."""
+    p = '/tmp/cg_test.docx'; _mk_docx(p)
+    src = CGm.DocSource(p)
+    for site in ('doc:tbl:0', 'doc:tbl:2', 'doc:p:0', 'doc:p:999'):
+        try:
+            src.resolve(site); assert False, site                                                    # 실패 길(옛 코드): tbl:0 = 마지막 표
+        except KeyError as e:
+            assert '1부터' in str(e), e
+    assert '0.612' in src.resolve('doc:tbl:1') and src.resolve('doc:p:1')                              # 성공 길
+
+
+def t_v169_positional_claims_hint():
+    """발표 3: mapgraph claims.json 처럼 파일 이름만 주면 '--claims' 를 알려 준다."""
+    import subprocess
+    p = '/tmp/cg_pos.json'; CGm.save_claims(p, copy.deepcopy(GRAPH))
+    for cmd in ('mapgraph', 'mapreport', 'scaffold', 'gaps'):
+        r = subprocess.run([sys.executable, CGm.__file__, cmd, p], capture_output=True, text=True)
+        assert r.returncode == 2 and ('%s --claims %s' % (cmd, p)) in (r.stdout + r.stderr), (cmd, r.stdout, r.stderr)
+    r = subprocess.run([sys.executable, CGm.__file__, 'mapgraph', '--claims', p], capture_output=True, text=True)
+    assert r.returncode in (0, 1) and '--claims' not in r.stderr
+
+
+def t_v169_mapcheck_pass_wording():
+    """저자 4: '통과' 는 '자리가 있다' 이지 '최신' 이 아니다 — 문구로 알린다."""
+    buf = io.StringIO()
+    probs, _ = CGm.mapcheck(_resolve_dict({'slide:7': 'title', 'notes:7': 'note', 'notes:8': ''}), copy.deepcopy(GRAPH), stream=buf)
+    assert not probs and '모든 주장의 자리에 찾는 표현이 있음 — 주장·evidence 가 최신인지는 보지 않는다(mapstale·판 올림 때 evidence 갱신)' in buf.getvalue(), buf.getvalue()
+    assert '반영됨' not in buf.getvalue()
+
+
+def t_v169_selfcheck_env_row():
+    """발표 4: '통과' 는 환경에 기댄 판정 — selfcheck 표에 Python·pypdf·Pillow·python-pptx 판을 적는다."""
+    import platform
+    buf = io.StringIO()
+    CGm.selfcheck(os.path.dirname(os.path.abspath(CGm.__file__)), stream=buf)
+    t = buf.getvalue()
+    row = [l for l in t.splitlines() if l.startswith('| 환경 |')]
+    assert len(row) == 1 and 'Python %s' % platform.python_version() in row[0], t[:800]
+    for lib in ('pypdf', 'Pillow', 'python-pptx'):
+        assert lib + ' ' in row[0], row
+    assert CGm._lib_versions({'nope-lib-xyz': 'nope'}) == 'nope 없음'                            # 없는 라이브러리는 '없음'
 
 
 if __name__ == '__main__':
