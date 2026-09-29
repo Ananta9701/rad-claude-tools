@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.2'
+EXPECT_VERSION = '16.3'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -730,6 +730,15 @@ def t_v161_mapgraph_isolated_note():
     assert not [p for p in CGm.mapgraph([{'id': 'solo'}], io.StringIO())[0] if '외톨이' in p]        # 주장 하나뿐이면 알리지 않음
     ps = [p for p in CGm.mapgraph([{'id': 'x%02d' % k} for k in range(21)], io.StringIO())[0] if '간선이 하나도' in p]
     assert ps == ['[참고] 간선이 하나도 없는 그래프(주장 21개) — 관계(depends_on)를 아직 적지 않았다'], ps   # v16.2: 21개 이름을 늘어놓지 않는다
+    # v16.3 (사용자 09-29, 부관리자 재현): role=claim 21개·간선 0 — "premise 간선이 없음" 이 21줄 나오던 것도 요약 한 줄로
+    g21 = [{'id': 'x%02d' % k, 'role': 'claim'} for k in range(20)] + [{'id': 'ev', 'role': 'evidence'}]
+    ps = [p for p in CGm.mapgraph(g21, io.StringIO())[0] if p.startswith('[참고]')]
+    assert '[참고] 간선이 하나도 없는 그래프(주장 21개) — 관계(depends_on)를 아직 적지 않았다 (주장별 간선 [참고] premise 없음 20 · caveat 없음 1 를 이 줄로 합침)' in ps, ps
+    assert len(ps) == 2 and any('role=main 인 주장이 0개' in p for p in ps), ps               # 그래프 전체 한 줄(main 개수)은 그대로
+    # 실패 길: 간선이 하나라도 있으면 주장별 [참고] 는 전처럼 줄마다
+    g21[0]['depends_on'] = [{'id': 'ev', 'type': 'premise'}]
+    ps = CGm.mapgraph(g21, io.StringIO())[0]
+    assert sum('premise 간선이 없음' in p for p in ps) == 19 and any('ev: evidence 인데 걸린 caveat 이 없음' in p for p in ps), ps
 
 
 def run():

@@ -23,7 +23,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '1.3.6'
+EXPECT_VERSION = '1.3.7'
 TMP = os.environ.get('VT_TMP', '/tmp/vt_test')
 shutil.rmtree(TMP, ignore_errors=True)
 os.makedirs(TMP, exist_ok=True)
@@ -102,6 +102,19 @@ def t_citations_korean_memo_ignored():
     paras = list(BODY); paras.insert(4, '〔수정〕 [99] 는 예시 — 한글 메모')
     r, _ = _quiet(V.check_citations, _docx('c_kor.docx', paras))
     assert r['used'] == 7 and r['gaps'] == [], r
+
+
+def t_v137_citations_en_dash_range():
+    # 코드 리뷰 ⑫: [4–6](en dash, Word 자동 고침)을 인용으로 읽지 못해 4·5·6 이 빠지고, 뒤 [7] 이 순서 위반·결번으로 나왔다
+    paras = list(BODY); paras[3] = 'First [1]. Then [2,3] and [4\u20136].'
+    r, _ = _quiet(V.check_citations, _docx('c_endash.docx', paras))
+    assert r['used'] == 7 and r['order_violations'] == [] and r['gaps'] == [], r          # 성공 길: en dash 범위를 편다
+    paras[3] = 'First [1]. Then [2,3] and [5 \u2013 6].'                                   # 실패 길: 범위가 4 를 건너뛰면 결번은 그대로 잡는다
+    r, _ = _quiet(V.check_citations, _docx('c_endash_gap.docx', paras))
+    assert r['gaps'] == [4], r
+    paras[3] = 'First [1]. Then [3,2] and [4\u20136].'                                    # 실패 길: 진짜 순서 위반은 그대로
+    r, _ = _quiet(V.check_citations, _docx('c_endash_bad.docx', paras))
+    assert r['order_violations'] == [3, 2], r
 
 
 def t_citations_missing_marker_returns_none():

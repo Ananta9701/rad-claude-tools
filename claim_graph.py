@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.2'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.3'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -323,6 +323,8 @@ def mapgraph(claims, stream=sys.stdout):
     problems = []
     edges = _edges(claims)
     by_id = {c['id']: c for c in claims}
+    noedge = len(claims) > 1 and not any(edges.values())   # v16.3: 간선 0 그래프 — 주장별 간선 [참고] 는 요약 한 줄로 합친다
+    folded = {'premise': 0, 'caveat': 0}
     seen = set()
     for c in claims:
         if c['id'] in seen:
@@ -361,7 +363,9 @@ def mapgraph(claims, stream=sys.stdout):
             problems.append('%s: supersedes 가 있는데 forbidden 이 비어 있음 — 옛 문구를 넣지 않으면 '
                             'mapcheck 가 옛 주장을 통과시킨다. 후보: %s' % (c['id'], ' / '.join(hint) or '-'))
         problems.extend(_source_problems(c, edges))
-        if c.get('role') in ('main', 'claim') and not any(t == 'premise' for _, t, _ in edges[c['id']]):
+        if c.get('role') in ('main', 'claim') and not any(t == 'premise' for _, t, _ in edges[c['id']]) and noedge:
+            folded['premise'] += 1
+        elif c.get('role') in ('main', 'claim') and not any(t == 'premise' for _, t, _ in edges[c['id']]):
             problems.append('[참고] %s: role=%s 인데 premise 간선이 없음 — 검정 없는 해석이 결론 자리에 있는지 확인'
                             % (c['id'], c['role']))
         for up, typ, w in edges[c['id']]:
@@ -376,7 +380,9 @@ def mapgraph(claims, stream=sys.stdout):
                 problems.append('[참고] %s -> %s: caveat 간선이 role=rebuttal 주장을 가리킴 — 한계가 아니라 반대 증거면 type rebuttal' % (c['id'], up))
 
     for c in claims:
-        if c.get('role') == 'evidence' and not any(t == 'caveat' for _, t, _ in edges[c['id']]):
+        if c.get('role') == 'evidence' and noedge:
+            folded['caveat'] += 1
+        elif c.get('role') == 'evidence' and not any(t == 'caveat' for _, t, _ in edges[c['id']]):
             problems.append('[참고] %s: evidence 인데 걸린 caveat 이 없음' % c['id'])
     rev_any = {}
     for cid, lst in edges.items():
@@ -391,7 +397,9 @@ def mapgraph(claims, stream=sys.stdout):
         problems.append('[참고] 약한 고리: %s 가 기대는 %s 는 confidence=low (%s %.1f)' % (cid, up, typ, w))
     alone = [c['id'] for c in claims if not edges[c['id']] and not rev_any.get(c['id'])]
     if len(claims) > 1 and not any(edges.values()):   # v16.2 (사용자 09-29): 간선이 하나도 없는 그래프(발표 09-20 판 등)는 목록 대신 한 줄
-        problems.append('[참고] 간선이 하나도 없는 그래프(주장 %d개) — 관계(depends_on)를 아직 적지 않았다' % len(claims))
+        fo = ['premise 없음 %d' % folded['premise']] * bool(folded['premise']) + ['caveat 없음 %d' % folded['caveat']] * bool(folded['caveat'])
+        problems.append('[참고] 간선이 하나도 없는 그래프(주장 %d개) — 관계(depends_on)를 아직 적지 않았다%s'
+                        % (len(claims), ' (주장별 간선 [참고] %s 를 이 줄로 합침)' % ' · '.join(fo) if fo else ''))
     elif alone and len(claims) > 1:     # v16.1 (사용자 09-29): 간선이 하나도 없는 주장 — 관계도에서 떨어져 나온다. 한 줄로(간선 없는 옛 그래프가 줄로 쏟아지지 않게)
         problems.append('[참고] 간선이 하나도 없는 주장(외톨이) %d개: %s' % (len(alone), ', '.join(alone)))
     mains = [c['id'] for c in claims if c.get('role') == 'main']

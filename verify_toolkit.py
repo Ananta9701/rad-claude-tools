@@ -39,7 +39,7 @@ import zipfile
 import os
 import shutil
 
-__version__ = '1.3.6'   # TOOLS_MANIFEST 와 대조. 판이 오르면 test_verify_toolkit.EXPECT_VERSION 도 함께
+__version__ = '1.3.7'   # TOOLS_MANIFEST 와 대조. 판이 오르면 test_verify_toolkit.EXPECT_VERSION 도 함께
 
 # ══════════════════════════════════════════════════════════════
 # PAPER-SPECIFIC CONFIG — 논문·학술지가 바뀌면 여기만 수정
@@ -53,7 +53,7 @@ REFERENCES_MARKER = "REFERENCES"
 FIGURE_MIN_DPI = 300
 FIGURE_MIN_INCH = 3.0
 FIGURE_MAX_INCH = 7.0
-CITATION_PATTERN = r'\[[\d,\s\-]+\]'   # Vancouver 스타일 [1], [1,2], [1-3]
+CITATION_PATTERN = r'\[[\d,\s\-\u2013]+\]'   # Vancouver 스타일 [1], [1,2], [1-3], [1–3](en dash — v1.3.7, 코드 리뷰 ⑫)
 PVALUE_DECIMALS = 3
 # ══════════════════════════════════════════════════════════════
 
@@ -205,9 +205,9 @@ def check_citations(path, body_start=BODY_START_MARKER, refs_marker=REFERENCES_M
     seq = []
     for c in re.findall(pattern, body):
         for part in c.strip('[]').split(','):
-            part = part.strip()
+            part = part.strip().replace('\u2013', '-')      # v1.3.7: Word 가 1-3 을 1–3 으로 바꾼 것도 범위로
             if '-' in part:
-                a, b = part.split('-')
+                a, b = [x.strip() for x in part.split('-', 1)]
                 seq += list(range(int(a), int(b) + 1))
             elif part.isdigit():
                 seq.append(int(part))
