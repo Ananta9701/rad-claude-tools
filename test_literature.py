@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.8.4'
+EXPECT_VERSION = '0.8.5'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 
@@ -294,7 +294,8 @@ def t_v07_page_marker_printed_first():
     old = re.sub(r'\[p\.[^\]]* · PDF (\d+)\]', r'[p.\1]', md)
     open(os.path.join(store, '10.1000_abc123', 'paper.md'), 'w', encoding='utf8').write(old)
     loc = open(LT.locate(instr, store, out, stream=io.StringIO()), encoding='utf8').read()
-    assert '[p.2] 맞은 말 2/2' in loc, loc
+    assert '[p.2](옛 표지 — PDF 2쪽) 맞은 말 2/2' in loc, loc                                  # v0.8.5: 옛 표지는 PDF 쪽이라고 풀어 적는다
+    assert loc.count('옛 쪽 표지 `[p.N]` — N 은 PDF 쪽') >= 1, loc
     rows = LT.check(instr, os.path.join(d, 'inbox'), store=store, stream=io.StringIO())
     assert not any('잘렸다' in str(r) for r in (rows or [])), rows
 
@@ -410,6 +411,25 @@ def t_v08_old_xml_md_reconverted():
     # PDF 로 받은 문헌(paper.xml 없음)은 옛 변환으로 보지 않는다
     LT.ingest(instr, os.path.join(d, 'inbox'), store, out, stream=io.StringIO())
     assert not LT._xml_md_old(os.path.join(store, '10.1000_abc123'))
+
+
+def t_v085_locate_old_page_marker_label():
+    # 사용자 09-29: 보관소 3편이 모두 옛 표지 [p.N] — locate 가 [p.1] 로만 보여 인쇄 1쪽으로 읽힐 수 있었다
+    assert LT._mark_label('[p.3]') == '[p.3](옛 표지 — PDF 3쪽)'
+    assert LT._mark_label('[p.3 · e12]') == '[p.3 · e12](옛 표지 — PDF 3쪽, 인쇄 e12)'                  # 옛 형식의 인쇄 쪽 붙은 꼴
+    for new in ('[p.e12 · PDF 3]', '[p.— · PDF 1]', '[p.74 · PDF 74]', '[§ Methods]'):
+        assert LT._mark_label(new) == new, new                                                 # 새 표지·절 표지는 그대로
+    d, instr = _fixture()
+    store, out = os.path.join(d, 'store'), os.path.join(d, 'out')
+    LT.ingest(instr, os.path.join(d, 'inbox'), store, out, stream=io.StringIO())
+    loc = open(LT.locate(instr, store, out, stream=io.StringIO()), encoding='utf8').read()
+    assert '옛 표지' not in loc and '[p.— · PDF 2] 맞은 말' in loc, loc                          # 성공 길: 새 변환에는 알림 없음
+    pm = os.path.join(store, '10.1000_abc123', 'paper.md')
+    md = open(pm, encoding='utf8').read()
+    open(pm, 'w', encoding='utf8').write(re.sub(r'\[p\.[^\]]* · PDF (\d+)\]', r'[p.\1]', md))
+    loc = open(LT.locate(instr, store, out, stream=io.StringIO()), encoding='utf8').read()
+    assert '[p.2](옛 표지 — PDF 2쪽) 맞은 말' in loc and '옛 쪽 표지 `[p.N]`' in loc, loc          # 실패 길: 옛 표지면 알리고 풀어 적는다
+    assert not re.search(r'\[p\.\d+\] 맞은 말', loc), loc                                       # 옛 표지를 맨몸으로 보여 주지 않는다
 
 
 def t_cli():

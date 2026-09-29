@@ -20,7 +20,7 @@ import shutil
 import sys
 import unicodedata
 
-__version__ = '0.8.4'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.8.5'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
 
 DOI_RE = re.compile(r'\b(10\.\d{4,9}/[^\s"<>]+)', re.I)
 PMID_RE = re.compile(r'\bPMID:?\s*(\d{5,9})\b', re.I)
@@ -354,6 +354,18 @@ def _term_re(term):
     return re.compile(r'\s*'.join(map(re.escape, core)), re.I)
 
 
+_OLD_MARK = re.compile(r'^\[p\.\s*(\d+)(?:\s*·\s*([^\]]*))?\]$')
+
+
+def _mark_label(mark):
+    """v0.8.5 (사용자 09-29): 옛 쪽 표지 `[p.N]`·`[p.N · 인쇄]`(v0.6 까지 — N 은 PDF 쪽)는 인쇄 쪽으로 읽히지 않게 풀어 적는다.
+    새 표지 `[p.인쇄 · PDF N]`·절 표지는 그대로."""
+    m = _OLD_MARK.match(mark.strip())
+    if not m or 'PDF' in mark:
+        return mark
+    return '%s(옛 표지 — PDF %s쪽%s)' % (mark, m.group(1), (', 인쇄 %s' % m.group(2).strip()) if m.group(2) else '')
+
+
 def locate(instr_path, store, out, top=3, stream=sys.stdout):
     """주장마다 그 문헌 paper.md 에서 '찾을 말' 이 가장 많이 든 문단 top 개(쪽 표지와 함께). 판정은 하지 않는다."""
     text = _nfc(open(instr_path, encoding='utf8').read())
@@ -396,6 +408,7 @@ def locate(instr_path, store, out, top=3, stream=sys.stdout):
                 fm = _fold(md)[0]                       # v0.8: 찾기는 NFKC 사본으로(합자)
                 folded[key] = (paras, re.sub(r'\s+', ' ', fm), re.sub(r'[\s_\-‐–.]+', '', fm).lower())
             paras, whole, flat_all = folded[key]
+            old_marks = any(_mark_label(mk) != mk for mk, _, _ in paras)
             cands = []
             for mark, flat, fk in paras:
                 hit = [t for t, p in pats if p.search(fk)]
@@ -409,11 +422,14 @@ def locate(instr_path, store, out, top=3, stream=sys.stdout):
             order = list(cands)
             cands.sort(key=lambda z: -z[0])
             L.append('- 문헌 %d `%s/paper.md`:' % (n, key))
+            if old_marks:     # v0.8.5: 보관소에 남은 옛 변환 — [p.1] 이 인쇄 1쪽으로 읽혀 인용 쪽을 틀릴 수 있다
+                L.append('  - **옛 쪽 표지 `[p.N]` — N 은 PDF 쪽이지 인쇄 쪽이 아니다.** 인용할 쪽은 논문 첫 쪽 서지로 확인하거나, '
+                         '`ingest` 를 다시 돌려 새 표지 `[p.인쇄 · PDF N]` 으로 바꾼다')
             L.append('  - **원문 전체에서 0회: %s**' % (', '.join(zero) if zero else '없음(찾을 말이 모두 한 번 이상 나온다)'))
             if not cands:
                 L += ['  - 찾을 말이 든 문단 없음 — 원문을 직접 본다', '']; continue
             for sc, mark, hit, flat in cands[:top]:
-                L.append('  - %s 맞은 말 %d/%d(%s): %s' % (mark, sc, len(pats), ', '.join(hit), flat[:400] + ('…' if len(flat) > 400 else '')))
+                L.append('  - %s 맞은 말 %d/%d(%s): %s' % (_mark_label(mark), sc, len(pats), ', '.join(hit), flat[:400] + ('…' if len(flat) > 400 else '')))
             # v0.2: 찾을 말마다 따로 — 여러 요소를 한 주장에 담으면 초록·결론만 위로 올라와 요소별 근거 자리가 밀린다
             if len(pats) > 1:
                 L.append('  - 찾을 말별 첫 자리(요약 문단 편향을 피해 — 같은 문단이 여러 말에 걸리면 한 번만):')
@@ -423,12 +439,12 @@ def locate(instr_path, store, out, top=3, stream=sys.stdout):
                     if not first:
                         continue
                     if first[1] in shown:
-                        L.append('    - "%s" → 위와 같은 문단 %s' % (t, first[0])); continue
+                        L.append('    - "%s" → 위와 같은 문단 %s' % (t, _mark_label(first[0]))); continue
                     shown.add(first[1])
                     fk, idx = _fold(first[1]); m_ = p.search(fk)            # 사본에서 찾고 원문 자리로 되돌린다
                     s_, e_ = idx[m_.start()], idx[m_.end() - 1] + 1
                     a_ = max(0, s_ - 120)
-                    L.append('    - "%s" → %s …%s…' % (t, first[0], first[1][a_:e_ + 160]))
+                    L.append('    - "%s" → %s …%s…' % (t, _mark_label(first[0]), first[1][a_:e_ + 160]))
             L.append('')
     os.makedirs(out, exist_ok=True)
     fp = os.path.join(out, '%s_주장위치.md' % name)
