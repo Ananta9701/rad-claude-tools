@@ -1,26 +1,23 @@
-# RELEASE v2.65 — manifest v85 — 2026-09-29
+# RELEASE v2.66 — manifest v86 — 2026-09-29
 
-> **v2.65** — claim_graph 작은 것 일곱(저자·리뷰어·발표 질문지 회신 09-29). 그중 **결함 하나: `doc:tbl:0`·`doc:p:0` 이 오류 없이 마지막 표·문단을 돌려줬다**(조용한 오답) — 이제 읽을 수 없는 자리. 나머지는 편의: 보충자료 수치 한 줄, 보충 번호 재번호, `add`/`link`, 파일 이름만 줄 때 안내, selfcheck 환경 줄, mapcheck 통과 문구. claim_graph 16.9. 이전 판 내용은 `HISTORY.md`.
+> **v2.66** — 빨간 도형 검사와 `빨간 도형도 뺌`(사용자 09-29 — 14번 뒤, 형식 (나) 선택). v2.63 부터 `strip_color` 가 글자 색만 지워 문제 화면(앞에 복제)에 정답을 가리키는 빨간 화살표·동그라미가 남을 수 있다 — 이제 **남으면 적용 보고에 [확인]**, 넘김 설명에 **`빨간 도형도 뺌`** 이면 복제본에서 뺀다. deck_toolkit 16.46 · handoff 2.2. 이전 판 내용은 `HISTORY.md`.
 
 ## 1. 바뀐 것
 
 | 도구 | 판 | 내용 |
 |---|---|---|
-| `claim_graph.py` | 16.9 | ① **`doc:tbl:N`·`doc:p:N`** 은 1..개수 밖이면 `읽을 수 없음(번호는 1부터 K 까지)` — 전에는 0 이 마지막 것(리뷰어 3). `mapfreeze` 는 v2.49 부터 읽을 수 없는 자리에서 멈춘다 ② **`mapcheck --nums`**: evidence 에 `Suppl S{n}` 표지가 있으면 그 evidence 의 **못 찾은** 수치를 주장마다 적지 않고 `[참고] 보충자료 표지(Suppl S…)가 든 evidence N개(id…)의 수치 M개가 sites 에 없음` 한 줄로(저자 3a) ③ **`remap-refs --suppl S매핑.json`**: `Suppl S{n}`·`Supplementary Table S4 and S2` 재번호, `--map` 과 따로·함께, 없는·삭제 번호는 그대로 + [경고], 두 번 적용 거부(저자 3b) ④ **`add`·`link`**: 간선 weight 를 type 기본값으로, 없는 id·같은 간선·순환은 멈춤(저자 3c) ⑤ `--claims` 를 받는 명령에 파일 이름만 주면 고칠 명령을 보여 줌(발표 3) ⑥ **selfcheck `환경` 행**: Python·pypdf·Pillow·python-pptx·python-docx 판(발표 4) ⑦ **mapcheck 통과 문구** `모든 주장의 자리에 찾는 표현이 있음 — 주장·evidence 가 최신인지는 보지 않는다`(저자 4 — 전에는 "반영됨") |
-| `CLAIM_GRAPH.md` | 16.9 | §자리·`--nums` 줄·`selfcheck`·`mapcheck`·`remap-refs` 줄, `add`·`link` 두 줄, §4 머리 안내 |
-| 테스트 | — | test_claim_graph 7(재현 6 — 옛 코드: `doc:tbl:0` 이 마지막 표, Suppl 수치 주장마다 한 줄, `--suppl` 없음, `add`/`link` 없음, 파일 이름만 주면 argparse 오류, "반영됨". 각 성공·실패 두 쪽) |
+| `deck_toolkit.py` | 16.46 | `Deck.red_shapes(n, 색='FF0000')` — 도형 속성(`p:spPr`)의 채움·선이 그 색인 도형(sp·cxnSp·pic) 이름 목록, 글자 색은 보지 않는다. `Deck.strip_red_shapes(n, 색)` — 그 도형을 모두 지우고 쓰던 rels 도 뺀다(이름이 겹쳐도 — `delete_shape` 는 한 이름에 하나만). rels 정리는 `delete_shape` 와 같은 함수(`_drop_rels`)로 |
+| `DECK_SPEC.md` | 16.46 | 머리에 한 줄, §0-B-3 첫 제시 줄 |
+| `handoff.py` | 2.2 | `앞에 복제` 설명에 `빨간 도형도 뺌` → 복제본에서 빨간 도형 모두 뺌(원본 화면 그대로, 새 슬라이드·가져옴의 앞에 복제도). 안 적었는데 남으면 보고 표 `빨간 도형(복제본)` 에 `[확인] 화면 N 복제본(slideM)에 빨간 도형 k개 남음: 이름… — 정답 표시면 넘김에 "빨간 도형도 뺌"`. 앞에 복제 없이 쓰면 경고 |
+| `HANDOFF_FORMAT.md` | 2.2 | `앞에 복제` 줄에 `빨간 도형도 뺌` · 해설 상자는 글로 찾는다는 것 |
+| 테스트 | — | test_toolkit 1(찾기: 도형 채움·선·connector 선·소문자는 잡고 글자 빨강·파란 상자는 아님, 이름 겹친 둘 모두 빼기, 두 번째 0), test_handoff 1(적은 화면은 복제본만 빼고 원본 그대로 · 안 적은 화면은 [확인] 에 이름 · 앞에 복제 없이 쓰면 경고) |
 
 ## 2. 회신 항목별 답
 
 | 항목 | 반영 |
 |---|---|
-| 저자 3a 보충자료 수치 | ② — **실물 모양을 보고 정함**: 저자 claims v9 의 `Suppl` 표기 15개가 모두 evidence 맨 앞 `Suppl S{n}` 출처 표지이고 수치는 뒤 조각에 있다. 그래서 "표지가 든 조각만 건너뛰기" 가 아니라 "표지가 있는 evidence 의 못 찾은 수치를 한 줄로" 로 했다. 본문 수치가 같은 evidence 에 섞여 있어도 **찾으면** 조용하고, 못 찾으면 한 줄에 합쳐진다 — 그 경우는 주장별로 안 보인다(한계) |
-| 저자 3b 보충 재번호 | ③ |
-| 저자 3c add/link | ④ — `-o` 필수(제자리 덮어쓰기 안 함, mapfreeze·remap-refs 와 같게) |
-| 리뷰어 3 `doc:tbl:0` | ① — 문서만 고칠 일이 아니라 결함이었다 |
-| 발표 3 파일 이름만 | ⑤ |
-| 발표 4 환경 표시 | ⑥ |
-| 저자 4 "통과" 의 뜻 | ⑦ |
+| 사용자 09-29: 문제 화면에 남은 빨간 도형 검사 | 위 [확인] |
+| 사용자 09-29: 넘김에서 정답 도형 빼기 — (나) `빨간 도형도 뺌` | 위 handoff 2.2 |
 
 ## 3. 받을 파일
 
@@ -30,38 +27,38 @@
 ### 저자 (7)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.9 | `c57862ed2485` | ○ |
-| `test_claim_graph.py` | v16.9 | `4cee6ef82a26` | ○ |
-| `CLAIM_GRAPH.md` | v16.9 | `af7dde0cafca` | ○ |
+| `claim_graph.py` | v16.9 | `c57862ed2485` | — |
+| `test_claim_graph.py` | v16.9 | `4cee6ef82a26` | — |
+| `CLAIM_GRAPH.md` | v16.9 | `af7dde0cafca` | — |
 | `verify_toolkit.py` | v1.3.7 | `0833539073f1` | — |
 | `test_verify_toolkit.py` | v1.3.7 | `ac6e42ed2103` | — |
-| `TOOLS_MANIFEST.md` | v85 | `8884a01130d9` | ○ |
-| `RELEASE.md` | v2.65 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v86 | `97e5e0b864ac` | ○ |
+| `RELEASE.md` | v2.66 | — | 이 문서 |
 
 ### 발표 (11)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.9 | `c57862ed2485` | ○ |
-| `test_claim_graph.py` | v16.9 | `4cee6ef82a26` | ○ |
-| `CLAIM_GRAPH.md` | v16.9 | `af7dde0cafca` | ○ |
-| `deck_toolkit.py` | v16.45 | `eeb2305adca7` | — |
-| `test_toolkit.py` | v16.45 | `d0123d0f9c21` | — |
-| `DECK_SPEC.md` | v16.45 | `1c2910d1d90a` | — |
-| `handoff.py` | v2.1 | `6e27b4b50fb0` | — |
-| `test_handoff.py` | v2.1 | `77d29be6dc53` | — |
-| `HANDOFF_FORMAT.md` | v2.1 | `6932c48c139e` | — |
-| `TOOLS_MANIFEST.md` | v85 | `8884a01130d9` | ○ |
-| `RELEASE.md` | v2.65 | — | 이 문서 |
+| `claim_graph.py` | v16.9 | `c57862ed2485` | — |
+| `test_claim_graph.py` | v16.9 | `4cee6ef82a26` | — |
+| `CLAIM_GRAPH.md` | v16.9 | `af7dde0cafca` | — |
+| `deck_toolkit.py` | v16.46 | `8277344bf38c` | ○ |
+| `test_toolkit.py` | v16.46 | `3dd49a2f30da` | ○ |
+| `DECK_SPEC.md` | v16.46 | `2647cfab6cfc` | ○ |
+| `handoff.py` | v2.2 | `d8b5305111f4` | ○ |
+| `test_handoff.py` | v2.2 | `7b2a11d55b3a` | ○ |
+| `HANDOFF_FORMAT.md` | v2.2 | `92fb4a11e9bb` | ○ |
+| `TOOLS_MANIFEST.md` | v86 | `97e5e0b864ac` | ○ |
+| `RELEASE.md` | v2.66 | — | 이 문서 |
 
 ### 리뷰어 (6)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.9 | `c57862ed2485` | ○ |
-| `test_claim_graph.py` | v16.9 | `4cee6ef82a26` | ○ |
-| `CLAIM_GRAPH.md` | v16.9 | `af7dde0cafca` | ○ |
+| `claim_graph.py` | v16.9 | `c57862ed2485` | — |
+| `test_claim_graph.py` | v16.9 | `4cee6ef82a26` | — |
+| `CLAIM_GRAPH.md` | v16.9 | `af7dde0cafca` | — |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v85 | `8884a01130d9` | ○ |
-| `RELEASE.md` | v2.65 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v86 | `97e5e0b864ac` | ○ |
+| `RELEASE.md` | v2.66 | — | 이 문서 |
 
 ### 교과서 (5)
 | 파일 | 판 | 해시 | 변경 |
@@ -69,8 +66,8 @@
 | `textbook.py` | v0.7.2 | `446049895c66` | — |
 | `test_textbook.py` | v0.7.2 | `93d75911d86c` | — |
 | `TEXTBOOK.md` | v0.7.2 | `4bfff4aa0771` | — |
-| `TOOLS_MANIFEST.md` | v85 | `8884a01130d9` | ○ |
-| `RELEASE.md` | v2.65 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v86 | `97e5e0b864ac` | ○ |
+| `RELEASE.md` | v2.66 | — | 이 문서 |
 
 ### 문헌 (5)
 | 파일 | 판 | 해시 | 변경 |
@@ -78,23 +75,23 @@
 | `literature.py` | v0.8.4 | `0585dbb787b0` | — |
 | `test_literature.py` | v0.8.4 | `940eca6399e2` | — |
 | `LITERATURE.md` | v0.8.4 | `e35c0d149938` | — |
-| `TOOLS_MANIFEST.md` | v85 | `8884a01130d9` | ○ |
-| `RELEASE.md` | v2.65 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v86 | `97e5e0b864ac` | ○ |
+| `RELEASE.md` | v2.66 | — | 이 문서 |
 
 ### 코드 (25)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.9 | `c57862ed2485` | ○ |
-| `test_claim_graph.py` | v16.9 | `4cee6ef82a26` | ○ |
-| `CLAIM_GRAPH.md` | v16.9 | `af7dde0cafca` | ○ |
-| `deck_toolkit.py` | v16.45 | `eeb2305adca7` | — |
-| `test_toolkit.py` | v16.45 | `d0123d0f9c21` | — |
-| `DECK_SPEC.md` | v16.45 | `1c2910d1d90a` | — |
+| `claim_graph.py` | v16.9 | `c57862ed2485` | — |
+| `test_claim_graph.py` | v16.9 | `4cee6ef82a26` | — |
+| `CLAIM_GRAPH.md` | v16.9 | `af7dde0cafca` | — |
+| `deck_toolkit.py` | v16.46 | `8277344bf38c` | ○ |
+| `test_toolkit.py` | v16.46 | `3dd49a2f30da` | ○ |
+| `DECK_SPEC.md` | v16.46 | `2647cfab6cfc` | ○ |
 | `verify_toolkit.py` | v1.3.7 | `0833539073f1` | — |
 | `test_verify_toolkit.py` | v1.3.7 | `ac6e42ed2103` | — |
-| `handoff.py` | v2.1 | `6e27b4b50fb0` | — |
-| `test_handoff.py` | v2.1 | `77d29be6dc53` | — |
-| `HANDOFF_FORMAT.md` | v2.1 | `6932c48c139e` | — |
+| `handoff.py` | v2.2 | `d8b5305111f4` | ○ |
+| `test_handoff.py` | v2.2 | `7b2a11d55b3a` | ○ |
+| `HANDOFF_FORMAT.md` | v2.2 | `92fb4a11e9bb` | ○ |
 | `textbook.py` | v0.7.2 | `446049895c66` | — |
 | `test_textbook.py` | v0.7.2 | `93d75911d86c` | — |
 | `TEXTBOOK.md` | v0.7.2 | `4bfff4aa0771` | — |
@@ -102,22 +99,22 @@
 | `test_literature.py` | v0.8.4 | `940eca6399e2` | — |
 | `LITERATURE.md` | v0.8.4 | `e35c0d149938` | — |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v85 | `8884a01130d9` | ○ |
+| `TOOLS_MANIFEST.md` | v86 | `97e5e0b864ac` | ○ |
 | `CODE_PROJECT_README.md` | v5 | `cbffb6ca85db` | — |
-| `HISTORY.md` | — | `2c4237be8cfa` | ○ |
+| `HISTORY.md` | — | `4bd91ccf7da7` | ○ |
 | `release.py` | — | `0a430411a738` | — |
 | `GITHUB_README.md` | — | `c81d29504e46` | — |
 | `PRIVATE_TERMS.txt` | — | `6e8c2862cf5e` | — |
-| `RELEASE.md` | v2.65 | — | 이 문서 |
+| `RELEASE.md` | v2.66 | — | 이 문서 |
 <!-- sets:end -->
 
 ## 4. 각 프로젝트 대화창이 첫 세션에서 할 일
 
-1. 모든 역할: selfcheck 로 manifest v85 이상. 표에 `환경` 행이 새로 나온다 — 회신에 그대로 붙인다.
-2. 저자·리뷰어: 그래프에 `doc:tbl:0`·`doc:p:0` 자리가 있으면 이제 `mapcheck`·`mapfreeze` 가 읽을 수 없다고 멈춘다. **전에는 마지막 표·문단을 읽고 있었다** — 1부터 다시 적는다.
-3. 저자: `mapcheck --nums` 의 보충자료 [참고] 가 한 줄로 준다. 보충 표를 재번호하면 `remap-refs --suppl`.
+1. 모든 역할: selfcheck 로 manifest v86 이상.
+2. 영상의학: 정답을 가리키는 빨간 화살표·동그라미가 있는 `앞에 복제` 화면은 설명에 **`빨간 도형도 뺌`** 을 적는다(예: `앞에 복제(정답 표시 제거) — 해설 상자 없음 · 빨간 도형도 뺌`). 문제가 화살표를 묻는 화면에는 적지 않는다. 09-29 통보의 임시 메모(`정답 도형 있음 — …`)는 이제 필요 없다.
+3. 발표·발표 Cowork: 적용 보고의 `빨간 도형(복제본)` 줄에 `[확인]` 이 있으면 그 도형이 정답 표시인지 보고, 그렇다면 영상의학에 알리거나 `Deck.strip_red_shapes(n)` 으로 뺀다.
 
 ## 5. 검증하지 않은 것
 
-- 실제 원고 docx 로는 돌리지 않았다(이 세션에 없다). Suppl 규칙은 저자 claims v9 의 **표기 모양만** 보고 정했다(내용은 옮기지 않음). claims v10 은 Drive 에서 찾지 못했다.
-- 리뷰어 그래프에 `doc:tbl:0` 이 실제로 남아 있는지는 모른다.
+- 실제 풀이 덱으로는 돌리지 않았다 — 가짜 슬라이드로만. 빨강을 FF0000 이 아닌 색(예: C00000)·테마 색으로 칠한 도형은 잡지 않는다.
+- 그룹 안의 빨간 도형은 그 도형만 빼고 그룹은 남긴다(그룹 틀 크기는 그대로) — 실물에서 보기 확인 안 함.

@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.45'
+EXPECT_VERSION = '16.46'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -2434,6 +2434,30 @@ def t_v1645_strip_color_text_only_all_forms():
     assert all(t in ''.join(d.texts(7)) for t in ('low', 'mod', 'outl', 'dark'))
     assert d.strip_color(7, 'FF0000') == 0                                      # 두 번째는 지울 것 없음
     d.save('/tmp/sc2.pptx'); assert T.validate('/tmp/sc2.pptx', SRC) is not False
+
+def t_v1646_red_shapes_find_and_strip():
+    """사용자 09-29(14번 뒤): 복제 화면에 남은 빨간 도형 — 찾기(도형 채움·선, 글자 색은 아님)와 모두 빼기. 이름이 겹쳐도 뺀다."""
+    d = T.Deck.open(SRC, wd('rs'), theme='cud')
+    fp = d._slide(7); x = open(fp, encoding='utf8').read()
+    sp = lambda i, nm, prst, fill, ln: ('<p:sp><p:nvSpPr><p:cNvPr id="%d" name="%s"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr>'
+        '<a:xfrm><a:off x="100" y="100"/><a:ext cx="500000" cy="200000"/></a:xfrm><a:prstGeom prst="%s"><a:avLst/></a:prstGeom>%s%s</p:spPr></p:sp>'
+        % (i, nm, prst, fill, ln))
+    red = '<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>'
+    shapes = (sp(981, 'Red Arrow', 'rightArrow', red, '') + sp(982, 'Ring', 'ellipse', '<a:noFill/>', '<a:ln w="28575">%s</a:ln>' % red)
+              + sp(983, 'Ring', 'ellipse', '<a:noFill/>', '<a:ln w="28575">%s</a:ln>' % red.replace('FF0000', 'ff0000'))
+              + sp(984, 'Blue Box', 'rect', red.replace('FF0000', '0000FF'), '')
+              + '<p:cxnSp><p:nvCxnSpPr><p:cNvPr id="985" name="Red Line"/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr><p:spPr><a:xfrm><a:off x="1" y="1"/>'
+                '<a:ext cx="9" cy="9"/></a:xfrm><a:prstGeom prst="line"><a:avLst/></a:prstGeom><a:ln w="19050">%s<a:tailEnd type="triangle"/></a:ln></p:spPr></p:cxnSp>' % red)
+    i = x.rfind('</p:txBody>')
+    x = x[:i] + '<a:p><a:r><a:rPr lang="en-US">%s</a:rPr><a:t>red text</a:t></a:r></a:p>' % red + x[i:]
+    j = x.rfind('</p:spTree>'); open(fp, 'w', encoding='utf8').write(x[:j] + shapes + x[j:])
+    got = d.red_shapes(7, 'FF0000')
+    assert sorted(got) == ['Red Arrow', 'Red Line', 'Ring', 'Ring'], got                   # 글자 빨강·파란 상자는 아님
+    assert d.strip_red_shapes(7, 'FF0000') == 4                                              # 이름이 겹친 Ring 둘도
+    y = open(fp, encoding='utf8').read()
+    assert d.red_shapes(7, 'FF0000') == [] and 'Blue Box' in y and 'red text' in ''.join(d.texts(7)) and 'val="FF0000"' in y
+    assert d.strip_red_shapes(7, 'FF0000') == 0
+    d.save('/tmp/rs.pptx'); assert T.validate('/tmp/rs.pptx', SRC) is not False
 
 # ---------------------------------------------------------------- 실행 (한 번만)
 tests = [(n[2:], f) for n, f in list(globals().items()) if n.startswith('t_')]

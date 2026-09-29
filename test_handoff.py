@@ -14,7 +14,7 @@ sys.path.insert(0, HERE)
 import handoff as H          # noqa: E402
 import deck_toolkit as T     # noqa: E402
 
-EXPECT_VERSION = '2.1'
+EXPECT_VERSION = '2.2'
 TMP = tempfile.mkdtemp(prefix='th_')
 # v2.26: validate.py(pptx 스킬)가 없는 환경(Cowork VM)에서는 보고가 '건너뜀'(None) — v2.25 가 이 환경에서 테스트 3개 실패
 VALID = True if os.path.exists(H.VALIDATE_PY) else None
@@ -569,6 +569,41 @@ def t_v20_split_slide():
     assert R.notes_sections(s1)[2] == R.notes_sections(s2)[2] == ['원작자 메모 한 줄'] and e['memo_same']   # 메모는 두 장 모두(사용자)
     buf = io.StringIO(); H.report(rep, buf)
     assert '| 나누기 | 화면 7 →' in buf.getvalue() and '원작자 메모 두 장 같음' in buf.getvalue() and not rep['memo_bad'], buf.getvalue()
+
+
+def t_v22_red_shapes_left_and_strip():
+    """사용자 09-29: 앞에 복제 뒤 복제본에 빨간 도형이 남으면 보고에 [확인](이름과 함께),
+    작업 줄 설명에 '빨간 도형도 뺌' 이면 복제본에서 뺀다(원본 화면은 그대로)."""
+    base0 = _fixture_deck()
+    D0 = T.Deck.open(base0, os.path.join(TMP, 'rd00'))
+    F0 = [s for s, _, _ in D0.order() if s]
+    arrow = ('<p:sp><p:nvSpPr><p:cNvPr id="990" name="Answer Arrow"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr><a:xfrm><a:off x="100" y="100"/>'
+             '<a:ext cx="500000" cy="200000"/></a:xfrm><a:prstGeom prst="rightArrow"><a:avLst/></a:prstGeom>'
+             '<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></p:spPr></p:sp>')
+    for k in (3, 4):
+        fp = D0._slide(F0[k]); x = open(fp, encoding='utf8').read(); j = x.rfind('</p:spTree>')
+        open(fp, 'w', encoding='utf8').write(x[:j] + arrow + x[j:])
+    base = os.path.join(TMP, 'base_rd.pptx'); D0.save(base)
+    D = T.Deck.open(base, os.path.join(TMP, 'rd0'))
+    F = [s for s, _, _ in D.order() if s]; n = len(F)
+    title = lambda k: H._title_text(D, F[k - 1]) or '(제목 없음)'
+    md = doc('### 화면 4 — %s\n작업: 앞에 복제(정답 표시 제거) — 해설 상자 없음\n복제본(문제) 대본:\n먼저.\n대본: 변경 없음\n참고: 없음\n\n' % title(4) +
+             '### 화면 5 — %s\n작업: 앞에 복제(정답 표시 제거) — 해설 상자 없음 · 빨간 도형도 뺌\n복제본(문제) 대본:\n먼저.\n대본: 변경 없음\n참고: 없음\n\n' % title(5), n)
+    d = H.parse(md)
+    assert d['screens'][5]['red_del'] and not d['screens'][4]['red_del']
+    D.src_path = base
+    e, _ = H.check(d, D, stream=io.StringIO()); assert e == 0, d['problems']
+    out = os.path.join(TMP, 'applied_rd.pptx')
+    rep = H.apply(d, base, out, workdir=os.path.join(TMP, 'rdw'))
+    R = T.Deck.open(out, os.path.join(TMP, 'rdr'))
+    dups = {no: sn for no, sn, _, _ in rep['dup']}
+    assert R.red_shapes(dups[5]) == [] and R.red_shapes(F[4]) == ['Answer Arrow']            # 성공 길: 복제본만 뺌, 원본 그대로
+    assert R.red_shapes(dups[4]) == ['Answer Arrow']                                           # 안 적었으면 남는다
+    buf = io.StringIO(); H.report(rep, buf); t = buf.getvalue()
+    assert '[확인] 화면 4 복제본(slide%d)에 빨간 도형 1개 남음: Answer Arrow' % dups[4] in t, t   # 실패 길: 남으면 알린다
+    assert '화면 5 복제본(slide%d) 빨간 도형 1개 뺌' % dups[5] in t, t
+    d2 = H.parse(doc('### 화면 3 — T\n작업: 없음 — 빨간 도형도 뺌\n대본: 변경 없음\n참고: 없음\n', 10))
+    assert any('빨간 도형도 뺌' in p[2] for p in warns(d2)), d2['problems']                    # 앞에 복제 없이 쓰면 경고
 
 
 def t_cli():

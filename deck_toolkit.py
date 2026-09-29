@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.45'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.46'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -1495,14 +1495,18 @@ class Deck:
             raise ValueError('delete_shape: "%s" 의 글에 %r 이 없음 — 지우지 않음' % (name, must_contain))
         x = x[:hits[0].start()] + x[hits[0].end():]
         open(p, 'w', encoding='utf8').write(x)
+        self._drop_rels(slide_no, seg, x)
+        return txt
+
+    def _drop_rels(self, slide_no, removed, x):
+        """지운 도형 글(removed)만 쓰던 그림·링크 관계를 rels 에서 뺀다 — x 는 지운 뒤 슬라이드 XML."""
         rp = self._slide_rels(slide_no)
         if os.path.exists(rp):
             r = open(rp, encoding='utf8').read()
-            for rid in set(re.findall(r'r:(?:embed|link|id)="(rId\d+)"', seg)):
+            for rid in set(re.findall(r'r:(?:embed|link|id)="(rId\d+)"', removed)):
                 if 'r:embed="%s"' % rid not in x and 'r:id="%s"' % rid not in x and 'r:link="%s"' % rid not in x:
                     r = re.sub(r'<Relationship [^>]*Id="%s"[^>]*/>' % rid, '', r)
             open(rp, 'w', encoding='utf8').write(r)
-        return txt
 
     def delete_paragraph(self, slide_no, key, shape=None):
         x, a, b = self._find_para(slide_no, key, shape)
@@ -1895,6 +1899,35 @@ class Deck:
         if n[0]:
             open(p, 'w', encoding='utf8').write(y)
         return n[0]
+
+    def _red_shape_spans(self, x, hexcolor):
+        fill = re.compile(r'<a:solidFill>\s*<a:srgbClr\s+val="%s"\s*(?:/>|>.*?</a:srgbClr>)\s*</a:solidFill>' % re.escape(hexcolor), re.S | re.I)
+        out = []
+        for tag in ('sp', 'cxnSp', 'pic'):
+            for m in re.finditer(r'<p:%s>(?:(?!<p:%s>).)*?</p:%s>' % (tag, tag, tag), x, re.S):
+                pr = re.search(r'<p:spPr\b.*?</p:spPr>', m.group(0), re.S)       # 도형 속성만 — 글자(txBody)는 strip_color 몫
+                if pr and fill.search(pr.group(0)):
+                    nm = re.search(r'<p:cNvPr\b[^>]*\bname="([^"]*)"', m.group(0))
+                    out.append((m.start(), m.end(), html.unescape(nm.group(1)) if nm else '(이름 없음)'))
+        return sorted(out)
+
+    def red_shapes(self, slide_no, hexcolor='FF0000'):
+        """v16.46 (사용자 09-29, 14번 뒤): 도형 채움·선이 그 색인 도형(sp·cxnSp·pic)의 이름 목록 — 글자 색은 보지 않는다.
+        '앞에 복제' 뒤 문제 화면에 정답을 가리키는 빨간 화살표·동그라미가 남았는지 알리는 데 쓴다."""
+        return [nm for _, _, nm in self._red_shape_spans(open(self._slide(slide_no), encoding='utf8').read(), hexcolor)]
+
+    def strip_red_shapes(self, slide_no, hexcolor='FF0000'):
+        """v16.46: red_shapes 가 찾은 도형을 모두 지운다(이름이 겹쳐도 — delete_shape 는 한 이름에 하나만). 반환: 지운 수."""
+        p = self._slide(slide_no); x = open(p, encoding='utf8').read()
+        spans = self._red_shape_spans(x, hexcolor)
+        if not spans:
+            return 0
+        removed = ''.join(x[a:b] for a, b, _ in spans)
+        for a, b, _ in reversed(spans):
+            x = x[:a] + x[b:]
+        open(p, 'w', encoding='utf8').write(x)
+        self._drop_rels(slide_no, removed, x)
+        return len(spans)
 
     def fix_title_box(self, slide_no, cy):
         """제목 placeholder(type="title")의 저장 높이를 cy(EMU)로 맞추고 normAutofit 을 켠다 (전평 build_lgi 흡수, v16.6).

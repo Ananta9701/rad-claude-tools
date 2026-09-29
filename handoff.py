@@ -16,7 +16,7 @@ import os
 import re
 import sys
 
-__version__ = '2.1'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
+__version__ = '2.2'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
 
 KEYS = ('작업:', '대본:', '참고:', '본문:', '제목:', '복제본(문제) 대본:')
 PARA_OP = re.compile(r'^문단 (교체|추가|삭제)\b')
@@ -208,6 +208,8 @@ def parse(text):
                     prob('오류', cur['ln'], '앞에 복제인데 "복제본(문제) 대본:" 이 없다')
                 if cur['boxes'] is None:
                     prob('경고', cur['ln'], '앞에 복제 — 해설 상자를 뺄지 적지 않았다("해설 상자 \\"…\\"" 또는 "해설 상자 없음")')
+            elif cur.get('red_del'):
+                prob('경고', cur['ln'], '"빨간 도형도 뺌" 은 앞에 복제(정답 표시 제거)와 함께만 — 이 화면에서는 아무것도 빼지 않는다')
         cur, coll, pending_para = None, None, None
 
     for i, raw in enumerate(lines, 1):
@@ -220,7 +222,7 @@ def parse(text):
             cur = {'kind': 'screen' if m_scr else 'new', 'ln': i, 'no': int(m_scr.group(1)) if m_scr else None,
                    'title_h': (m_scr.group(2) if m_scr else re.sub(r'^\s*[—–-]\s*', '', m_new.group(1))).strip(), 'ops': None, 'note': '',
                    'script': None, 'tips': None, 'dup_script': None, 'title': None, 'body': None,
-                   'para': [], 'boxes': None, 'split_k': None, 'split_script': None, 'split_tips': None, 'split_boxes': []}
+                   'para': [], 'boxes': None, 'red_del': False, 'split_k': None, 'split_script': None, 'split_tips': None, 'split_boxes': []}
             if m_scr:
                 if cur['no'] in doc['screens']:
                     prob('오류', i, '화면 %d 이 두 번 나온다' % cur['no'])
@@ -254,6 +256,7 @@ def parse(text):
             ops, note, errs = parse_ops(l[3:].strip())
             cur['ops'], cur['note'] = ops, note
             cur['boxes'] = _boxes(note)
+            cur['red_del'] = '빨간 도형도 뺌' in (note or '')      # v2.2 (사용자 09-29): 복제본의 빨간 도형(화살표·동그라미)도 뺀다
             for k, msg in errs:
                 prob(k, i, msg)
             continue
@@ -676,6 +679,13 @@ def _delete_box(deck, sn, words):
     return deck.delete_shape(sn, cands[0], must_contain=re.sub(r'\s+', ' ', words.rstrip('…').strip()).split(' ')[0])
 
 
+def _red_after_dup(deck, sn, label, strip, rep):
+    """v2.2 (사용자 09-29): strip_color 는 글자 색만 — 복제본에 남은 빨간 도형(정답 화살표·동그라미일 수 있다)을
+    '빨간 도형도 뺌' 이면 빼고, 아니면 이름을 보고에 [확인] 으로 올린다."""
+    gone = deck.strip_red_shapes(sn, 'FF0000') if strip else 0
+    rep.setdefault('red', []).append((label, sn, gone, deck.red_shapes(sn, 'FF0000')))
+
+
 def _pos_after(deck, text, F, last_new):
     """'화면 M 앞' / '화면 M 뒤' / '바로 앞 새 슬라이드 뒤' / 'T1 뒤' → after(파일 번호)."""
     if '바로 앞 새 슬라이드 뒤' in text or re.search(r'\bT\d+ 뒤', text):
@@ -1045,6 +1055,7 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
             k2 = D.strip_color(d2, 'FF0000')
             for box in nw['boxes'] or []:
                 _delete_box(D, d2, box)
+            _red_after_dup(D, d2, '"%s"' % label, nw.get('red_del'), rep)
             D.set_notes(d2, _plain_note(nw['dup_script'] or []), None)
             rep['dup_new'].append((label, d2, k2, len(nw['boxes'] or [])))
             rep.setdefault('import_want', []).append((label + ' (복제본)', d2, want_memo if imp else None))
@@ -1071,6 +1082,7 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
         k = D.strip_color(s, 'FF0000')
         for box in sc['boxes'] or []:
             _delete_box(D, s, box)
+        _red_after_dup(D, s, '화면 %d' % no, sc.get('red_del'), rep)
         D.set_notes(s, _plain_note(sc['dup_script'] or []), None)
         rep['dup'].append((no, s, k, len(sc['boxes'] or [])))
     if rep['dup']:
@@ -1213,6 +1225,13 @@ def report(rep, stream=sys.stdout):
             e['no'], e['s1'], e['k'], e['s2'], e['before'], e['after'][0], e['after'][1], '같음' if e.get('memo_same') else '**다름**'))
     if rep.get('dup_new'):
         w('| 앞에 복제(새·가져옴) | %s |' % ', '.join('"%s" → slide%d(빨강 %d 제거, 해설 상자 %d 삭제)' % d for d in rep['dup_new']))
+    red = rep.get('red', [])
+    if any(g or left for _, _, g, left in red):
+        w('| 빨간 도형(복제본) | %s |' % ' · '.join(
+            ('%s 복제본(slide%d) 빨간 도형 %d개 뺌' % (lb, sn, g) if g else '')
+            + (('%s[확인] %s 복제본(slide%d)에 빨간 도형 %d개 남음: %s — 정답 표시면 넘김에 "빨간 도형도 뺌"' % (', ' if g else '', lb, sn, len(left), ', '.join(left)))
+               if left else '')
+            for lb, sn, g, left in red if g or left))
     for lb, src, sn, mode, memo_n, sizes in rep.get('imports', []):
         ov = rep.get('import_over', {}).get(sn)
         w('| 가져옴 | "%s" ← %s → slide%d · %s · 원작자 메모 %s%s%s |' % (
