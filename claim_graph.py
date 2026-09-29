@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.8'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.8.1'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -1578,6 +1578,19 @@ _C_PATTERNS = [
 ]
 
 
+def _hash12(path):
+    """파일 sha256 앞 12자리 — manifest·RELEASE 표의 해시. release.py(비공개)도 이것을 쓴다(v16.8.1 — 같은 계산을 두 곳에 두지 않게)."""
+    import hashlib
+    return hashlib.sha256(open(path, 'rb').read()).hexdigest()[:12]
+
+
+def _run_test(folder, t, python=None, env=None):
+    """테스트 파일 하나를 folder 에서 돌린다 → (종료 코드, 마지막 줄, stdout). 판정은 부르는 쪽이 한다. release.py 도 쓴다(v16.8.1)."""
+    import subprocess
+    r = subprocess.run([python or sys.executable, t], capture_output=True, text=True, cwd=folder, env=dict(os.environ, **(env or {})))
+    return r.returncode, (r.stdout.strip().splitlines() or [''])[-1], r.stdout
+
+
 def _file_version(path):
     """코드 __version__ / 테스트 EXPECT_VERSION / 문서 첫 줄(또는 manifest 판 줄)의 vX.Y."""
     name = os.path.basename(path)
@@ -1667,7 +1680,7 @@ def selfcheck(folder, run_tests=False, stream=sys.stdout, role=None, compare=Non
         if not os.path.exists(p):
             problems.append('받을 파일 없음: %s' % f); lines.append('| `%s` | 없음 | ✗ |' % f); continue
         want_v, want_h = rows[f]
-        got_v = _file_version(p); got_h = hashlib.sha256(open(p, 'rb').read()).hexdigest()[:12]
+        got_v = _file_version(p); got_h = _hash12(p)
         ok = got_v == want_v and got_h == want_h
         if got_v != want_v:
             problems.append('2단계: %s 판 %s ≠ manifest %s' % (f, got_v, want_v))
@@ -1687,9 +1700,9 @@ def selfcheck(folder, run_tests=False, stream=sys.stdout, role=None, compare=Non
                 if f in CODE_ONLY:          # v15.8.2: 비공개 저장소에서 릴리스 사이에도 바뀐다
                     continue
                 fp = os.path.join(folder, f)
-                if os.path.exists(fp) and hashlib.sha256(open(fp, 'rb').read()).hexdigest()[:12] != h:
+                if os.path.exists(fp) and _hash12(fp) != h:
                     bad.append(f)
-            mh = hashlib.sha256(open(mp, 'rb').read()).hexdigest()[:12]
+            mh = _hash12(mp)
             lines.append('| ②′ RELEASE §3 대조 | TOOLS_MANIFEST `%s` 외 세트 파일 | %s |' % (mh, '○' if not bad else '✗ ' + ', '.join(bad)))
             for f in bad:
                 problems.append('②′ %s 해시가 RELEASE §3 표와 다르다' % f)
@@ -1697,11 +1710,10 @@ def selfcheck(folder, run_tests=False, stream=sys.stdout, role=None, compare=Non
     tests = []
     if run_tests:
         for t in sorted(f for f in present if f.startswith('test_') and f.endswith('.py') and f in need):
-            r = subprocess.run([sys.executable, os.path.join(folder, t)], capture_output=True, text=True, cwd=folder,
-                               env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))   # v15.6.1: __pycache__ 부산물 방지
-            last = (r.stdout.strip().splitlines() or ['(출력 없음)'])[-1]
+            rc, last, _ = _run_test(folder, t, env={'PYTHONDONTWRITEBYTECODE': '1'})   # v15.6.1: __pycache__ 부산물 방지
+            last = last or '(출력 없음)'
             tests.append('| `%s` | %s |' % (t, last))
-            if r.returncode != 0 or '실패 0' not in last or ('건너뜀' in last and '건너뜀 0' not in last):
+            if rc != 0 or '실패 0' not in last or ('건너뜀' in last and '건너뜀 0' not in last):
                 problems.append('테스트: %s — %s' % (t, last))
     # 분류
     delete, other = [], []
@@ -1851,9 +1863,9 @@ def main():
             ma.setdefault('pairs_with', {})[a.labels[1]] = parse_pairs(a.pairs)
             print('짝 저장: %s (pairs_with.%s)' % (save_claims(a.a, ca, meta=ma), a.labels[1]))
     elif a.cmd == 'remap-refs':
-        import hashlib, json
+        import json
         meta, cl = load_claims_full(a.claims)
-        tag = {'map': norm_name(a.refmap), 'sha': hashlib.sha256(open(a.refmap, 'rb').read()).hexdigest()[:12]}
+        tag = {'map': norm_name(a.refmap), 'sha': _hash12(a.refmap)}
         applied = meta.get('refs_maps_applied', [])
         if any(x.get('sha') == tag['sha'] for x in applied) and not a.force:
             print('[중단] 이 매핑(%s, sha %s)은 이미 적용된 그래프입니다 — 두 번 적용하면 번호가 두 단계 밀립니다. 확실하면 --force' % (tag['map'], tag['sha']))
