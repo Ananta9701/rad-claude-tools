@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.41'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.42'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -6112,7 +6112,9 @@ def main():
             print(f)
     elif args.cmd == 'pack':
         Deck(args.workdir).save(args.o)
-        validate(args.o, args.original)
+        ok = validate(args.o, args.original)     # v16.42 (코드 리뷰 ⑮): 결과를 버리지 않는다 — 실패면 1, 검증 못 함(None)은 0
+        print('저장: %s / verify%s: %s' % (args.o, ' --original' if args.original else '', vword(ok)))
+        sys.exit(1 if ok is False else 0)
     elif args.cmd == 'diff':
         srcs = dict(x.split('=', 1) for x in args.src)
         r = diff_decks(args.original, args.edited, mapping=parse_screen_map(args.map) if args.map else None,
@@ -6179,14 +6181,21 @@ def main():
         dk = Deck.open(args.pptx, theme=args.theme)
         restyle(dk)
         dk.save(args.o)
-        validate(args.o, args.pptx)
+        ok = validate(args.o, args.pptx)
+        print('저장: %s / verify --original: %s' % (args.o, vword(ok)))
+        sys.exit(1 if ok is False else 0)
     elif args.cmd == 'plan':
         plan(args.kind, args.cases, minutes=args.minutes)
     elif args.cmd == 'polish':
         dk = Deck.open(args.pptx)
-        polish(dk, args.font, audience=args.audience)
+        r = polish(dk, args.font, audience=args.audience)
+        if not r['text_intact']:            # v16.42: 경고만 하고 저장하던 것 — 글자가 바뀌면 쓰지 않고 멈춘다
+            print('[멈춤] polish 가 글자를 바꿨다 — %s 를 저장하지 않았다' % args.o)
+            sys.exit(1)
         dk.save(args.o)
-        validate(args.o, args.pptx)
+        ok = validate(args.o, args.pptx)
+        print('저장: %s / verify --original: %s' % (args.o, vword(ok)))
+        sys.exit(1 if ok is False else 0)
     elif args.cmd == 'handout':
         print(export_notes(Deck.open(args.pptx), args.o))
     elif args.cmd == 'fit-layout':

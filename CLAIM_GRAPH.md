@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.3
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.4
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -131,6 +131,30 @@ rebuttal 간선이 없으면.
 `pairs_with: {"<b 라벨>": {"a_id": "b_id"}}` 에 적어 두면 다음부터 `--pairs` 없이 쓴다(반대쪽 그래프에 적힌 것도 뒤집어 쓴다).
 한 그래프 안에서 같은 주장이 여러 자리(본문·노트)에 있으면 지금처럼 sites·keys 를 늘린다.
 **다듬음** — 새 관계를 만들지 않는다. 판을 올리며 좁힌 주장은 `supersedes` 목록으로 이력을 남긴다. 앞 주장에 조건을 붙인 뒤 주장은 앞 주장에 premise 로 건다(앞이 바뀌면 `impact` 가 뒤를 올린다).
+
+## 3-2-1. 증례(case review) 모양 — 예시 (v16.4, 가짜 증례)
+
+증례 발표는 **소견 = evidence · 감별 = claim · 결론 진단 = main · 배제 = rebuttal**(배제되는 감별이 배제 근거를 `type: "rebuttal"` 로 적는다).
+아래는 설명용 가짜 증례다(실제 증례·학회 번호를 공개 문서에 쓰지 않는다). 의학 판단은 사용자가 확인한다.
+
+```json
+{"deck": "가짜_증례", "claims": [
+  {"id": "f-calc",   "role": "evidence", "statement": "결절 중심에 석회화가 있다",          "sites": ["slide@301"], "depends_on": []},
+  {"id": "f-stable", "role": "evidence", "statement": "2년 추적에서 크기 변화가 없다",      "sites": ["slide@302"], "depends_on": []},
+  {"id": "rb-malig", "role": "rebuttal", "statement": "중심성 석회화·2년 안정은 악성에 맞지 않는다", "sites": ["notes@303"],
+   "depends_on": [{"id": "f-calc", "type": "support"}, {"id": "f-stable", "type": "support"}]},
+  {"id": "ddx-gran", "role": "claim",    "statement": "감별 1: 육아종",                     "sites": ["slide@303"],
+   "depends_on": [{"id": "f-calc", "type": "premise"}, {"id": "f-stable", "type": "support"}]},
+  {"id": "ddx-malig","role": "claim",    "statement": "감별 2: 악성 결절",                  "sites": ["slide@303"],
+   "depends_on": [{"id": "rb-malig", "type": "rebuttal"}]},
+  {"id": "dx",       "role": "main",     "statement": "결론: 양성 육아종",                  "sites": ["slide@304"],
+   "depends_on": [{"id": "ddx-gran", "type": "premise"}]}
+]}
+```
+
+`mapdraw` 전체 그림: 소견(파랑) → 감별(초록) → 결론(주황), 배제는 빨강 반박 상자에서 `x` 선으로 감별 2 에. 소견 하나를 고치면
+`impact f-calc` 가 감별 1·결론·배제·감별 2 화면을 "다시 볼 자리" 로 낸다(도구로 확인). mapgraph [참고] 는 셋 — 감별 2 의 premise 없음
+(**배제된 감별은 premise 가 없는 것이 정상**), 소견 두 개의 caveat 없음(증례에서는 흔하다) — 무시해도 된다.
 
 ## 3-3. 관계도 그림 `mapdraw` (v16, 전체 그림 v16.1)
 

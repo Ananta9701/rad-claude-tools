@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.3'
+EXPECT_VERSION = '16.4'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -739,6 +739,22 @@ def t_v161_mapgraph_isolated_note():
     g21[0]['depends_on'] = [{'id': 'ev', 'type': 'premise'}]
     ps = CGm.mapgraph(g21, io.StringIO())[0]
     assert sum('premise 간선이 없음' in p for p in ps) == 19 and any('ev: evidence 인데 걸린 caveat 이 없음' in p for p in ps), ps
+
+
+
+def t_v164_case_example_in_doc_is_valid():
+    # v16.4 (사용자 09-29, 발표 (나)): CLAIM_GRAPH.md §3-2-1 증례 예시가 규약대로 돈다 — 문서가 도구와 어긋나지 않게
+    import json, re as _re
+    doc = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'CLAIM_GRAPH.md')
+    if not os.path.exists(doc):
+        return
+    t = open(doc, encoding='utf8').read()
+    cl = json.loads(_re.search(r'## 3-2-1.*?```json\n(.*?)```', t, _re.S).group(1))['claims']
+    ps = CGm.mapgraph(cl, io.StringIO())[0]
+    assert not [p for p in ps if not p.startswith('[참고]')], ps
+    assert [r[0] for r in CGm.impact(cl, ['f-calc'], io.StringIO())] == ['ddx-gran', 'dx', 'rb-malig', 'ddx-malig']
+    md = CGm.mapdraw(cl)
+    assert '-- 반박 --x' in md and 'classDef r_rebuttal' in md and 'classDef r_main' in md, md
 
 
 def run():

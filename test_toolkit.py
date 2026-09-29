@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.41'
+EXPECT_VERSION = '16.42'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -2329,6 +2329,47 @@ def t_v1641_deck_sources_textbook_and_deck():
     open(os.path.join(bd, '02_장.md'), 'w', encoding='utf8').write('[p.60 · PDF 61]\n\nanswer basis text\n')
     d.set_notes(8, ['z changed'])
     r = T.mapstale(d, g, io.StringIO(), sources=root); assert 'a' in r['changed'], r                 # 덱 근거 자리가 바뀜
+
+
+def t_v1642_pack_restyle_polish_exit_code():
+    # 코드 리뷰 ⑮: pack·restyle·polish 가 validate 결과를 버려 검증 실패여도 종료 코드 0 — 사람·Cowork 가 '끝' 으로 읽었다
+    bad = os.path.join(TMP, 'fake_validate_fail.py'); open(bad, 'w').write('import sys; print("schema error"); sys.exit(1)\n')
+    good = os.path.join(TMP, 'fake_validate_ok.py'); open(good, 'w').write('import sys; sys.exit(0)\n')
+    wdir = T.Deck.open(SRC, wd('pk15')).dir
+    def run(v, *a):
+        env = dict(os.environ, HANDOFF_VALIDATE_PY=v, PYTHONDONTWRITEBYTECODE='1')
+        return subprocess.run([sys.executable, os.path.join(HERE, 'deck_toolkit.py')] + list(a), capture_output=True, text=True, cwd=TMP, env=env)
+    for cmd in (['pack', wdir, '-o', out('pk15.pptx'), '--original', SRC], ['restyle', SRC, '-o', out('rs15.pptx')],
+                ['polish', SRC, '-o', out('po15.pptx')]):
+        r = run(bad, *cmd)
+        assert r.returncode == 1 and '실패' in r.stdout, (cmd[0], r.returncode, r.stdout[-300:], r.stderr[-300:])   # 실패 길: 검증 실패 → 1
+        r = run(good, *cmd)
+        assert r.returncode == 0 and '통과' in r.stdout, (cmd[0], r.returncode, r.stdout[-300:], r.stderr[-300:])  # 성공 길: 통과 → 0
+    r = run('/nonexistent/validate.py', 'pack', wdir, '-o', out('pk15n.pptx'))
+    assert r.returncode == 0 and '구조 검사 통과' in r.stdout, r.stdout[-300:]                  # 검증 못 함(None)은 0 — 사용자 09-29 결정 그대로
+
+
+def t_v1642_polish_text_changed_not_saved():
+    # 코드 리뷰 ⑮: polish 가 글자가 바뀌면 "결과를 쓰지 말라" 고 경고하면서 CLI 는 저장하고 0 으로 끝났다
+    import io as _io
+    real = T.merge_runs
+    def eat(deck):
+        n = real(deck)
+        sn = deck.slide_numbers()[0]
+        p_ = os.path.join(deck.dir, 'ppt', 'slides', 'slide%d.xml' % sn)
+        x = open(p_, encoding='utf8').read(); open(p_, 'w', encoding='utf8').write(re.sub(r'<a:t>([^<]{2,})</a:t>', lambda m: '<a:t>%s</a:t>' % m.group(1)[1:], x, count=1))
+        return n
+    T.merge_runs = eat
+    o = out('po15x.pptx')
+    if os.path.exists(o):
+        os.remove(o)
+    old = sys.argv; sys.argv = ['deck_toolkit.py', 'polish', SRC, '-o', o]
+    try:
+        T.main(); assert False, '멈추지 않았다'
+    except SystemExit as e:
+        assert e.code == 1 and not os.path.exists(o), (e.code, os.path.exists(o))            # 실패 길: 저장하지 않고 1
+    finally:
+        T.merge_runs = real; sys.argv = old
 
 
 def t_unmapped_sites():
