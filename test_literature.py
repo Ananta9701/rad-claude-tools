@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.8'
+EXPECT_VERSION = '0.8.1'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 
@@ -300,7 +300,8 @@ def t_v07_page_marker_printed_first():
 
 
 JATS_BLOCKS = (b'<article><front><article-meta><title-group><article-title>T</article-title></title-group>'
-               b'<abstract><sec><title>Purpose</title><p>Abstract purpose words.</p></sec></abstract></article-meta></front><body>'
+               b'<abstract><sec><title>Purpose</title><p>Abstract purpose words.</p></sec></abstract>'
+               b'<abstract abstract-type="highlights"><title>Key tau points</title><list><list-item><p>Highlight chi.</p></list-item></list></abstract></article-meta></front><body>'
                b'<p>Body lead paragraph before sections.</p>'
                b'<sec><title>Methods</title>'
                b'<p>Inclusion criteria were:</p>'
@@ -313,9 +314,11 @@ JATS_BLOCKS = (b'<article><front><article-meta><title-group><article-title>T</ar
                b'<p>Values are in the table <table-wrap><label>Table 5</label><caption><p>Inline</p></caption><table>'
                b'<tr><td>eta</td><td>0.63</td></tr><tr><td>theta</td><td>12</td></tr></table>'
                b'<table-wrap-foot><fn><p>AUC, area under iota curve.</p></fn></table-wrap-foot></table-wrap> shown here.</p>'
-               b'<disp-formula>y = kappa</disp-formula>'
+               b'<disp-formula><mml:math xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>y</mml:mi><mml:mo>=</mml:mo><mml:mtext>kappa</mml:mtext></mml:math></disp-formula>'
+               b'<disp-formula><tex-math>\\documentclass{minimal}\\begin{document}upsilon2\\end{document}</tex-math></disp-formula>'
                b'<def-list><def-item><term>ADC</term><def><p>apparent lambda coefficient</p></def></def-item></def-list>'
                b'<custom-block>unknown omega text</custom-block>'
+               b'<notes><title>Consent to upsilon</title><p>Not applicable.</p><fn><p>Phi note</p><p>Chi remains</p></fn></notes>'
                b'</sec></body>'
                b'<back><ack><p>We thank mu people.</p></ack>'
                b'<app-group><app><title>Appendix A</title><p>Appendix nu text.</p></app></app-group>'
@@ -336,12 +339,16 @@ def t_v08_jats_blocks_not_dropped():
     assert '| eta | 0.63 |' in rows and '| theta | 12 |' in rows and '| omicron | 7 |' in rows, rows   # 문단 안·본문 밖 표도 행 그대로
     assert '0.6312' not in md and 'eta0.63' not in md, md
     assert '[§ Sub (a) part]' in md, md                                                     # 제목 안 ] 는 ) 로 — locate 가 표지로 나눈다
+    assert '[§ Abstract · Key tau points]' in md and '- Highlight chi.' in md, md
     assert '[§ Abstract · Purpose]' in md and '[§ 부록 · Appendix A]' in md and '[§ 상자 · Key points]' in md, md
     # 상자 뒤 문단은 다시 원래 절 표지 아래에 — 상자 표지가 뒤 문단까지 가져가지 않는다
     before = md[:md.index('After the box epsilon')]
     assert re.findall(r'^\[§ [^\]]*\]$', before, re.M)[-1] == '[§ Methods]', before[-300:]
     # 실패 길: 참고문헌 목록은 넣지 않는다(찾을 말이 참고문헌 제목에만 있으면 거짓 "있음")
     assert 'Reference xi' not in md, md
+    assert '[수식: y=kappa]' in md and '[수식: x]' in md and 'documentclass' not in md and 'upsilon2' not in md, md   # 수식은 MathML 글만
+    assert 'upsilonNot' not in md and 'noteChi' not in md and 'Phi note Chi remains' in md, md     # 이웃 문단이 띄어쓰기 없이 붙지 않는다(실제 XML)
+    assert 'F<sub>' not in md and ('FISF' in LT.jats_to_md(JATS) or 'F ISF' in LT.jats_to_md(JATS))
     # locate 도 새 표지로 나눈 문단을 찾는다
     assert md.count('[§ Methods]') >= 2
 

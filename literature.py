@@ -20,7 +20,7 @@ import shutil
 import sys
 import unicodedata
 
-__version__ = '0.8'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.8.1'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
 
 DOI_RE = re.compile(r'\b(10\.\d{4,9}/[^\s"<>]+)', re.I)
 PMID_RE = re.compile(r'\bPMID:?\s*(\d{5,9})\b', re.I)
@@ -383,8 +383,8 @@ def locate(instr_path, store, out, top=3, stream=sys.stdout):
                 L += ['- 문헌 %d: **원문 없음**(못 받음 — 입수 불가 문헌으로)' % n, '']; continue
             md = open(os.path.join(store, key, 'paper.md'), encoding='utf8').read()
             if _xml_md_old(os.path.join(store, key)):
-                L.append('- 문헌 %d: **옛 XML 변환(v0.8 전) — 목록·상자 글·부록·수식 뒤 글이 빠졌을 수 있어 "0회" 를 믿지 않는다.** '
-                         '`oa` 를 다시 돌리면 받아 둔 paper.xml 에서 다시 만든다' % n)
+                L.append('- 문헌 %d: **옛 XML 변환(%s 전) — 목록·상자 글·부록·수식 뒤 글이 빠졌거나 낱말이 붙었을 수 있어 "0회" 를 믿지 않는다.** '
+                         '`oa` 를 다시 돌리면 받아 둔 paper.xml 에서 다시 만든다' % (n, JATS_MD))
             if key not in folded:
                 paras = []
                 parts = re.split(r'^(\[p\.[^\]]*\]|\[§ [^\]]*\])$', md, flags=re.M)   # v0.6 (코드 리뷰 ⑪): oa md 의 절 표지도
@@ -546,7 +546,18 @@ def _jats_table_rows(tw, txt):
 
 JATS_BLOCK = {'table-wrap', 'table-wrap-group', 'fig', 'fig-group', 'list', 'boxed-text', 'disp-quote', 'def-list', 'statement',
               'supplementary-material', 'sec'}
+JATS_GAP = {'p', 'title', 'label', 'caption', 'list-item', 'fn', 'term', 'def', 'td', 'th', 'tr', 'notes', 'attrib', 'mixed-citation'}
 JATS_SKIP = {'title', 'label', 'ref-list', 'sec-meta', 'object-id', 'alt-text'}   # 제목·이름표는 부모가 쓴다. 참고문헌 목록은 뺀다
+
+
+MML = '{http://www.w3.org/1998/Math/MathML}math'
+
+
+def _formula(f):
+    """수식 → '[수식: MathML 글]'(300자까지). v0.8.1 (실제 XML 9편): 수식 안 변수 이름도 찾기에 걸리게. TeX 판(tex-math)은 머리말(\\documentclass…)이 섞여 쓰지 않는다."""
+    m = next(f.iter(MML), None)
+    t = re.sub(r'\s+', ' ', ''.join(m.itertext())).strip() if m is not None else ''
+    return '[수식: %s]' % t if t and len(t) <= 300 else '[수식]'
 
 
 def _jats_text(e, split=True):
@@ -560,9 +571,11 @@ def _jats_text(e, split=True):
             if split and c.tag in JATS_BLOCK:
                 blocks.append(c); parts.append(' ')
             elif c.tag == 'disp-formula':
-                parts.append(' [수식] ')
+                parts.append(' %s ' % _formula(c))
             elif c.tag == 'break':
                 parts.append(' / ')
+            elif c.tag in JATS_GAP:          # v0.8 (실제 XML): 이웃 문단·제목이 띄어쓰기 없이 붙어 'noteSpringer' 가 되던 것
+                parts.append(' '); rec(c); parts.append(' ')
             else:
                 rec(c)
             if c.tail:
@@ -634,7 +647,7 @@ def jats_to_md(xml_bytes):
                 L.append('- %s — %s' % (txt(di.find('term')), txt(di.find('def'))))
             L.append('')
         elif tag == 'disp-formula':
-            L.extend(['[수식] %s' % txt(ch) if txt(ch) and len(txt(ch)) < 200 else '[수식]', ''])
+            L.extend([_formula(ch), ''])
         elif tag in ('table-wrap-group', 'fig-group'):
             if title_of(ch):
                 L.extend([title_of(ch), ''])
@@ -657,7 +670,7 @@ def jats_to_md(xml_bytes):
     L += ['# %s' % txt(t), '']
     meta = root.find('.//article-meta')
     for ab in (meta.findall('abstract') if meta is not None else []) or root.findall('.//abstract')[:1]:
-        kind = ab.get('abstract-type')
+        kind = title_of(ab) or ab.get('abstract-type')        # 'Key points' 같은 초록 제목(실제 XML)
         am = '[§ Abstract%s]' % (' · %s' % kind if kind else '')
         mark(am, force=True)
         for ch in ab:
@@ -684,7 +697,7 @@ def jats_to_md(xml_bytes):
     return '\n'.join(L).strip() + '\n'
 
 
-JATS_MD = '변환 v0.8'      # XML → md 변환 판 — 바꾸면 oa 가 보관소의 paper.xml 에서 paper.md 를 다시 만든다
+JATS_MD = '변환 v0.8.1'      # XML → md 변환 판 — 바꾸면 oa 가 보관소의 paper.xml 에서 paper.md 를 다시 만든다
 
 
 def _xml_md(dd, pmcid, xmlb):
@@ -720,7 +733,7 @@ def oa(instr_path, email, store, out, fetch=False, sleep=1.0, getter=None, strea
             if _xml_md_old(dd):           # v0.8: 옛 변환은 받아 둔 paper.xml 에서 다시 만든다(네트워크 없이)
                 pm = re.search(r'Europe PMC 전문 XML (PMC\d+)', open(os.path.join(dd, 'meta.md'), encoding='utf8').read())
                 _xml_md(dd, pm.group(1) if pm else '?', open(os.path.join(dd, 'paper.xml'), 'rb').read())
-                note = '다시 변환(%s — 옛 변환은 목록·상자 글·부록이 빠졌다)' % JATS_MD
+                note = '다시 변환(%s — 옛 변환은 목록·상자 글·부록이 빠지거나 낱말이 붙었다)' % JATS_MD
             rows.append('| %d | %s %s | %s | 보관소에 있음 `%s` | %s |' % (r['n'], r['author'], r['year'], r['doi'], by_doi[r['doi']], note))
             res.append((r['n'], 'redo' if note else 'have')); continue
         up, ep = {}, {}
