@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.42'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.43'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -6404,7 +6404,8 @@ def main():
     elif args.cmd == 'mapreport':
         mapreport(Deck.open(args.pptx), load_claims(args.claims))
     elif args.cmd == 'mapgraph':
-        probs, _ = mapgraph(load_claims(args.claims))
+        meta_, cl_ = CG.load_claims_full(args.claims)          # v16.43: 맨 위 kind(증례)를 읽는다 — claim_graph 16.6
+        probs, _ = mapgraph(cl_, kind=meta_.get('kind'))
         sys.exit(1 if any(not p.startswith('[참고]') for p in probs) else 0)
     elif args.cmd == 'impact':
         impact(load_claims(args.claims), args.ids)

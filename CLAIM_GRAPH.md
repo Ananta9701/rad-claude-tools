@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.5
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.6
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -72,7 +72,8 @@
 | `evidence` | 근거 위치와 수치, 표본 크기 |
 | `role` | `main`(문서당 하나) / `evidence`(Results) / `claim`(Discussion 보조 주장) / `background`(Introduction) / `method` / `caveat`(Limitations) / `rebuttal` |
 | `section` | 자유 문자열. 어느 절에서 왔는지 |
-| `status` | `accepted` / `proposed`(근거 미확인) / `superseded`(철회, sites 불가) |
+| `status` | `accepted` / `proposed`(근거 미확인) / `superseded`(철회, sites 불가) / `excluded`(배제된 감별 — 자리에 계속 실림, v16.6 §3-2-1) |
+| `group` | 자유 문자열(v16.6) — `mapdraw` 가 같은 group 을 묶어 그린다(증례마다) |
 | `sites` | 이 주장이 실리는 자리 전부 |
 | `keys` | 그 자리에 있어야 할 표현 (하나라도 있으면 통과). 3~4개 |
 | `forbidden` | 있으면 안 되는 표현 — 철회한 옛 주장의 문구 |
@@ -132,29 +133,41 @@ rebuttal 간선이 없으면.
 한 그래프 안에서 같은 주장이 여러 자리(본문·노트)에 있으면 지금처럼 sites·keys 를 늘린다.
 **다듬음** — 새 관계를 만들지 않는다. 판을 올리며 좁힌 주장은 `supersedes` 목록으로 이력을 남긴다. 앞 주장에 조건을 붙인 뒤 주장은 앞 주장에 premise 로 건다(앞이 바뀌면 `impact` 가 뒤를 올린다).
 
-## 3-2-1. 증례(case review) 모양 — 예시 (v16.4, 가짜 증례)
+## 3-2-1. 증례(case review) 모양 — 예시 (v16.4 · v16.6, 가짜 증례)
 
-증례 발표는 **소견 = evidence · 감별 = claim · 결론 진단 = main · 배제 = rebuttal**(배제되는 감별이 배제 근거를 `type: "rebuttal"` 로 적는다).
+증례 발표는 **소견 = evidence · 감별 = claim · 결론 진단 = main**. **배제된 감별**은 `"status": "excluded"`(v16.6, 발표 K23) —
+철회(`superseded`)와 달리 **그 화면에 계속 실리는 주장**이라 sites·keys 대조는 그대로 한다. 배제 근거는 배제되는 감별이 `type: "rebuttal"` 로 적는다.
+
+- **기본(권함)**: 배제 근거가 **소견 하나(또는 몇 개)** 면 그 **소견(evidence)에 바로** rebuttal 로 건다 — 한 소견이 한 진단은 받치고(support·premise)
+  다른 진단은 배제(rebuttal)하는 모양이 그대로 보인다.
+- **따로 반박 노드**(`role: "rebuttal"`): 배제 이유가 소견 하나가 아닐 때 — 병력·역학·문헌 등. 그 노드에 이유를 적고 배제 감별이 그것에 rebuttal 로 건다.
+- **`group`**(v16.6): 주장마다 `"group": "증례1"` 처럼 적으면 `mapdraw` 가 증례마다 묶어 그린다(Mermaid subgraph) — 선이 다른 증례 상자를 가로질러 읽히지 않게.
+- **맨 위 `"kind": "증례"`**(v16.6): mapgraph 가 논문용 [참고] 셋(forbidden 인데 supersedes 없음 · evidence 인데 caveat 없음 · main 이 여럿)을 끈다.
+
 아래는 설명용 가짜 증례다(실제 증례·학회 번호를 공개 문서에 쓰지 않는다). 의학 판단은 사용자가 확인한다.
 
 ```json
-{"deck": "가짜_증례", "claims": [
-  {"id": "f-calc",   "role": "evidence", "statement": "결절 중심에 석회화가 있다",          "sites": ["slide@301"], "depends_on": []},
-  {"id": "f-stable", "role": "evidence", "statement": "2년 추적에서 크기 변화가 없다",      "sites": ["slide@302"], "depends_on": []},
-  {"id": "rb-malig", "role": "rebuttal", "statement": "중심성 석회화·2년 안정은 악성에 맞지 않는다", "sites": ["notes@303"],
-   "depends_on": [{"id": "f-calc", "type": "support"}, {"id": "f-stable", "type": "support"}]},
-  {"id": "ddx-gran", "role": "claim",    "statement": "감별 1: 육아종",                     "sites": ["slide@303"],
+{"deck": "가짜_증례", "kind": "증례", "claims": [
+  {"id": "f-calc",   "group": "증례1", "role": "evidence", "statement": "결절 중심에 석회화가 있다",     "sites": ["slide@301"], "depends_on": []},
+  {"id": "f-stable", "group": "증례1", "role": "evidence", "statement": "2년 추적에서 크기 변화가 없다", "sites": ["slide@302"], "depends_on": []},
+  {"id": "rb-noprim","group": "증례1", "role": "rebuttal", "statement": "원발암 병력이 없다(병력)",       "sites": ["notes@303"], "depends_on": []},
+  {"id": "ddx-gran", "group": "증례1", "role": "claim",    "statement": "감별 1: 육아종",                "sites": ["slide@303"],
    "depends_on": [{"id": "f-calc", "type": "premise"}, {"id": "f-stable", "type": "support"}]},
-  {"id": "ddx-malig","role": "claim",    "statement": "감별 2: 악성 결절",                  "sites": ["slide@303"],
-   "depends_on": [{"id": "rb-malig", "type": "rebuttal"}]},
-  {"id": "dx",       "role": "main",     "statement": "결론: 양성 육아종",                  "sites": ["slide@304"],
-   "depends_on": [{"id": "ddx-gran", "type": "premise"}]}
+  {"id": "ddx-malig","group": "증례1", "role": "claim", "status": "excluded", "statement": "감별 2: 원발 악성 결절", "sites": ["slide@303"],
+   "depends_on": [{"id": "f-calc", "type": "rebuttal"}, {"id": "f-stable", "type": "rebuttal"}]},
+  {"id": "ddx-meta", "group": "증례1", "role": "claim", "status": "excluded", "statement": "감별 3: 전이",   "sites": ["slide@303"],
+   "depends_on": [{"id": "rb-noprim", "type": "rebuttal"}, {"id": "f-stable", "type": "rebuttal"}]},
+  {"id": "dx",       "group": "증례1", "role": "main",     "statement": "결론: 양성 육아종",             "sites": ["slide@304"],
+   "depends_on": [{"id": "ddx-gran", "type": "premise"}]},
+  {"id": "f2-fat",   "group": "증례2", "role": "evidence", "statement": "종괴 안에 지방이 있다",         "sites": ["slide@311"], "depends_on": []},
+  {"id": "dx2",      "group": "증례2", "role": "main",     "statement": "결론: 지방 함유 양성 종괴",     "sites": ["slide@312"],
+   "depends_on": [{"id": "f2-fat", "type": "premise"}]}
 ]}
 ```
 
-`mapdraw` 전체 그림: 소견(파랑) → 감별(초록) → 결론(주황), 배제는 빨강 반박 상자에서 `x` 선으로 감별 2 에. 소견 하나를 고치면
-`impact f-calc` 가 감별 1·결론·배제·감별 2 화면을 "다시 볼 자리" 로 낸다(도구로 확인). mapgraph [참고] 는 셋 — 감별 2 의 premise 없음
-(**배제된 감별은 premise 가 없는 것이 정상**), 소견 두 개의 caveat 없음(증례에서는 흔하다) — 무시해도 된다.
+`mapdraw` 전체 그림: 증례1·증례2 가 따로 묶이고, 소견(파랑) → 감별(초록) → 결론(주황). 배제된 감별 2·3 은 **흰 채움 + 점선 테두리 + "배제"**,
+소견(감별 2)·반박 노드(감별 3)에서 `x` 선이 들어온다. 소견 하나를 고치면 `impact f-calc` 가 감별 1·결론·감별 2 화면을 "다시 볼 자리" 로 낸다.
+mapgraph: `kind: 증례` 라 논문용 [참고]는 나오지 않고, 배제된 감별은 premise 없음 [참고] 대신 **rebuttal 간선이 없을 때만** "배제 근거가 없는 배제" [참고].
 
 ## 3-4. 근거 공백 작업표 `gaps` (v16.5, 사용자 09-29 — 큰 방향 가)
 

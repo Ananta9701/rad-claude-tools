@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.5'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.6'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -56,7 +56,8 @@ EDGE_DEFAULT_WEIGHT = {'premise': 1.0, 'support': 0.7, 'context': 0.3, 'caveat':
 SOURCE_KINDS = ('문헌', '교과서', '덱', '원고', '기타')
 VERDICTS = ('부합', '부분', '근거 없음', '반대 방향')
 IMPACT_CUTOFF = 0.25
-CLAIM_STATUS = ('accepted', 'proposed', 'superseded')
+CLAIM_STATUS = ('accepted', 'proposed', 'superseded', 'excluded')   # v16.6 (발표 K23): excluded = 배제된 감별 — 자리에 계속 실린다(superseded 와 다름)
+CASE_KINDS = ('증례', 'case')   # v16.6: 그래프 맨 위 kind — 논문용 [참고] 일부를 끈다
 CLAIM_ROLES = ('main', 'claim', 'evidence', 'background', 'method', 'caveat', 'rebuttal', 'premise')
 CONFIDENCE = ('high', 'mid', 'low')   # high=이 자료로 재현됨 / mid=자료가 방향은 지지 / low=미검정·외부 근거·미해결
 
@@ -326,8 +327,10 @@ def _sccs(claims):
     return out
 
 
-def mapgraph(claims, stream=sys.stdout, sources=None):
-    """구조 검사 + 위상 순서. 반환 (문제목록, 순서). sources(v16.5) = 문헌 보관소 — 주면 문헌 근거가 보관소에 있는지·판정이 있는지도."""
+def mapgraph(claims, stream=sys.stdout, sources=None, kind=None):
+    """구조 검사 + 위상 순서. 반환 (문제목록, 순서). sources(v16.5) = 문헌 보관소 — 주면 문헌 근거가 보관소에 있는지·판정이 있는지도.
+    kind(v16.6) = 그래프 맨 위 kind. '증례' 면 논문용 [참고](forbidden 인데 supersedes 없음 · evidence 인데 caveat 없음 · main 개수)를 끈다."""
+    case = kind in CASE_KINDS
     ids = {c['id'] for c in claims}
     problems = []
     edges = _edges(claims)
@@ -364,7 +367,7 @@ def mapgraph(claims, stream=sys.stdout, sources=None):
         both = [k for k in c.get('keys', []) if k in c.get('forbidden', [])]
         if both:   # v15.5.2 (발표 T2): 찾을 표현과 금지 표현이 같으면 mapcheck 가 자리 통과·금지 실패를 동시에 낸다 — 주장 문장이 낡았다는 신호
             problems.append('%s: keys 와 forbidden 에 같은 표현 %s — statement 가 슬라이드/원고보다 낡았는지 확인' % (c['id'], both))
-        if c.get('forbidden') and not c.get('supersedes'):
+        if c.get('forbidden') and not c.get('supersedes') and not case:
             problems.append('[참고] %s: forbidden 이 있는데 supersedes(철회한 옛 주장) 기록이 없음'
                             % c['id'])
         if c.get('supersedes') and not c.get('forbidden'):
@@ -372,7 +375,10 @@ def mapgraph(claims, stream=sys.stdout, sources=None):
             problems.append('%s: supersedes 가 있는데 forbidden 이 비어 있음 — 옛 문구를 넣지 않으면 '
                             'mapcheck 가 옛 주장을 통과시킨다. 후보: %s' % (c['id'], ' / '.join(hint) or '-'))
         problems.extend(_source_problems(c, edges, sources))
-        if c.get('role') in ('main', 'claim') and not any(t == 'premise' for _, t, _ in edges[c['id']]) and noedge:
+        if st == 'excluded':          # v16.6 (발표 K23): 배제된 감별 — premise 가 없는 것이 정상, 대신 배제 근거(rebuttal)가 있어야 한다
+            if not any(t == 'rebuttal' for _, t, _ in edges[c['id']]):
+                problems.append('[참고] %s: 배제(excluded)인데 rebuttal 간선이 없음 — 배제 근거가 없는 배제' % c['id'])
+        elif c.get('role') in ('main', 'claim') and not any(t == 'premise' for _, t, _ in edges[c['id']]) and noedge:
             folded['premise'] += 1
         elif c.get('role') in ('main', 'claim') and not any(t == 'premise' for _, t, _ in edges[c['id']]):
             problems.append('[참고] %s: role=%s 인데 premise 간선이 없음 — 검정 없는 해석이 결론 자리에 있는지 확인'
@@ -389,7 +395,9 @@ def mapgraph(claims, stream=sys.stdout, sources=None):
                 problems.append('[참고] %s -> %s: caveat 간선이 role=rebuttal 주장을 가리킴 — 한계가 아니라 반대 증거면 type rebuttal' % (c['id'], up))
 
     for c in claims:
-        if c.get('role') == 'evidence' and noedge:
+        if c.get('role') == 'evidence' and case:
+            pass
+        elif c.get('role') == 'evidence' and noedge:
             folded['caveat'] += 1
         elif c.get('role') == 'evidence' and not any(t == 'caveat' for _, t, _ in edges[c['id']]):
             problems.append('[참고] %s: evidence 인데 걸린 caveat 이 없음' % c['id'])
@@ -412,7 +420,7 @@ def mapgraph(claims, stream=sys.stdout, sources=None):
     elif alone and len(claims) > 1:     # v16.1 (사용자 09-29): 간선이 하나도 없는 주장 — 관계도에서 떨어져 나온다. 한 줄로(간선 없는 옛 그래프가 줄로 쏟아지지 않게)
         problems.append('[참고] 간선이 하나도 없는 주장(외톨이) %d개: %s' % (len(alone), ', '.join(alone)))
     mains = [c['id'] for c in claims if c.get('role') == 'main']
-    if any(c.get('role') for c in claims) and len(mains) != 1:
+    if any(c.get('role') for c in claims) and len(mains) != 1 and not case:   # 증례 덱은 증례마다 결론(main)이 하나 — 여럿이 정상
         problems.append('[참고] role=main 인 주장이 %d개 (문서당 하나가 기본): %s'
                         % (len(mains), ', '.join(mains) or '-'))
     cycles = _sccs(claims)
@@ -523,7 +531,7 @@ def find_gaps(claims):
     by_id = {c['id']: c for c in claims}
     out = []
     for c in claims:
-        if c.get('status') == 'superseded':
+        if c.get('status') in ('superseded', 'excluded'):   # v16.6: 배제된 감별은 받칠 주장이 아니다
             continue
         cid, role, kinds = c['id'], c.get('role'), []
         lit = _lit(c)
@@ -651,6 +659,12 @@ def _mapdraw_compact(claims, text=False):
          '색: 주황 주 결론(main) · 파랑 근거(evidence) · 초록 해석(claim) · 회색 배경(background) · 보라 방법(method) · 빨강 반박(rebuttal). '
          '상자: id · 역할·confidence(- = 역할 없음, high/mid/low) · **한계 N** = 걸린 caveat 수(caveat 상자·선은 접었다 — 다 보려면 `--all-edges`).' % __version__,
          '', '```mermaid', 'flowchart LR']
+    groups = {}                         # v16.6 (사용자 09-29): group 칸 → Mermaid subgraph — 증례마다 묶어 선이 다른 증례 상자를 가로질러 읽히지 않게
+    for cid, c in by_id.items():
+        if cid in linked and c.get('group'):
+            groups.setdefault(str(c['group']), []).append(cid)
+    gid = {g: 'g%d' % k for k, g in enumerate(groups, 1)}
+    node_lines = {}
     for cid, c in by_id.items():
         if cid not in linked:
             continue
@@ -663,17 +677,29 @@ def _mapdraw_compact(claims, text=False):
             lab.append(st[:40] + ('…' if len(st) > 40 else ''))
         if c.get('status') == 'superseded':
             lab.append('(철회)')
-        L.append('  %s%s"%s"%s' % (nid[cid], a, '<br/>'.join(_mm(x) for x in lab), b))
+        if c.get('status') == 'excluded':
+            lab.append('배제')
+        node_lines[cid] = '%s%s"%s"%s' % (nid[cid], a, '<br/>'.join(_mm(x) for x in lab), b)
+    for g, members in groups.items():
+        L.append('  subgraph %s["%s"]' % (gid[g], _mm(g)))
+        L += ['    ' + node_lines[cid] for cid in members]
+        L.append('  end')
+    L += ['  ' + line for cid, line in node_lines.items() if not by_id[cid].get('group')]
     for up, typ, cid in drawn:
         L.append('  %s %s %s' % (nid[up], _EDGE_ARROW.get(typ, '-->'), nid[cid]))
     for role, style in _ROLE_COLOR.items():
-        ids = [nid[cid] for cid in by_id if cid in linked and by_id[cid].get('role') == role and by_id[cid].get('status') != 'superseded']
+        ids = [nid[cid] for cid in by_id if cid in linked and by_id[cid].get('role') == role and by_id[cid].get('status') not in ('superseded', 'excluded')]
         if ids:
             L += ['  classDef r_%s %s' % (role, style), '  class %s r_%s' % (','.join(ids), role)]
     sup = [nid[cid] for cid in by_id if cid in linked and by_id[cid].get('status') == 'superseded']
     if sup:
         L += ['  classDef old fill:#eeeeee,color:#777777', '  class %s old' % ','.join(sup)]
+    exc = [nid[cid] for cid in by_id if cid in linked and by_id[cid].get('status') == 'excluded']
+    if exc:                             # v16.6 (발표 K23 + 사용자): 흰 채움 + 점선 테두리 — 회색은 background 색이라 겹친다
+        L += ['  classDef excluded fill:#ffffff,stroke:#555555,stroke-width:2px,stroke-dasharray:6 4', '  class %s excluded' % ','.join(exc)]
     L += ['```', '']
+    if exc:
+        L.append('흰 상자 + 점선 테두리 + "배제" = 배제된 감별(status excluded) — 배제 근거에서 "반박"(x) 선이 들어온다.')
     alone = [cid for cid in by_id if cid not in linked and cid not in folded]
     if folded:
         L.append('접은 caveat %d개(상자에 "한계 N" 으로): %s' % (len(folded), ', '.join(sorted(folded))))
@@ -722,6 +748,8 @@ def mapdraw(claims, changed=None, text=False, stream=sys.stdout, all_edges=False
             lab.append(st[:40] + ('…' if len(st) > 40 else ''))
         if c.get('status') == 'superseded':
             lab.append('(철회)')
+        if c.get('status') == 'excluded':
+            lab.append('배제')
         L.append('  %s%s"%s"%s' % (nid[cid], a, '<br/>'.join(_mm(x) for x in lab), b))   # 줄바꿈 <br/> 은 두고 글만 이스케이프
     for cid in by_id:
         if cid not in keep:
@@ -1756,7 +1784,8 @@ def main():
         open(a.o, 'w', encoding='utf8').write(gaps_table(cl, a.name or doc_name(name or '원고')))
         print('저장: %s (공백 %d)' % (a.o, len(find_gaps(cl)[0]))); sys.exit(0)
     if a.cmd == 'mapgraph':
-        probs, _ = mapgraph(load_claims(a.claims), sources=a.sources)
+        meta_, cl_ = load_claims_full(a.claims)
+        probs, _ = mapgraph(cl_, sources=a.sources, kind=meta_.get('kind'))
         sys.exit(1 if any(not p.startswith('[참고]') for p in probs) else 0)
     elif a.cmd == 'impact':
         if a.sites:

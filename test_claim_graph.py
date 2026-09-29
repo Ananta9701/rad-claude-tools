@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.5'
+EXPECT_VERSION = '16.6'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -743,18 +743,18 @@ def t_v161_mapgraph_isolated_note():
 
 
 def t_v164_case_example_in_doc_is_valid():
-    # v16.4 (사용자 09-29, 발표 (나)): CLAIM_GRAPH.md §3-2-1 증례 예시가 규약대로 돈다 — 문서가 도구와 어긋나지 않게
+    # v16.4·v16.6: CLAIM_GRAPH.md §3-2-1 증례 예시가 규약대로 돈다 — 문서가 도구와 어긋나지 않게
     import json, re as _re
     doc = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'CLAIM_GRAPH.md')
     if not os.path.exists(doc):
         return
     t = open(doc, encoding='utf8').read()
-    cl = json.loads(_re.search(r'## 3-2-1.*?```json\n(.*?)```', t, _re.S).group(1))['claims']
-    ps = CGm.mapgraph(cl, io.StringIO())[0]
-    assert not [p for p in ps if not p.startswith('[참고]')], ps
-    assert [r[0] for r in CGm.impact(cl, ['f-calc'], io.StringIO())] == ['ddx-gran', 'dx', 'rb-malig', 'ddx-malig']
+    g = json.loads(_re.search(r'## 3-2-1.*?```json\n(.*?)```', t, _re.S).group(1))
+    cl = g['claims']
+    assert CGm.mapgraph(copy.deepcopy(cl), io.StringIO(), kind=g['kind'])[0] == []               # kind 증례 — 알림 없음
+    assert [r[0] for r in CGm.impact(cl, ['f-calc'], io.StringIO())] == ['ddx-gran', 'dx', 'ddx-malig']
     md = CGm.mapdraw(cl)
-    assert '-- 반박 --x' in md and 'classDef r_rebuttal' in md and 'classDef r_main' in md, md
+    assert '-- 반박 --x' in md and 'class ' in md and 'excluded' in md and 'subgraph g1["증례1"]' in md, md
 
 
 
@@ -849,6 +849,54 @@ def t_v165_gaps_cli():
     assert r.returncode == 2 and '--claims' in r.stdout, r.stdout                           # 실패 길: 입력 없음
     r = run('mapgraph', '--claims', A, '--sources', d)
     assert r.returncode == 1 and '보관소에 없다' in r.stdout, r.stdout                          # 보관소에 없는 문헌 근거 = [필수] → 1
+
+
+
+def t_v166_excluded_ddx_and_case_kind():
+    # 발표 K23 (09-29): 배제된 감별이 확정 진단과 같은 상자로 그려짐 · premise 없음 [참고] 가 매번 · 논문용 [참고] 16줄
+    g = [{'id': 'f1', 'group': 'c1', 'role': 'evidence', 'forbidden': ['old'], 'depends_on': []},
+         {'id': 'ok', 'group': 'c1', 'role': 'claim', 'depends_on': [{'id': 'f1', 'type': 'premise'}]},
+         {'id': 'ex', 'group': 'c1', 'role': 'claim', 'status': 'excluded', 'sites': ['slide@9'], 'depends_on': [{'id': 'f1', 'type': 'rebuttal'}]},
+         {'id': 'ex2', 'group': 'c1', 'role': 'claim', 'status': 'excluded', 'depends_on': []},
+         {'id': 'dx', 'group': 'c1', 'role': 'main', 'depends_on': [{'id': 'ok', 'type': 'premise'}]},
+         {'id': 'f9', 'group': 'c2', 'role': 'evidence', 'depends_on': []},
+         {'id': 'dx9', 'group': 'c2', 'role': 'main', 'depends_on': [{'id': 'f9', 'type': 'premise'}]}]
+    ps = CGm.mapgraph(copy.deepcopy(g), io.StringIO())[0]
+    assert not [p for p in ps if not p.startswith('[참고]')], ps                                # excluded 는 맞는 status(sites 가 있어도 됨)
+    assert not any('ex:' in p and 'premise' in p for p in ps), ps                             # 배제 감별은 premise 없음 [참고] 를 내지 않고
+    assert any(p.startswith('[참고] ex2: 배제(excluded)인데 rebuttal 간선이 없음') for p in ps), ps   # 배제 근거가 없으면 알린다
+    assert any('forbidden 이 있는데' in p for p in ps) and any('caveat 이 없음' in p for p in ps) and any('role=main 인 주장이 2개' in p for p in ps), ps
+    ps = CGm.mapgraph(copy.deepcopy(g), io.StringIO(), kind='증례')[0]                          # 증례 모드: 논문용 [참고] 셋을 끈다
+    assert not any('forbidden 이 있는데' in p or 'caveat 이 없음' in p or 'role=main 인' in p for p in ps), ps
+    assert any('ex2: 배제' in p for p in ps), ps                                                # 배제 근거 [참고] 는 증례에서도
+    bad = copy.deepcopy(g); bad[2]['status'] = 'excludd'
+    assert any('status "excludd"' in p for p in CGm.mapgraph(bad, io.StringIO())[0])           # 실패 길: 모르는 status
+    md = CGm.mapdraw(copy.deepcopy(g))
+    blk = md.split('```mermaid')[1].split('```')[0]
+    assert 'subgraph g1["c1"]' in blk and 'subgraph g2["c2"]' in blk and blk.count('  end') == 2, blk   # 증례마다 묶음
+    assert '"ex<br/>claim·mid<br/>배제"' in blk and 'stroke-dasharray' in blk and 'fill:#ffffff' in blk, blk
+    rc = [l for l in blk.splitlines() if l.strip().startswith('class ') and l.strip().endswith(' r_claim')][0]
+    ex_nid = 'n3'
+    assert ex_nid not in rc.split()[1].split(','), rc                                         # 배제 상자는 초록(claim) 색을 받지 않는다
+    assert '배제된 감별' in md.split('```')[-1], md                                            # 범례 한 줄
+    md = CGm.mapdraw([dict(x, group=None) for x in g])                                        # group 이 없으면 묶지 않는다
+    assert 'subgraph' not in md
+    rows, _ = CGm.find_gaps(copy.deepcopy(g))
+    assert not any(cid in ('ex', 'ex2') for cid, _, _, _ in rows), rows                       # 배제 감별은 근거 공백에서 뺀다
+
+
+def t_v166_cli_kind():
+    import json, tempfile
+    d = tempfile.mkdtemp(prefix='cgk_')
+    cg = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'claim_graph.py')
+    A = os.path.join(d, 'a.json')
+    cl = [{'id': 'f', 'role': 'evidence', 'forbidden': ['x'], 'depends_on': []}, {'id': 'm', 'role': 'main', 'depends_on': [{'id': 'f', 'type': 'premise'}]}]
+    json.dump({'kind': '증례', 'claims': cl}, open(A, 'w'), ensure_ascii=False)
+    r = subprocess.run([sys.executable, cg, 'mapgraph', '--claims', A], capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    assert r.returncode == 0 and 'forbidden 이 있는데' not in r.stdout and 'caveat 이 없음' not in r.stdout, r.stdout
+    json.dump({'claims': cl}, open(A, 'w'), ensure_ascii=False)
+    r = subprocess.run([sys.executable, cg, 'mapgraph', '--claims', A], capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    assert 'forbidden 이 있는데' in r.stdout, r.stdout                                          # kind 가 없으면 전처럼
 
 
 def run():
