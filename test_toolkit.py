@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.47'
+EXPECT_VERSION = '16.48'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -934,6 +934,33 @@ def t_mapcheck_sldid_screen_label():
     cl = [{'id': 'a', 'statement': 's', 'evidence': 'e', 'sites': ['slide@%d' % sid], 'keys': ['zzz-not-there'], 'depends_on': []}]
     buf = io.StringIO(); probs, _ = T.mapcheck(d, cl, buf)
     assert 'slide@%d (화면 4)' % sid in buf.getvalue() and any('(화면 4)' in p for p in probs), buf.getvalue()
+
+def t_v1648_mapcheck_oral_overlay():
+    # 구연(claim_graph 16.12, 사용자 09-30): 저자 claims 는 원고 자리(doc:find)만 있다 — 덧붙임의 화면 자리·keys 로 덱에 대 본다
+    import json
+    d = T.Deck.open(SRC, wd('oral'))
+    o = [s for s, _, _ in d.order()]; sid = d.sld_id(o[3])
+    word = next(w for w in re.findall(r'[A-Za-z]{5,}', ' '.join(d.texts(o[3]))))
+    A = out('oral_author.json'); O = out('oral_ov.json')
+    json.dump({'doc': 'Fake_ms', 'claims': [
+        {'id': 'ev', 'role': 'evidence', 'statement': 'S1', 'sites': ['doc:find:S1'], 'keys': ['s1'], 'depends_on': []},
+        {'id': 'mn', 'role': 'main', 'statement': 'S2', 'sites': ['doc:find:S2'], 'keys': ['s2'], 'forbidden': ['zzqx retracted'],
+         'depends_on': [{'id': 'ev', 'type': 'premise'}]}]}, open(A, 'w'), ensure_ascii=False)
+    before = open(A, 'rb').read()
+    ov = T.CG.oral_init(A, deck='d')
+    ov['use'] = {'mn': {'sites': ['slide@%d' % sid], 'keys': [word.lower()]}}
+    json.dump(ov, open(O, 'w'), ensure_ascii=False)
+    r = cli('mapcheck', SRC, '--oral', O, '--author', A)                  # 성공 길: 화면에 keys 가 있다 — 원고 자리는 보지 않는다
+    assert r.returncode == 0 and '반영되지 않음' not in r.stdout and '읽을 수 없음' not in r.stdout, (r.stdout[-600:], r.stderr[-300:])
+    ov['use']['mn']['keys'] = ['zzqx-not-on-slide']; json.dump(ov, open(O, 'w'), ensure_ascii=False)
+    r = cli('mapcheck', SRC, '--oral', O, '--author', A)                  # 실패 길: 화면에 없는 표현
+    assert '반영되지 않음' in r.stdout and '(화면 4)' in r.stdout, r.stdout[-600:]
+    ov['use']['gone'] = {'sites': ['slide@%d' % sid]}; json.dump(ov, open(O, 'w'), ensure_ascii=False)
+    r = cli('mapcheck', SRC, '--oral', O, '--author', A)                  # [필수] 면 대조 전에 멈춘다
+    assert r.returncode == 1 and '[필수]' in r.stdout and '저자 파일에 없다' in r.stdout, r.stdout[-600:]
+    r = cli('mapcheck', SRC, '--oral', O)
+    assert r.returncode == 2 and '--author' in r.stdout, r.stdout
+    assert open(A, 'rb').read() == before                                  # 저자 파일은 읽기만
 
 def _memo_notes(d, sn):
     """원작자 메모 흉내: 여러 run(굵게·색·하이퍼링크) 문단 + & < > + sldNum 자리."""

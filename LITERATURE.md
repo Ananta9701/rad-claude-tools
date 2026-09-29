@@ -117,6 +117,21 @@ python3 ~/rct/literature.py locate "<지시.md>" --store "<문헌 보관소>" --
   - `oa` 로 받은 md 는 쪽 대신 절 표지 `[§ 절]`(게재 PDF 와 판이 다를 수 있다).
 - `paper.md` 에서는 쪽마다 붙는 출판사 다운로드 안내 줄(기관 이름·날짜)을 뺀다 — 뺀 줄 수는 머리에.
 
+### 3-1. Docling 보조 (사용자 09-30 — 기본 변환기가 아니다)
+
+기본은 지금처럼 `ingest` 의 pypdf `paper.md`(쪽 표지). Docling 은 **수식·표가 판정을 가르는 논문에만** 보조로, `paper.md` 옆 파일로 만든다 — `paper.md` 를 바꾸지 않는다.
+
+```bash
+<docling 환경>/bin/docling convert paper.pdf --to md --no-ocr --artifacts-path <docling 모델 폴더> --output docling/              # 표·글 (빠름)
+<docling 환경>/bin/docling convert paper.pdf --to md --no-ocr --enrich-formula --artifacts-path <docling 모델 폴더> --output docling/   # 수식까지 (느림)
+```
+
+- 09-29 측정(15쪽 논문 · Apple M4 16 GB): 수식 끔 약 10초·최대 1.5 GB, 수식 켬 150–390초·최대 2.9 GB. 수식 글꼴 치환(`¼ þ ð Þ`) 104곳 → 1곳, 수식 16개가 LaTeX(`$$`),
+  표는 칸이 맞게(표 행 8칸), 아래첨자 기호(FISF) 27 → 36회. 낱말 띄어쓰기는 pypdf 와 비슷.
+- **주의 1 — 쪽 표지가 없다.** 인용할 쪽·`locate`·claim_graph `sources.at` 은 **pypdf `paper.md` 의 쪽 표지**로 적는다. Docling md 는 그 쪽 안의 수식·표를 읽는 데만.
+- **주의 2 — 빼기 부호 `−`(U+2212)를 하이픈 `-` 로 바꾼다.** 음수·빼기가 판정에 걸리면 PDF 로 확인한다.
+- 수식 켬은 느리다(한 편 수 분). 환경·모델은 도구 세트에 없다 — 설치는 사용자 허락 뒤(약 1.2 GB + 모델 1.3 GB).
+
 ## 4. 리뷰어가 읽는 법
 
 - 먼저 `{원고}_문헌목록.md` → 문헌마다 `문헌 보관소/{폴더}/paper.md`(쪽 표지). 낱말 찾기는 Drive 검색(`문헌 보관소` 안 `fullText contains`).

@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.11'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.12'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -726,6 +726,9 @@ def _mapdraw_compact(claims, text=False):
     exc = [nid[cid] for cid in by_id if cid in linked and by_id[cid].get('status') == 'excluded']
     if exc:                             # v16.6 (발표 K23 + 사용자): 흰 채움 + 점선 테두리 — 회색은 background 색이라 겹친다
         L += ['  classDef excluded fill:#ffffff,stroke:#555555,stroke-width:2px,stroke-dasharray:6 4', '  class %s excluded' % ','.join(exc)]
+    off = [nid[cid] for cid in by_id if cid in linked and by_id[cid].get('offstage')]
+    if off:                             # v16.12: 구연의 무대 밖 상류 — 흐린 글·가는 점선(화면에는 없고 받침으로만)
+        L += ['  classDef offstage fill:#fafafa,color:#888888,stroke:#aaaaaa,stroke-dasharray:2 3', '  class %s offstage' % ','.join(off)]
     L += ['```', '']
     if exc:
         L.append('흰 상자 + 점선 테두리 + "배제" = 배제된 감별(status excluded) — 배제 근거에서 "반박"(x) 선이 들어온다.')
@@ -796,6 +799,9 @@ def mapdraw(claims, changed=None, text=False, stream=sys.stdout, all_edges=False
     sup = [nid[c['id']] for c in claims if c.get('status') == 'superseded' and c['id'] in keep]
     if sup:
         L += ['  classDef old fill:#eeeeee,color:#777777', '  class %s old' % ','.join(sup)]
+    off = [nid[c['id']] for c in claims if c.get('offstage') and c['id'] in keep and c['id'] in nid]
+    if off:
+        L += ['  classDef offstage fill:#fafafa,color:#888888,stroke:#aaaaaa,stroke-dasharray:2 3', '  class %s offstage' % ','.join(off)]
     L += ['```', '']
     if lvl:
         L.append('빨강 = 바뀐 주장 · 노랑 = 다시 볼 것(필수, 강도 ≥ %.2f) · 파랑 = 참고.' % IMPACT_CUTOFF)
@@ -1870,6 +1876,153 @@ def selfcheck(folder, run_tests=False, stream=sys.stdout, role=None, compare=Non
     return {'ok': ok, 'project': project, 'problems': problems, 'delete': [f for f, _ in delete], 'other': [f for f, _ in other]}
 
 
+# ----------------------------------------------------------------------------
+# 구연 덧붙임 (v16.12, 사용자 09-30) — 저자 claims(원고용, 읽기 전용)를 판째로 읽고, 발표는 따로 둔 덧붙임 파일에
+# 화면 자리(sites)·화면 keys 만 적는다. 두 파일은 읽는 순간 합친다(합친 파일을 남기지 않는다 — 손으로 고칠 세 번째 파일이 없게).
+#   덧붙임: {"kind": "구연", "deck": 덱 이름, "source": {file, doc, sha, n, snap}, "use": {저자 id: {sites, keys}}, "claims": [p-…]}
+#   snap = 저자 주장마다 role · 글 지문 · 원고 자리·keys 해시 — 원고 문장을 옮기지 않는다(판이 바뀌면 v2.71 sync 가 짝짓는 데 쓴다)
+# ----------------------------------------------------------------------------
+
+ORAL_KIND = '구연'
+_DECK_SITE = re.compile(r'^(slide|notes)[@:]\d+$')
+
+
+def _oral_h(s):
+    import hashlib
+    return hashlib.sha1((s or '').encode('utf8')).hexdigest()[:12]
+
+
+def _file_sha(path):
+    import hashlib
+    return hashlib.sha256(open(path, 'rb').read()).hexdigest()[:16]
+
+
+def oral_snapshot(claims):
+    """{id: {role, text, sites, keys}} — text 는 mapfreeze 와 같은 글 지문, sites·keys 는 mapdiff 짝짓기와 같은 정규화 뒤 해시.
+    짝짓기는 정확히 같은 것만 세므로 해시로도 점수가 같다."""
+    return {c['id']: {'role': c.get('role'), 'text': _fingerprint(c.get('evidence', '') + '|' + c.get('statement', '')),
+                      'sites': sorted({_oral_h(_norm_site(x)) for x in c.get('sites', [])}),
+                      'keys': sorted({_oral_h(k.lower()) for k in c.get('keys', [])})} for c in claims}
+
+
+def oral_init(author_path, deck=None, out=None):
+    """저자 claims 에서 빈 덧붙임을 만든다. out 을 주면 저장하되 이미 있으면 멈춘다(발표가 적은 자리를 덮지 않게)."""
+    import json
+    if out and os.path.exists(out):
+        raise SystemExit('[멈춤] 덧붙임 %s 이 이미 있다 — 저자 판이 바뀌었으면 oral sync(v2.71), 새로 시작하려면 다른 이름으로' % out)
+    meta, cl = load_claims_full(author_path)
+    ov = {'kind': ORAL_KIND, 'deck': deck or '', 'note': '',
+          'source': {'file': os.path.basename(author_path), 'doc': meta.get('doc') or meta.get('deck') or '',
+                     'sha': _file_sha(author_path), 'n': len(cl), 'snap': oral_snapshot(cl)},
+          'use': {}, 'claims': []}
+    if out:
+        with open(out, 'w', encoding='utf8') as f:
+            json.dump(ov, f, ensure_ascii=False, indent=2)
+    return ov
+
+
+def oral_merge(author_meta, author, overlay, author_sha=None):
+    """(meta, 합친 claims, 문제 목록). 문제: [참고] 가 아니면 [필수].
+    합친 그래프 = 쓴 저자 주장(자리·keys·verified 는 덧붙임 것, 글·간선·forbidden·status 는 저자 것) + 그 상류 전부(무대 밖 —
+    offstage, 자리 없음) + 발표 주장 p-…(저자 id 에만 기댄다). 하류·쓰지 않은 주장은 넣지 않는다."""
+    import copy as _copy
+    probs = []
+    src = overlay.get('source') or {}
+    if overlay.get('kind') != ORAL_KIND:
+        probs.append('덧붙임의 kind 가 "%s" 가 아니다(%s)' % (ORAL_KIND, overlay.get('kind')))
+    if author_sha and src.get('sha') and src['sha'] != author_sha:
+        probs.append('저자 파일이 덧붙임을 만든 판이 다르다(덧붙임 %s %s · 지금 %s) — 저자 판을 따라가려면 oral sync(v2.71)'
+                     % (src.get('file', '?'), src['sha'], author_sha))
+    by_id = {c['id']: c for c in author}
+    use = overlay.get('use') or {}
+    for cid, u in use.items():
+        if cid not in by_id:
+            probs.append('구연이 쓴 저자 주장 %s 이 저자 파일에 없다(화면 %s) — 저자 판이 바뀌었으면 oral sync(v2.71)'
+                         % (cid, ', '.join((u or {}).get('sites', [])) or '-'))
+            continue
+        if by_id[cid].get('status') == 'superseded':
+            probs.append('저자가 철회한 주장 %s 이 화면 %s 에 걸려 있다 — 화면에서 빼거나 저자 새 주장으로' % (cid, ', '.join(u.get('sites', [])) or '-'))
+        bad = [s_ for s_ in (u or {}).get('sites', []) if not _DECK_SITE.match(str(s_))]
+        if bad:
+            probs.append('use[%s].sites 는 화면 자리(slide@ID·notes@ID)만 — %s' % (cid, ', '.join(map(str, bad))))
+    pcl = overlay.get('claims') or []
+    pids = {c.get('id') for c in pcl}
+    for c in pcl:
+        pid = c.get('id', '')
+        if not str(pid).startswith('p-'):
+            probs.append('발표 주장 id "%s" 는 p- 로 시작해야 한다(저자 id 와 섞이지 않게)' % pid)
+        if pid in by_id:
+            probs.append('발표 주장 %s 이 저자 id 와 겹친다' % pid)
+        for up, _, _ in _edges([c]).get(pid, []):
+            if up not in by_id:
+                probs.append('%s: 발표 주장은 저자 id 에만 기댈 수 있다(%s%s)' % (pid, up, ' — 발표 주장' if up in pids else ' — 없는 id'))
+    edges = _edges(author)
+    todo = [cid for cid in use if cid in by_id] + [up for c in pcl for up, _, _ in _edges([c]).get(c.get('id'), []) if up in by_id]
+    keep = set()
+    while todo:
+        v = todo.pop()
+        if v in keep:
+            continue
+        keep.add(v)
+        todo += [up for up, _, _ in edges.get(v, []) if up in by_id]
+    out, nokeys, off = [], [], 0
+    for c in author:
+        if c['id'] not in keep:
+            continue
+        d = _copy.deepcopy(c)
+        d.pop('verified', None)                   # 원고 자리의 확인 기록 — 화면 확인과 섞지 않는다
+        if c['id'] in use:
+            u = use[c['id']] or {}
+            d['sites'] = list(u.get('sites', [])); d['keys'] = list(u.get('keys', []))
+            if u.get('verified'):
+                d['verified'] = u['verified']
+            if d['sites'] and not d['keys']:
+                nokeys.append(c['id'])
+        else:
+            d['sites'], d['keys'], d['offstage'] = [], [], True
+            off += 1
+        out.append(d)
+    for c in pcl:
+        d = _copy.deepcopy(c)
+        if d.get('sites') and not d.get('keys'):
+            nokeys.append(d.get('id'))
+        out.append(d)
+    if nokeys:                                    # 사용자 09-30: 조용히 건너뛰지 않는다
+        probs.append('[참고] 화면 keys 없는 주장 %d개(%s) — 그 주장은 keys 검사를 하지 않는다(화면 표현을 use.keys 에)'
+                     % (len(nokeys), ', '.join(nokeys[:10]) + (' …' if len(nokeys) > 10 else '')))
+    meta = {'deck': overlay.get('deck') or '', 'oral': {'author': src.get('file'), 'used': len([u for u in use if u in by_id]),
+                                                        'offstage': off, 'own': len(pcl)}}
+    if author_meta.get('kind'):
+        meta['kind'] = author_meta['kind']
+    return meta, out, probs
+
+
+def load_oral(overlay_path, author_path):
+    """덧붙임 + 저자 파일 → (meta, 합친 claims, 문제). 저자 파일은 읽기만 한다."""
+    import json
+    with open(overlay_path, encoding='utf8') as f:
+        ov = json.load(f)
+    am, ac = load_claims_full(author_path)
+    return oral_merge(am, ac, ov, author_sha=_file_sha(author_path))
+
+
+def _claims_arg(a):
+    """--claims 하나, 또는 --oral 덧붙임 + --author 저자 파일(v16.12). (meta, claims, 구연 문제). 잘못 주면 종료 코드 2."""
+    if getattr(a, 'oral', None) or getattr(a, 'author', None):
+        if not (a.oral and a.author) or getattr(a, 'claims', None):
+            print('[중단] 구연은 --oral 덧붙임.json --author 저자claims.json 둘 다(--claims 없이)'); sys.exit(2)
+        meta, cl, probs = load_oral(a.oral, a.author)
+        for p_ in probs:
+            print(p_ if p_.startswith('[참고]') else '[필수] ' + p_)
+        if any(not p_.startswith('[참고]') for p_ in probs):
+            print('[멈춤] 구연 덧붙임에 [필수] 문제 — 고친 뒤 다시'); sys.exit(1)
+        return meta, cl, probs
+    if not getattr(a, 'claims', None):
+        print('[중단] --claims 또는 --oral·--author 가 필요하다'); sys.exit(2)
+    meta, cl = load_claims_full(a.claims)
+    return meta, cl, []
+
+
 _CLAIMS_ONLY = ('mapgraph', 'gaps', 'impact', 'mapdraw', 'mapreport', 'scaffold', 'add', 'link')
 
 
@@ -1877,19 +2030,25 @@ def main():
     import argparse
     ap = argparse.ArgumentParser(description='주장 의존 그래프 (문서 독립)')
     sub = ap.add_subparsers(dest='cmd', required=True)
-    g = sub.add_parser('mapgraph'); g.add_argument('--claims', required=True)
+    g = sub.add_parser('mapgraph'); g.add_argument('--claims', default=None)
     g.add_argument('--sources', default=None, help='문헌 보관소 — 문헌 근거가 보관소에 없으면 [필수], 판정이 없으면 [참고] (v16.5)')
     gp = sub.add_parser('gaps', help='근거 공백 작업표 · 채운 표 → literature 검증지시 (v16.5)')
     gp.add_argument('--claims', default=None); gp.add_argument('-o', required=True)
     gp.add_argument('--to-instr', default=None, metavar='작업표.md', help='채운 작업표를 literature 검증지시로')
     gp.add_argument('--name', default=None, help='원고 이름(검증지시의 "> 원고:" 줄) — 없으면 claims 의 doc')
-    i = sub.add_parser('impact'); i.add_argument('--claims', required=True); i.add_argument('ids', nargs='+')
+    i = sub.add_parser('impact'); i.add_argument('--claims', default=None); i.add_argument('ids', nargs='+')
     i.add_argument('--sites', action='store_true', help='자리 목록만 한 줄에 하나씩 (v15.5, 저자 v48 목록 검증용)')
     dr = sub.add_parser('mapdraw', help='관계도 Mermaid 글(md) — 전체 또는 --impact 주장 경로 (v16)')
-    dr.add_argument('--claims', required=True); dr.add_argument('-o', required=True, help='쓸 md 파일')
+    dr.add_argument('--claims', default=None); dr.add_argument('-o', required=True, help='쓸 md 파일')
     dr.add_argument('--impact', nargs='+', default=None, metavar='ID', help='이 주장들이 바뀌었을 때의 하류만')
     dr.add_argument('--text', action='store_true', help='상자에 statement 앞 40자도')
     dr.add_argument('--all-edges', action='store_true', help='전체 그림을 v16.0 모양으로 — 아래→위, caveat 상자·간선까지 모두 (v16.1)')
+    for p_ in (g, i, dr):                 # v16.12: 구연 — 저자 파일(읽기 전용) + 덧붙임을 읽는 순간 합쳐서
+        p_.add_argument('--oral', default=None, metavar='덧붙임.json'); p_.add_argument('--author', default=None, metavar='저자claims.json')
+    orl = sub.add_parser('oral', help='구연 덧붙임 — 저자 claims 는 읽기만, 화면 자리·keys 는 덧붙임에 (v16.12)')
+    orl.add_argument('what', choices=('init', 'check')); orl.add_argument('--author', required=True, metavar='저자claims.json')
+    orl.add_argument('--oral', default=None, metavar='덧붙임.json', help='check 에서 읽을 덧붙임'); orl.add_argument('-o', default=None, help='init 이 쓸 덧붙임')
+    orl.add_argument('--deck', default=None, help='init: 덧붙임의 덱 이름')
     for name in ('mapcheck', 'mapfreeze', 'mapstale'):
         p = sub.add_parser(name); p.add_argument('doc'); p.add_argument('--claims', required=True)
         if name in ('mapfreeze', 'mapstale'):
@@ -1961,13 +2120,29 @@ def main():
         name, _, cl = load_claims_meta(a.claims)
         open(a.o, 'w', encoding='utf8').write(gaps_table(cl, a.name or doc_name(name or '원고')))
         print('저장: %s (공백 %d)' % (a.o, len(find_gaps(cl)[0]))); sys.exit(0)
+    if a.cmd == 'oral':
+        if a.what == 'init':
+            if not a.o:
+                print('[중단] oral init 은 -o 덧붙임.json'); sys.exit(2)
+            ov = oral_init(a.author, deck=a.deck, out=a.o)
+            print('덧붙임 저장: %s (저자 %s · 주장 %d · sha %s) — use 에 화면 자리·keys 를 적는다' % (a.o, ov['source']['file'], ov['source']['n'], ov['source']['sha']))
+            sys.exit(0)
+        if not a.oral:
+            print('[중단] oral check 는 --oral 덧붙임.json'); sys.exit(2)
+        meta_, cl_, probs = load_oral(a.oral, a.author)
+        for p_ in probs:
+            print(p_ if p_.startswith('[참고]') else '[필수] ' + p_)
+        o_ = meta_.get('oral', {})
+        print('구연: 쓴 저자 주장 %d · 무대 밖 상류 %d개 · 발표 주장 %d' % (o_.get('used', 0), o_.get('offstage', 0), o_.get('own', 0)))
+        gp_, _ = mapgraph(cl_, kind=meta_.get('kind'))
+        sys.exit(1 if any(not p_.startswith('[참고]') for p_ in probs + gp_) else 0)
     if a.cmd == 'mapgraph':
-        meta_, cl_ = load_claims_full(a.claims)
+        meta_, cl_, _ = _claims_arg(a)
         probs, _ = mapgraph(cl_, sources=a.sources, kind=meta_.get('kind'))
         sys.exit(1 if any(not p.startswith('[참고]') for p in probs) else 0)
     elif a.cmd == 'impact':
+        cl = _claims_arg(a)[1]
         if a.sites:
-            cl = load_claims(a.claims)
             rows = impact(cl, a.ids, stream=io.StringIO())
             by_id = {c['id']: c for c in cl}
             seen = []
@@ -1976,9 +2151,9 @@ def main():
                     if s not in seen:
                         seen.append(s); print(s)
         else:
-            impact(load_claims(a.claims), a.ids)
+            impact(cl, a.ids)
     elif a.cmd == 'mapdraw':
-        out = mapdraw(load_claims(a.claims), changed=a.impact, text=a.text, all_edges=a.all_edges)
+        out = mapdraw(_claims_arg(a)[1], changed=a.impact, text=a.text, all_edges=a.all_edges)
         with open(a.o, 'w', encoding='utf8') as f:
             f.write(out)
         print('저장: %s' % a.o)

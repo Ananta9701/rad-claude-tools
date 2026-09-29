@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.11'
+EXPECT_VERSION = '16.12'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -862,6 +862,121 @@ def t_v1611_gaps_part2_title_counts_overlap():
     c[5], c[6], c[7] = 'W', '10.1000/zz', '사람'                                                 # 검색어 · 후보 DOI · 출처
     ins, notes = CGm.gaps_to_instr(md.replace(row, '| ' + ' | '.join(c) + ' |'), 'T')
     assert 'doi:10.1000/zz' in ins and '| G02-받침 | 1 | c4 받침(사람) | W |' in ins, (ins, notes)
+
+
+# ---------------------------------------------------------------- 구연 덧붙임 (v16.12, 사용자 09-30)
+ORAL_AUTHOR = {'doc': 'Fake_manuscript_v3', 'claims': [
+    {'id': 'ev-a', 'role': 'evidence', 'statement': 'Alpha sentence from the manuscript', 'evidence': 'n=40',
+     'sites': ['doc:find:Alpha sentence'], 'keys': ['alpha sentence'], 'depends_on': [], 'verified': {'at': '2026-01-01', 'sites': {}}},
+    {'id': 'ev-b', 'role': 'evidence', 'statement': 'Beta sentence from the manuscript', 'sites': ['doc:find:Beta sentence'],
+     'keys': ['beta sentence'], 'depends_on': []},
+    {'id': 'cv-1', 'role': 'caveat', 'statement': 'Gamma limitation sentence', 'sites': ['doc:find:Gamma'], 'keys': ['gamma'], 'depends_on': []},
+    {'id': 'cl-1', 'role': 'claim', 'statement': 'Delta claim sentence', 'sites': ['doc:find:Delta'], 'keys': ['delta claim'],
+     'depends_on': [{'id': 'ev-a', 'type': 'premise'}, {'id': 'cv-1', 'type': 'caveat'}]},
+    {'id': 'mn', 'role': 'main', 'statement': 'Epsilon main sentence', 'sites': ['doc:find:Epsilon'], 'keys': ['epsilon'],
+     'forbidden': ['old epsilon wording'], 'depends_on': [{'id': 'cl-1', 'type': 'premise'}, {'id': 'ev-b', 'type': 'support'}]},
+    {'id': 'old', 'role': 'claim', 'status': 'superseded', 'statement': 'Zeta retracted', 'sites': [], 'depends_on': []},
+    {'id': 'down', 'role': 'claim', 'statement': 'Eta downstream sentence', 'sites': ['doc:find:Eta'], 'keys': ['eta'],
+     'depends_on': [{'id': 'mn', 'type': 'premise'}]}]}
+
+
+def _oral_files(d, overlay_edit=None):
+    import json
+    A = os.path.join(d, 'author.json'); json.dump(ORAL_AUTHOR, open(A, 'w'), ensure_ascii=False)
+    O = os.path.join(d, 'oral.json')
+    ov = CGm.oral_init(A, deck='Fake_deck')
+    if overlay_edit:
+        overlay_edit(ov)
+    json.dump(ov, open(O, 'w'), ensure_ascii=False)
+    return A, O
+
+
+def t_v1612_oral_snapshot_is_hashes_only():
+    # 사용자 09-30: 덧붙임 스냅숏은 원고 문장을 옮기지 않는다(파일 크기·원고 퍼짐) — 짝짓기에 쓰는 원고 자리·keys 도 해시로
+    import json, tempfile
+    d = tempfile.mkdtemp(prefix='cgor_')
+    A, O = _oral_files(d)
+    ov = json.load(open(O))
+    assert ov['kind'] == '구연' and ov['deck'] == 'Fake_deck' and ov['use'] == {} and ov['claims'] == [], ov
+    src = ov['source']
+    assert src['file'] == 'author.json' and src['doc'] == 'Fake_manuscript_v3' and src['n'] == 7 and len(src['sha']) == 16, src
+    assert set(src['snap']) == {c['id'] for c in ORAL_AUTHOR['claims']} and src['snap']['cl-1']['role'] == 'claim'
+    blob = json.dumps(ov, ensure_ascii=False).lower()
+    for c in ORAL_AUTHOR['claims']:                                         # 문장·원고 자리·keys 어느 것도 글자로 남지 않는다
+        for t in [c['statement']] + c.get('sites', []) + c.get('keys', []) + c.get('forbidden', []):
+            assert t.lower() not in blob, t
+    # 해시로도 mapdiff 짝 점수가 원문과 같다(정확히 같은 것만 세므로)
+    snap = src['snap']
+    assert snap['ev-a']['sites'] == [CGm._oral_h(CGm._norm_site('doc:find:Alpha sentence'))] and snap['ev-a']['keys'] == [CGm._oral_h('alpha sentence')]
+    assert snap['ev-a']['text'] == CGm._fingerprint('n=40|Alpha sentence from the manuscript')
+    try:                                                                     # 실패 길: 이미 있는 덧붙임은 덮어쓰지 않는다
+        CGm.oral_init(A, deck='x', out=O); assert False
+    except SystemExit as e:
+        assert '이미 있다' in str(e), e
+
+
+def t_v1612_oral_merge_success():
+    import json, tempfile
+    d = tempfile.mkdtemp(prefix='cgor_')
+    def edit(ov):
+        ov['use'] = {'mn': {'sites': ['slide@260'], 'keys': ['엡실론']}, 'ev-b': {'sites': ['notes@260']}}
+        ov['claims'] = [{'id': 'p-intro', 'role': 'claim', 'statement': '도입', 'sites': ['slide@256'], 'keys': ['도입'],
+                         'depends_on': [{'id': 'ev-b', 'type': 'support'}]}]
+    A, O = _oral_files(d, edit)
+    before = open(A, 'rb').read()
+    meta, cl, probs = CGm.load_oral(O, A)
+    by = {c['id']: c for c in cl}
+    assert meta.get('deck') == 'Fake_deck' and 'doc' not in meta, meta
+    assert set(by) == {'mn', 'ev-b', 'cl-1', 'ev-a', 'cv-1', 'p-intro'}, sorted(by)       # 쓴 것 + 상류 전부, 하류 down·철회 old 는 빠짐
+    assert by['mn']['sites'] == ['slide@260'] and by['mn']['keys'] == ['엡실론'] and by['mn']['forbidden'] == ['old epsilon wording']
+    assert by['ev-b']['sites'] == ['notes@260'] and by['ev-b']['keys'] == []
+    for off in ('cl-1', 'ev-a', 'cv-1'):                                     # 무대 밖: 자리·keys·원고 verified 없음
+        assert by[off]['offstage'] is True and by[off]['sites'] == [] and by[off]['keys'] == [] and 'verified' not in by[off], by[off]
+    assert 'verified' not in by['mn'] and 'offstage' not in by['mn']
+    assert [p for p in probs if not p.startswith('[참고]')] == [], probs
+    kn = [p for p in probs if 'keys 없는 주장' in p]
+    assert kn == ['[참고] 화면 keys 없는 주장 1개(ev-b) — 그 주장은 keys 검사를 하지 않는다(화면 표현을 use.keys 에)'], probs
+    ps, _ = CGm.mapgraph(cl, stream=io.StringIO())
+    assert not [p for p in ps if not p.startswith('[참고]')], ps
+    md = CGm.mapdraw(cl)
+    assert 'classDef offstage' in md and 'p-intro' in md.replace('p_intro', 'p-intro'), md[-600:]
+    assert open(A, 'rb').read() == before                                    # 저자 파일은 읽기만
+
+
+def t_v1612_oral_merge_failures():
+    import json, tempfile
+    d = tempfile.mkdtemp(prefix='cgor_')
+    cases = [
+        (lambda ov: ov['use'].update({'gone': {'sites': ['slide@1']}}), '저자 파일에 없다'),
+        (lambda ov: ov['use'].update({'old': {'sites': ['slide@1']}}), '철회한 주장'),
+        (lambda ov: ov['use'].update({'mn': {'sites': ['doc:find:Epsilon']}}), '화면 자리'),
+        (lambda ov: ov['claims'].append({'id': 'intro', 'statement': 'x', 'depends_on': []}), 'p- 로 시작'),
+        (lambda ov: ov['claims'].extend([{'id': 'p-a', 'statement': 'x', 'depends_on': []},
+                                          {'id': 'p-b', 'statement': 'y', 'depends_on': [{'id': 'p-a'}]}]), '저자 id 에만'),
+        (lambda ov: ov['source'].update({'sha': '0' * 16}), '판이 다르다'),
+    ]
+    for edit, word in cases:
+        A, O = _oral_files(d, edit)
+        _, _, probs = CGm.load_oral(O, A)
+        hard = [p for p in probs if not p.startswith('[참고]')]
+        assert hard and any(word in p for p in hard), (word, probs)
+    # CLI: oral check 종료 코드 1 / 성공 0, oral init 덮어쓰기 거부
+    cg = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'claim_graph.py')
+    run = lambda *a: subprocess.run([sys.executable, cg] + list(a), capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    A, O = _oral_files(d, cases[0][0])
+    r = run('oral', 'check', '--author', A, '--oral', O)
+    assert r.returncode == 1 and '저자 파일에 없다' in r.stdout, (r.stdout, r.stderr)
+    A, O = _oral_files(d, lambda ov: ov['use'].update({'mn': {'sites': ['slide@260'], 'keys': ['e']}}))
+    r = run('oral', 'check', '--author', A, '--oral', O)
+    assert r.returncode == 0 and '무대 밖 상류 4개' in r.stdout, (r.stdout, r.stderr)
+    r = run('mapdraw', '--oral', O, '--author', A, '-o', os.path.join(d, 'g.md'))
+    assert r.returncode == 0 and 'offstage' in open(os.path.join(d, 'g.md'), encoding='utf8').read(), (r.stdout, r.stderr)
+    r = run('impact', '--oral', O, '--author', A, 'ev-a')
+    assert r.returncode == 0 and 'mn' in r.stdout, (r.stdout, r.stderr)
+    r = run('mapgraph', '--oral', O)                                         # 둘 중 하나만 주면 고칠 말
+    assert r.returncode == 2 and '--author' in r.stdout, (r.stdout, r.stderr)
+    r = run('oral', 'init', '--author', A, '-o', O)
+    assert r.returncode != 0 and '이미 있다' in (r.stdout + r.stderr), (r.stdout, r.stderr)
 
 
 def t_v1610_mapfreeze_sources_missing_doi_stops():

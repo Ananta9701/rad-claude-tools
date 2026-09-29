@@ -1,4 +1,6 @@
-# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.47)
+# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.48)
+
+> v16.48 (사용자 09-30, 구연): `mapcheck 덱.pptx --oral 덧붙임.json --author 저자claims.json` — 저자 claims(원고용, 읽기만)와 발표 덧붙임(화면 자리·화면 keys)을 합쳐 덱에 대 본다(CLAIM_GRAPH §3-5). 덧붙임에 [필수] 문제가 있으면 대조 전에 멈춘다(종료 코드 1). `--to-sldid` 는 쓰지 않는다 — 덧붙임에는 처음부터 `slide@ID` 로 적는다.
 
 > v16.47 (사용자 09-29, Mac Local): 글꼴 파일 찾기 — `fc-list` 가 없거나 비면(Mac) 글꼴 폴더(`/System/Library/Fonts`·`/Library/Fonts`·`~/Library/Fonts`, fc-list 없는 Linux 의 `/usr/share/fonts` 등)를 훑어 글꼴 파일의 이름 표로 같은 색인을 만든다 — `.ttf`·`.otf`·`.ttc`(모음의 둘째 이후 글꼴은 `x.ttc#N`)·지역 이름(예 `Apple SD 산돌고딕 Neo`) 포함. `fc-list` 가 있는 곳(Linux 컨테이너)은 전과 같다. `overflow`·`fit-layout`·`fit-corner-boxes` 가 덱 테마 글꼴 파일을 못 찾아 글자폭을 근사 모델로 잰 화면이 있으면 `[참고] 덱 테마 글꼴 "…" 파일을 이 컴퓨터에서 찾지 못해 …` 한 줄로 알린다(돌려주는 문제 목록에는 넣지 않는다 — 조용히 넘어가지 않게만). `theme_fonts_missing` 도 fc-list 가 없으면 이 색인으로 본다(전에는 빈 목록 — 빠진 글꼴 없음처럼 보였다).
 

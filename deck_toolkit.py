@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.47'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.48'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -6240,7 +6240,9 @@ def main():
 
     al = sub.add_parser('align'); al.add_argument('pptx')
     mc = sub.add_parser('mapcheck'); mc.add_argument('pptx')
-    mc.add_argument('--claims', required=True)
+    mc.add_argument('--claims', default=None)
+    mc.add_argument('--oral', default=None, metavar='덧붙임.json', help='구연(v16.48): 저자 claims(--author, 읽기만) + 덧붙임의 화면 자리·keys 로 대조')
+    mc.add_argument('--author', default=None, metavar='저자claims.json')
     mc.add_argument('--nums', action='store_true')
     mc.add_argument('--to-sldid', metavar='OUT_JSON', help='slide:N 사이트를 slide@ID 로 바꿔 저장 (v16.7)')
     mr = sub.add_parser('mapreport'); mr.add_argument('pptx')
@@ -6555,13 +6557,19 @@ def main():
         check_notes_alignment(Deck.open(args.pptx))
     elif args.cmd == 'mapcheck':
         dk = Deck.open(args.pptx)
-        if args.to_sldid:
+        if args.oral or args.author:              # v16.48 (claim_graph 16.12 구연): 합친 그래프로 — [필수] 면 대조 전에 멈춘다
+            if args.to_sldid:
+                print('[중단] 구연 덧붙임에는 --to-sldid 를 쓰지 않는다 — 덧붙임의 use 에 slide@ID 로 적는다'); sys.exit(2)
+            mapcheck(dk, CG._claims_arg(args)[1], nums=args.nums)
+        elif args.to_sldid:
             meta, cl = CG.load_claims_full(args.claims)
             n = sites_to_sldid(dk, cl)
             print('사이트 %d개를 sldId 로 변환: %s' % (n, CG.save_claims(args.to_sldid, cl, meta=meta)))
             mapcheck(dk, cl, nums=args.nums)
-        else:
+        elif args.claims:
             mapcheck(dk, load_claims(args.claims), nums=args.nums)
+        else:
+            print('[중단] --claims 또는 --oral·--author 가 필요하다'); sys.exit(2)
     elif args.cmd == 'mapreport':
         mapreport(Deck.open(args.pptx), load_claims(args.claims))
     elif args.cmd == 'mapgraph':
