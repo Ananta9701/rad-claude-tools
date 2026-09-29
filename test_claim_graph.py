@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.0'
+EXPECT_VERSION = '16.1'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -647,12 +647,12 @@ def t_v16_mapdraw():
     g.append({'id': 'r', 'statement': 'R', 'role': 'rebuttal', 'depends_on': []})
     g.append({'id': 'z', 'statement': 'Z', 'depends_on': []})
     g[1]['depends_on'].append({'id': 'r', 'type': 'rebuttal'})
-    md = CGm.mapdraw(g, text=True)
+    md = CGm.mapdraw(g, text=True, all_edges=True)                                          # v16.0 모양은 --all-edges 로 남는다
     assert md.count('```mermaid') == 1 and 'flowchart BT' in md, md
     assert 'n1 ==> n2' in md and 'n2 -.-> n3' in md and 'n4 -- 반박 --x n2' in md, md       # 근거 → 주장 방향, 종류별 선
     assert '#quot;yes#quot;' in md and '<b>' not in md and '#lt;b#gt;' in md, md             # 따옴표·꺾쇠는 Mermaid 가 깨지지 않게
     assert 'n1["a<br/>evidence·mid' in md and '#lt;br' not in md, md                          # 줄바꿈 <br/> 은 그대로(v16 첫 빌드 결함)
-    assert 'n5' in md                                                                       # 전체 그림은 외톨이도
+    assert 'n5' in md                                                                       # --all-edges 는 외톨이도 그린다
     md = CGm.mapdraw(g, changed=['a'])
     assert 'n5' not in md and 'n4' not in md and 'class n1 changed' in md and 'class n2 must' in md, md   # impact: 경로만, 색
     md = CGm.mapdraw(g, changed=['nope'])                                                   # 실패 길: 없는 id — 멈추지 않고 빈 그림
@@ -679,9 +679,51 @@ def t_v16_mapdraw_and_saved_pairs_cli():
     assert '양쪽이 잡은 주장 1개' in r.stdout, r.stdout                                      # 반대쪽에서 불러도 뒤집어 쓴다
     out = os.path.join(d, '관계도.md')
     r = run('mapdraw', '--claims', A, '-o', out)
+    t = open(out, encoding='utf8').read()
+    assert r.returncode == 0 and 'flowchart LR' in t and '`a1`' in t, (r.stderr, t)          # 간선 없는 한 주장 — 그림 밖 목록으로
+    r = run('mapdraw', '--claims', A, '-o', out, '--all-edges')
     assert r.returncode == 0 and 'flowchart BT' in open(out, encoding='utf8').read(), r.stderr
     r = run('mapdraw', '--claims', A, '-o', out, '--impact', 'a1', '--text')
     assert r.returncode == 0 and 'class n1 changed' in open(out, encoding='utf8').read()
+
+
+
+def t_v161_mapdraw_compact_default():
+    # 사용자 09-29: 저자 51주장·간선 83(caveat 46) 전체 그림이 6614×1033 px — 왼쪽→오른쪽, caveat 접기, 역할별 색, 외톨이는 목록
+    g = [{'id': 'm', 'role': 'main', 'depends_on': [{'id': 'e', 'type': 'premise'}, {'id': 'cv', 'type': 'caveat'}]},
+         {'id': 'e', 'role': 'evidence', 'depends_on': [{'id': 'cv', 'type': 'caveat'}, {'id': 'cv2', 'type': 'caveat'}, {'id': 'bg', 'type': 'context'}]},
+         {'id': 'bg', 'role': 'background', 'depends_on': []},
+         {'id': 'cv', 'role': 'caveat', 'depends_on': []},
+         {'id': 'cv2', 'role': 'caveat', 'depends_on': []},
+         {'id': 'cvk', 'role': 'caveat', 'depends_on': []},                                   # caveat 이지만 context 간선으로 끼어 있다 — 접지 않는다
+         {'id': 'k', 'role': 'claim', 'depends_on': [{'id': 'cvk', 'type': 'context'}, {'id': 'm', 'type': 'support'}]},
+         {'id': 'lone', 'role': 'method', 'statement': 'lonely', 'depends_on': []},
+         {'id': 'onlycav', 'role': 'claim', 'depends_on': [{'id': 'cv', 'type': 'caveat'}]}]
+    md = CGm.mapdraw(g)
+    block = md.split('```mermaid')[1].split('```')[0]
+    assert 'flowchart LR' in block and 'flowchart BT' not in block, md                       # 근거 왼쪽 → main 오른쪽
+    assert '"e<br/>evidence·mid<br/>한계 2"' in block and '"m<br/>main·mid<br/>한계 1"' in block, block   # 걸린 caveat 수
+    assert '"cv<br/>' not in block and '"cv2<br/>' not in block and '한계 .->' not in block, block       # caveat 상자·선은 접힘
+    assert '"cvk<br/>caveat·mid"' in block, block                                             # 다른 간선에 낀 caveat 은 남긴다
+    assert 'classDef r_main' in block and 'classDef r_evidence' in block and 'classDef r_claim' in block and 'classDef r_background' in block, block
+    assert '"lone' not in block and '"onlycav' not in block, block                           # 외톨이는 그림에 없고
+    after = md.split('```')[-1]
+    assert '`lone` (방법)' in after and '`onlycav` (해석, 한계 1)' in after and '접은 caveat 2개' in after, after   # 그림 밖 목록에
+    assert '역할·confidence' in md                                                            # 범례에 상자 글 뜻(발표 09-29)
+    # --impact 는 v16.0 그대로(저자 확인 끝남): 아래→위, caveat 도 경로에 있으면 그린다
+    mi = CGm.mapdraw(g, changed=['cv'])
+    assert 'flowchart BT' in mi and 'class n4 changed' in mi and 'classDef r_' not in mi, mi
+    # 실패 길: 간선이 하나도 없는 그래프 — 빈 그림, 모두 목록으로
+    md = CGm.mapdraw([{'id': 'x', 'depends_on': []}, {'id': 'y', 'depends_on': []}])
+    assert 'flowchart LR' in md and '"x' not in md and '`x` (역할 없음)' in md and '`y`' in md, md
+
+
+def t_v161_mapgraph_isolated_note():
+    g = copy.deepcopy(GRAPH) + [{'id': 'z1', 'depends_on': []}, {'id': 'z2', 'depends_on': []}]
+    ps = [p for p in CGm.mapgraph(g, io.StringIO())[0] if '외톨이' in p]
+    assert ps == ['[참고] 간선이 하나도 없는 주장(외톨이) 2개: z1, z2'], ps                    # 한 줄로, 이름과 함께
+    assert not [p for p in CGm.mapgraph(copy.deepcopy(GRAPH), io.StringIO())[0] if '외톨이' in p]   # 다 이어졌으면 없음
+    assert not [p for p in CGm.mapgraph([{'id': 'solo'}], io.StringIO())[0] if '외톨이' in p]        # 주장 하나뿐이면 알리지 않음
 
 
 def run():

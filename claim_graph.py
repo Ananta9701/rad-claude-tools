@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.0'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.1'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -378,6 +378,10 @@ def mapgraph(claims, stream=sys.stdout):
     for c in claims:
         if c.get('role') == 'evidence' and not any(t == 'caveat' for _, t, _ in edges[c['id']]):
             problems.append('[참고] %s: evidence 인데 걸린 caveat 이 없음' % c['id'])
+    rev_any = {}
+    for cid, lst in edges.items():
+        for up, _, _ in lst:
+            rev_any[up] = True
     weak = []
     for c in claims:
         for up, typ, w in edges[c['id']]:
@@ -385,6 +389,9 @@ def mapgraph(claims, stream=sys.stdout):
                 weak.append((w, c['id'], up, typ))
     for w, cid, up, typ in sorted(weak, reverse=True):
         problems.append('[참고] 약한 고리: %s 가 기대는 %s 는 confidence=low (%s %.1f)' % (cid, up, typ, w))
+    alone = [c['id'] for c in claims if not edges[c['id']] and not rev_any.get(c['id'])]
+    if alone and len(claims) > 1:     # v16.1 (사용자 09-29): 간선이 하나도 없는 주장 — 관계도에서 떨어져 나온다. 한 줄로(간선 없는 옛 그래프가 줄로 쏟아지지 않게)
+        problems.append('[참고] 간선이 하나도 없는 주장(외톨이) %d개: %s' % (len(alone), ', '.join(alone)))
     mains = [c['id'] for c in claims if c.get('role') == 'main']
     if any(c.get('role') for c in claims) and len(mains) != 1:
         problems.append('[참고] role=main 인 주장이 %d개 (문서당 하나가 기본): %s'
@@ -488,10 +495,80 @@ def _mm(t):
     return (t or '').replace('"', '#quot;').replace('<', '#lt;').replace('>', '#gt;')
 
 
-def mapdraw(claims, changed=None, text=False, stream=sys.stdout):
-    """Mermaid flowchart 글(```mermaid 블록이 든 md)을 돌려준다. 화살표는 근거 → 기대는 주장(아래로 main).
-    changed 가 있으면 impact 와 같은 계산으로 그 경로의 주장만 그리고, 바뀐 것·필수·참고를 색으로 나눈다.
-    GitHub·claude.ai(artifact) 에서 그림으로 보인다. Drive 미리보기는 글로만 보인다."""
+_ROLE_COLOR = {'main': 'fill:#ffd8a8,stroke:#c2410c,stroke-width:3px', 'evidence': 'fill:#d0e7ff,stroke:#1d4ed8',
+               'premise': 'fill:#d0e7ff,stroke:#1d4ed8', 'claim': 'fill:#d3f2d3,stroke:#15803d',
+               'background': 'fill:#ececec,stroke:#6b6b6b', 'method': 'fill:#e6dcff,stroke:#6d28d9',
+               'rebuttal': 'fill:#ffd6d6,stroke:#b91c1c', 'caveat': 'fill:#fff3bf,stroke:#a16207'}
+_ROLE_KO = {'main': '주 결론', 'evidence': '근거(결과)', 'premise': '근거(결과)', 'claim': '해석', 'background': '배경', 'method': '방법',
+            'rebuttal': '반박', 'caveat': '한계'}
+
+
+def _mapdraw_compact(claims, text=False):
+    """v16.1 전체 그림 기본(사용자 09-29 — 저자 51주장·간선 83 이 6614×1033 px 로 화면 폭에서 못 읽힘):
+    왼쪽(근거) → 오른쪽(main), caveat 상자·간선은 접어 걸린 상자에 '한계 N', 역할별 색, 간선 없는 상자는 그림 밖 목록."""
+    by_id = {c['id']: c for c in claims}
+    edges = _edges(claims)
+    ncav = {cid: sum(1 for _, t, _ in lst if t == 'caveat') for cid, lst in edges.items()}
+    def cav_node(cid):                   # 접을 caveat 상자: role=caveat 이고 caveat 이 아닌 간선에 끼지 않은 것
+        if by_id[cid].get('role') != 'caveat':
+            return False
+        if any(t != 'caveat' for _, t, _ in edges[cid]):
+            return False
+        return not any(up == cid and t != 'caveat' for lst in edges.values() for up, t, _ in lst)
+    folded = {cid for cid in by_id if cav_node(cid)}
+    drawn = [(up, typ, cid) for cid in by_id if cid not in folded for up, typ, _ in edges[cid]
+             if typ != 'caveat' and up in by_id and up not in folded]
+    linked = {x for up, _, cid in drawn for x in (up, cid)}
+    nid = {cid: 'n%d' % k for k, cid in enumerate(by_id, 1)}
+    L = ['# 관계도 — 그래프 전체', '',
+         '> claim_graph.py v%s mapdraw. 왼쪽 근거 → 오른쪽 주 결론. 굵은 선 premise · 실선 support · 점선 context · "반박"(x) rebuttal. '
+         '색: 주황 주 결론(main) · 파랑 근거(evidence) · 초록 해석(claim) · 회색 배경(background) · 보라 방법(method) · 빨강 반박(rebuttal). '
+         '상자: id · 역할·confidence(- = 역할 없음, high/mid/low) · **한계 N** = 걸린 caveat 수(caveat 상자·선은 접었다 — 다 보려면 `--all-edges`).' % __version__,
+         '', '```mermaid', 'flowchart LR']
+    for cid, c in by_id.items():
+        if cid not in linked:
+            continue
+        a, b = _ROLE_SHAPE.get(c.get('role'), ('[', ']'))
+        lab = [cid, '%s·%s' % (c.get('role') or '-', c.get('confidence', 'mid'))]
+        if ncav.get(cid):
+            lab.append('한계 %d' % ncav[cid])
+        if text and c.get('statement'):
+            st = c['statement']
+            lab.append(st[:40] + ('…' if len(st) > 40 else ''))
+        if c.get('status') == 'superseded':
+            lab.append('(철회)')
+        L.append('  %s%s"%s"%s' % (nid[cid], a, '<br/>'.join(_mm(x) for x in lab), b))
+    for up, typ, cid in drawn:
+        L.append('  %s %s %s' % (nid[up], _EDGE_ARROW.get(typ, '-->'), nid[cid]))
+    for role, style in _ROLE_COLOR.items():
+        ids = [nid[cid] for cid in by_id if cid in linked and by_id[cid].get('role') == role and by_id[cid].get('status') != 'superseded']
+        if ids:
+            L += ['  classDef r_%s %s' % (role, style), '  class %s r_%s' % (','.join(ids), role)]
+    sup = [nid[cid] for cid in by_id if cid in linked and by_id[cid].get('status') == 'superseded']
+    if sup:
+        L += ['  classDef old fill:#eeeeee,color:#777777', '  class %s old' % ','.join(sup)]
+    L += ['```', '']
+    alone = [cid for cid in by_id if cid not in linked and cid not in folded]
+    if folded:
+        L.append('접은 caveat %d개(상자에 "한계 N" 으로): %s' % (len(folded), ', '.join(sorted(folded))))
+    if alone:
+        L += ['', '그림에 없는 주장 — 그릴 간선이 없다 %d개:' % len(alone)]
+        for cid in alone:
+            c = by_id[cid]
+            L.append('- `%s` (%s%s)%s' % (cid, _ROLE_KO.get(c.get('role'), c.get('role') or '역할 없음'),
+                                          ', 한계 %d' % ncav[cid] if ncav.get(cid) else '',
+                                          (' — ' + c['statement'][:60]) if text and c.get('statement') else ''))
+    return '\n'.join(L) + '\n'
+
+
+def mapdraw(claims, changed=None, text=False, stream=sys.stdout, all_edges=False):
+    """Mermaid flowchart 글(```mermaid 블록이 든 md)을 돌려준다.
+    전체 그림(v16.1 기본)은 _mapdraw_compact — 왼쪽→오른쪽, caveat 접기, 역할별 색, 외톨이는 목록.
+    all_edges=True 면 v16.0 모양(아래→위, caveat 상자·간선까지 모두). changed 가 있으면 impact 와 같은 계산으로
+    그 경로의 주장만 그리고, 바뀐 것·필수·참고를 색으로 나눈다(v16.0 그대로).
+    GitHub·claude.ai 대화창에서 그림으로 보인다. Drive 미리보기는 글로만 보인다."""
+    if not changed and not all_edges:
+        return _mapdraw_compact(claims, text=text)
     by_id = {c['id']: c for c in claims}
     edges = _edges(claims)
     keep, lvl = set(by_id), {}
@@ -1504,6 +1581,7 @@ def main():
     dr.add_argument('--claims', required=True); dr.add_argument('-o', required=True, help='쓸 md 파일')
     dr.add_argument('--impact', nargs='+', default=None, metavar='ID', help='이 주장들이 바뀌었을 때의 하류만')
     dr.add_argument('--text', action='store_true', help='상자에 statement 앞 40자도')
+    dr.add_argument('--all-edges', action='store_true', help='전체 그림을 v16.0 모양으로 — 아래→위, caveat 상자·간선까지 모두 (v16.1)')
     for name in ('mapcheck', 'mapfreeze', 'mapstale'):
         p = sub.add_parser(name); p.add_argument('doc'); p.add_argument('--claims', required=True)
         if name in ('mapfreeze', 'mapstale'):
@@ -1550,7 +1628,7 @@ def main():
         else:
             impact(load_claims(a.claims), a.ids)
     elif a.cmd == 'mapdraw':
-        out = mapdraw(load_claims(a.claims), changed=a.impact, text=a.text)
+        out = mapdraw(load_claims(a.claims), changed=a.impact, text=a.text, all_edges=a.all_edges)
         with open(a.o, 'w', encoding='utf8') as f:
             f.write(out)
         print('저장: %s' % a.o)
