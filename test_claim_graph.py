@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.6'
+EXPECT_VERSION = '16.7'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -784,7 +784,7 @@ def t_v165_find_gaps():
     assert got['lowc'][0].startswith('약한 고리 — confidence low, 기대는 주장 1(m)'), got
     assert got['x'] == ['외톨이'], got
     assert 'e' not in got and 'old' not in got                                               # evidence 는 문헌 공백에서 빼고, 철회는 뺀다
-    assert dict((c, t_) for c, _, _, t_ in rows)['k'] == 'alpha term; beta term'
+    assert all(t_ == '' for _, _, _, t_ in rows), rows                                        # v16.7: 검색어는 keys 에서 가져오지 않는다(비움)
     rows, noedge = CGm.find_gaps([{'id': 'p', 'role': 'claim'}, {'id': 'q', 'role': 'claim'}])   # 간선 0 그래프: 외톨이를 줄마다 내지 않는다
     assert noedge and all('외톨이' not in ks for _, _, ks, _ in rows) and len(rows) == 2, rows
 
@@ -795,13 +795,13 @@ def t_v165_gaps_table_and_to_instr():
     assert len(rows) == 10 and rows[0].startswith('| G01-받침 | `k`') and rows[1].startswith('| G01-반박 | `k`'), rows[:2]   # 공백마다 받침·반박
     assert 'AI 제안' in md and '반박 줄도' in md and 'evidence' in md, md[:600]
     # 채운 표: G01 받침은 AI 제안 DOI, 반박은 비움 · G02 받침은 DOI 없이 글만 · G03 받침은 이미 판정 · G04 받침·반박이 같은 DOI
-    fill = {'G01-받침': ('https://doi.org/10.1234/ABC.5', 'AI 제안', ''), 'G02-받침': ('Kim 2020 어딘가', 'AI 제안', ''),
-            'G03-받침': ('10.9/zz', '사람', '부합'), 'G04-받침': ('10.1234/abc.5', '사람', ''), 'G04-반박': ('10.5555/r1', 'AI 제안', '')}
+    fill = {'G01-받침': ('https://doi.org/10.1234/ABC.5', 'AI 제안', '', 'alpha term; beta term'), 'G02-받침': ('Kim 2020 어딘가', 'AI 제안', '', 'x'),
+            'G03-받침': ('10.9/zz', '사람', '부합', 'x'), 'G04-받침': ('10.1234/abc.5', '사람', '', 'y'), 'G04-반박': ('10.5555/r1', 'AI 제안', '', 'z')}
     out = []
     for l in md.splitlines():
         c = [x.strip() for x in l.strip().strip('|').split('|')]
         if c and c[0] in fill:
-            cand, src, ver = fill[c[0]]; c[6], c[7], c[9] = cand, src, ver
+            cand, src, ver, terms = fill[c[0]]; c[6], c[7], c[9], c[5] = cand, src, ver, terms
             l = '| ' + ' | '.join(c) + ' |'
         out.append(l)
     instr, notes = CGm.gaps_to_instr('\n'.join(out), '시험원고')
@@ -897,6 +897,37 @@ def t_v166_cli_kind():
     json.dump({'claims': cl}, open(A, 'w'), ensure_ascii=False)
     r = subprocess.run([sys.executable, cg, 'mapgraph', '--claims', A], capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
     assert 'forbidden 이 있는데' in r.stdout, r.stdout                                          # kind 가 없으면 전처럼
+
+
+
+def t_v167_gaps_cited_split_and_blank_terms():
+    # 저자 09-29(claims v10): "문헌 없음" 14개 중 6개는 원고 인용 [n] 이 이미 있는데 sources 만 빈 것 — 따로. 검색어는 keys 가 아니라 비움
+    g = [{'id': 'c1', 'role': 'claim', 'statement': 'X is higher [12,14].', 'keys': ['argue', 'refs 12-14'], 'depends_on': []},
+         {'id': 'c2', 'role': 'claim', 'statement': 'Y is linked', 'sites': ['doc:find:Y was linked [7\u20139]'], 'depends_on': []},
+         {'id': 'c3', 'role': 'claim', 'statement': 'Z plausibly follows', 'keys': ['pooling'], 'depends_on': []},
+         {'id': 'c4', 'role': 'background', 'statement': 'W [3]', 'confidence': 'low', 'depends_on': []},
+         {'id': 'd', 'role': 'main', 'sources': [{'kind': '문헌', 'what': '10.1/a'}, {'kind': '문헌', 'what': '10.1/b'}],
+          'depends_on': [{'id': 'c1', 'type': 'premise'}, {'id': 'c2', 'type': 'premise'}, {'id': 'c3', 'type': 'context'}, {'id': 'c4', 'type': 'support'}]}]
+    got = {cid: ks for cid, _, ks, _ in CGm.find_gaps(copy.deepcopy(g))[0]}
+    assert got['c1'] == [CGm.GAP_CITED] and got['c2'] == [CGm.GAP_CITED], got               # 문장 또는 자리에 [n]
+    assert got['c3'] == ['문헌 없음'], got                                                     # 실패 길: 인용이 없으면 그대로 공백
+    assert got['c4'][0] == CGm.GAP_CITED and got['c4'][1].startswith('약한 고리'), got
+    md = CGm.gaps_table(copy.deepcopy(g), 'T')
+    p1, p2 = md.split('## 2. 인용 있음')
+    assert '## 1. 찾을 공백 2개' in p1 and '`c3`' in p1 and '`c4`' in p1 and '`c1`' not in p1, p1   # 인용 + 다른 공백(c4)은 1부에
+    assert '— sources 미기입 2개' in p2 and '| G03-기입 | `c1`' in p2 and '| G04-기입 | `c2`' in p2 and 'G03-받침' not in md, p2
+    assert 'argue' not in md and 'pooling' not in md and 'refs 12-14' not in md, md            # keys 가 검색어로 들어가지 않는다
+    assert '문헌 없음(인용 있음 — sources 미기입) 3' in md and '문헌 없음 1' in md, md.splitlines()[2]   # 머리 요약도 두 부류를 나눠 센다
+    rows = []
+    for l in md.splitlines():
+        c = [x.strip() for x in l.strip().strip('|').split('|')]
+        if c and c[0] == 'G03-기입':
+            c[6], c[7] = '10.7777/cited', '사람'
+            l = '| ' + ' | '.join(c) + ' |'
+        rows.append(l)
+    instr, notes = CGm.gaps_to_instr('\n'.join(rows), 'T')
+    assert 'doi:10.7777/cited' in instr and '| G03-기입 | 1 |' in instr, instr                     # 기입 줄도 검증지시로
+    assert any('G03-기입: 검색어 칸이 비었다' in n for n in notes), notes                       # 검색어가 비면 알린다
 
 
 def run():

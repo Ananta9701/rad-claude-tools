@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.6'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.7'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -514,6 +514,7 @@ def impact(claims, changed, stream=sys.stdout):
 # 거친 것만 sources 에 들어간다. 이 도구는 작업표를 만들고(gaps) 채운 표를 literature 검증지시로 바꿀 뿐, sources 를 고치지 않는다.
 # ----------------------------------------------------------------------------
 
+GAP_CITED = '문헌 없음(인용 있음 — sources 미기입)'   # v16.7 (저자 09-29): 원고 인용 [n] 은 있는데 sources 칸만 빈 것 — 찾을 공백이 아니라 기입·판정할 것
 LIT_ROLES = ('claim', 'main', 'background')      # 문헌 공백을 보는 역할 — evidence(우리 결과)는 뺀다(사용자 09-29)
 _DOI = re.compile(r'\b(10\.\d{4,9}/[^\s|,;<>"]+)', re.I)
 
@@ -536,7 +537,8 @@ def find_gaps(claims):
         cid, role, kinds = c['id'], c.get('role'), []
         lit = _lit(c)
         if role in LIT_ROLES and not lit:
-            kinds.append('문헌 없음')
+            cited = any(_CITE_BRACKET.search(t or '') for t in [c.get('statement', '')] + list(c.get('sites', [])))
+            kinds.append(GAP_CITED if cited else '문헌 없음')
         backing = [u for u, t, _ in edges[cid] if t in ('premise', 'support')]
         one = []
         if role in LIT_ROLES and len(lit) == 1:
@@ -550,33 +552,47 @@ def find_gaps(claims):
             kinds.append('약한 고리 — confidence low, 기대는 주장 %d(%s)' % (len(leaning), ', '.join(leaning[:3])))
         if not noedge and not edges[cid] and not rev.get(cid) and len(claims) > 1:
             kinds.append('외톨이')
-        if kinds:
-            terms = '; '.join(c.get('keys', [])[:4]) or (c.get('statement') or '')[:60]
-            out.append((cid, role or '-', kinds, terms))
+        if kinds:     # v16.7 (사용자 09-29): 검색어는 keys(원고 추적용 앵커)에서 가져오지 않는다 — 역할 대화창이 공백을 읽고 만든다
+            out.append((cid, role or '-', kinds, ''))
     return out, noedge
 
 
+def _gap_kind(k):
+    return k if k == GAP_CITED else k.split(' — ')[0]
+
+
 def gaps_table(claims, name='원고'):
-    """작업표 md. 공백마다 받침·반박 두 줄. 사람이 채울 칸: 검색어(다듬기) · 후보 DOI · 출처(AI 제안/사람) · 입수 · 판정."""
+    """작업표 md. 1부 = 찾을 공백(공백마다 받침·반박 두 줄), 2부 = 인용은 있는데 sources 만 빈 주장(기입 한 줄).
+    사람이 채울 칸: 검색어(역할 대화창이 만든다) · 후보 DOI · 출처(AI 제안/사람) · 입수 · 판정."""
     rows, noedge = find_gaps(claims)
     kinds = {}
     for _, _, ks, _ in rows:
         for k in ks:
-            kinds[k.split(' — ')[0]] = kinds.get(k.split(' — ')[0], 0) + 1
+            kinds[_gap_kind(k)] = kinds.get(_gap_kind(k), 0) + 1
+    fill = [r for r in rows if r[2] == [GAP_CITED]]
+    find = [r for r in rows if r[2] != [GAP_CITED]]
     L = ['# %s — 근거 공백 작업표' % name, '',
          '> claim_graph.py v%s gaps. 주장 %d개 중 공백 %d개(%s).%s' % (
              __version__, len(claims), len(rows), ' · '.join('%s %d' % kv for kv in kinds.items()) or '없음',
              ' 간선이 하나도 없는 그래프 — 외톨이·받침 간선 공백은 관계를 적은 뒤에 다시.' if noedge else ''),
          '> **규칙(사용자 09-29)**: 후보 논문은 이 표에만 적는다. **AI 가 제안한 논문(대화창 웹 검색·Gemini 조사)은 출처 칸에 "AI 제안"** — '
          'DOI 확인 → 원문 입수(literature) → 리뷰어 판정을 거친 것만 claims 의 sources 에 옮긴다. 받침만 찾지 말고 **반박 줄도 찾는다**(없으면 판정 칸에 "찾았으나 없음").',
+         '> **검색어 칸은 비어 있다** — 역할 대화창이 공백(주장 문장)을 읽고 만든다(원고 추적용 keys 는 검색어로 쓰지 않는다).',
          '> 문헌 공백은 claim·main·background 만 본다(evidence = 우리 결과는 뺀다). 채운 표 → `claim_graph.py gaps --to-instr 이 표.md -o 검증지시.md` → literature(Cowork).', '',
+         '## 1. 찾을 공백 %d개' % len(find), '',
          '| 번호 | 주장 | 역할 | 공백 | 방향 | 검색어 | 후보 DOI | 출처 | 입수 | 판정 |', '|---|---|---|---|---|---|---|---|---|---|']
-    for k, (cid, role, ks, terms) in enumerate(rows, 1):
+    for k, (cid, role, ks, terms) in enumerate(find, 1):
         for d in ('받침', '반박'):
-            L.append('| G%02d-%s | `%s` | %s | %s | %s | %s |  |  |  |  |' % (k, d, cid, role, ' / '.join(ks).replace('|', '/'), d, terms.replace('|', '/')))
-    if not rows:
-        L.append('')
-        L.append('공백 없음.')
+            L.append('| G%02d-%s | `%s` | %s | %s | %s | %s |  |  |  |  |' % (k, d, cid, role, ' / '.join(ks).replace('|', '/'), d, terms))
+    if not find:
+        L.append('| — | 없음 |  |  |  |  |  |  |  |  |')
+    L += ['', '## 2. 인용 있음 — sources 미기입 %d개' % len(fill), '',
+          '> 원고에 이미 인용 `[n]` 이 있다 — 새 논문을 찾는 공백이 아니라, 그 인용 문헌의 DOI 를 적어 받고 판정해 sources 에 기입할 것. 후보 DOI 칸에 인용 문헌 DOI.', '',
+          '| 번호 | 주장 | 역할 | 공백 | 방향 | 검색어 | 후보 DOI | 출처 | 입수 | 판정 |', '|---|---|---|---|---|---|---|---|---|---|']
+    for k, (cid, role, ks, terms) in enumerate(fill, len(find) + 1):
+        L.append('| G%02d-기입 | `%s` | %s | %s | 기입 | %s |  |  |  |  |' % (k, cid, role, GAP_CITED, terms))
+    if not fill:
+        L.append('| — | 없음 |  |  |  |  |  |  |  |  |')
     return '\n'.join(L) + '\n'
 
 
@@ -585,7 +601,7 @@ def gaps_to_instr(table_md, name='원고'):
     refs, rows, notes, filled = {}, [], [], {}
     for line in table_md.splitlines():
         c = [x.strip() for x in line.strip().strip('|').split('|')]
-        if len(c) < 10 or not re.match(r'^G\d+-(받침|반박)$', c[0]):
+        if len(c) < 10 or not re.match(r'^G\d+-(받침|반박|기입)$', c[0]):
             continue
         num, cid, direction, terms, cand, src, verdict = c[0], c[1].strip('`'), c[4], c[5], c[6], c[7], c[9]
         g = num.split('-')[0]
@@ -595,6 +611,8 @@ def gaps_to_instr(table_md, name='원고'):
             notes.append('%s: 후보 칸에 DOI 가 없다("%s") — DOI 를 확인해 적는다' % (num, cand[:40]))
         if not dois or verdict:
             continue
+        if not terms:
+            notes.append('%s: 검색어 칸이 비었다 — locate 가 찾을 말이 없다(원문에서 찾을 말을 적는다)' % num)
         ns = []
         for d in dois:
             if d not in refs:
