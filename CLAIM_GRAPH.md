@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v15.8.4
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.0
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -76,8 +76,9 @@
 | `sites` | 이 주장이 실리는 자리 전부 |
 | `keys` | 그 자리에 있어야 할 표현 (하나라도 있으면 통과). 3~4개 |
 | `forbidden` | 있으면 안 되는 표현 — 철회한 옛 주장의 문구 |
-| `supersedes` | 철회한 옛 주장 원문과 날짜 |
-| `depends_on` | **"내가 저 주장에 기댄다"** 방향. `type` premise 1.0 / support 0.7 / caveat 0.5 / context 0.3. **caveat 도 같은 방향**: 한정되는 주장(evidence·claim)이 caveat 주장을 자기 depends_on 에 적는다 — "이 한계 아래에서 성립". v13 의 덱 그래프는 반대로 적혀 있어 v14 에서 고쳤다 |
+| `supersedes` | 철회한 옛 주장 원문과 날짜. **v16: 목록도 된다** — 판을 올리며 범위를 좁힐 때(전체 표본 → 부분 표본) 옛 statement 를 덮어쓰지 말고 `[{…}, {…}]` 로 쌓는다(마지막이 가장 최근). forbidden 후보는 마지막 것에서 낸다 |
+| `sources` | **v16 근거 칸**(선택) — 이 주장의 근거가 원문 어디에 있는지. 아래 §3-2 |
+| `depends_on` | **"내가 저 주장에 기댄다"** 방향. `type` premise 1.0 / support 0.7 / caveat 0.5 / rebuttal 0.5(v16) / context 0.3. **caveat 도 같은 방향**: 한정되는 주장(evidence·claim)이 caveat 주장을 자기 depends_on 에 적는다 — "이 한계 아래에서 성립". v13 의 덱 그래프는 반대로 적혀 있어 v14 에서 고쳤다 |
 | `confidence` | `high` 이 자료로 재현됨 / `mid` 자료가 방향은 지지 (기본값) / `low` 미검정·외부 근거·미해결. **주장 자체의 근거 강도.** 덱에서는 high=원전 절·문단 + 본 증례 영상 확인 / mid=원전 확인 / low=미확인·문헌 갈림 |
 | `anchor` | 순환에 속한 주장 중 하나. 검토의 시작점=끝점 |
 | `verified` | `mapfreeze` 가 쓴다. 손으로 쓰지 않는다 |
@@ -87,6 +88,57 @@
 "저것이 얼마나 확실한가"는 그 주장의 `confidence` 에 적는다. 심사 회차 1~3 에서 철회·수위 조정된 주장은
 전부 weight 높고 confidence 낮은 것이었다 — 그 조합을 mapgraph 가 **약한 고리**로 나열한다.
 `impact` 는 confidence 를 전파에 쓰지 않고 표시만 한다.
+
+## 3-2. 근거 칸 `sources` 와 반박 `rebuttal` (v16, 5판 — 저자·리뷰어·발표 질문지 09-29)
+
+```json
+"sources": [
+  {"kind": "문헌", "what": "10.1161/jaha.114.001140", "at": "[p.3 · PDF 3]", "element": "방향", "verdict": "부합",
+   "via": "Cowork md + 원 PDF", "pdf": true, "date": "2026-09-29"},
+  {"kind": "교과서", "what": "근골격", "at": "p.56"},
+  {"kind": "덱", "at": "slide@260"}
+]
+```
+
+| 칸 | 필수 | 뜻 |
+|---|---|---|
+| `kind` | ○ | `문헌` / `교과서` / `덱` / `원고` / `기타` |
+| `what` | ○(덱·원고는 비워도 됨) | 문헌 = DOI(보관소 `meta.md` 의 doi 와 같게) · 교과서 = `교과서 분할` 안 책 폴더 이름의 일부(하나만 맞아야 함) · 기타 = 자유 |
+| `at` | 권장 | 쪽 표지 `[p.인쇄 · PDF N]`(옛 문헌 md 의 `[p.N]` 은 PDF N) · 인쇄 쪽 `p.56` · `PDF 70` · 절 표지 `[§ Methods]` · 덱 `slide@ID`. 없거나 `전체` 면 원문 전체 |
+| `element` | 선택 | 주장의 어느 요소에 대한 근거인지(요소별 판정이면 요소마다 한 줄) |
+| `verdict` | 선택 | `부합` / `부분` / `근거 없음` / `반대 방향` (리뷰어 판정) |
+| `via`·`pdf`·`date`·`note` | 선택 | 입수 경로 · PDF 로 대조했는지 · 확인 날짜 · 메모. 원문 해시는 `mapfreeze --sources` 가 적는다 |
+
+**원문이 바뀌면 알림** — `mapfreeze … --sources <폴더>` 가 근거 자리의 본문 해시를 적고, `mapstale … --sources <폴더>` 가 비교한다
+(폴더 = `문헌 보관소` 또는 `교과서 분할`. **폴더를 주지 않으면 근거 원문은 보지 않는다**. 덱·원고 근거는 문서 자체에서 본다).
+알림이 쏟아지지 않도록 세 가지로 나눈다:
+
+| 표시 | 언제 | 할 일 |
+|---|---|---|
+| `[같음]` 한 줄(개수만) | 파일은 바뀌었으나 **그 자리 본문**(쪽·절 표지 줄과 `> ` 머리말을 빼고 NFKC·띄어쓰기 맞춤)은 같음 — 쪽 표지 형식·변환 판 머리말·다른 쪽 변경 | 없음 |
+| `[변환]` 한 줄 + 판정이 `근거 없음`·`부분` 인 것만 "다시 볼 것" | 원 파일(PDF·XML 의 sha, meta.md)은 같은데 md 변환이 바뀌어 본문이 다름(literature 개선) — 또는 새 변환에 그 표지가 없음 | "다시 볼 것" 줄만 본다(전에 없던 글이 생겼을 수 있음). 표지가 없어졌으면 `at` 을 새 표지로. 하류로 번지지 않는다 |
+| `[변경]` | 원 파일 자체가 다름, 원 sha 가 없는(교과서) 원문의 본문이 다름, 원문을 찾을 수 없음 | 그 주장과 하류를 다시 본다(`impact` 와 같이 전파) |
+
+실물 시험(09-29): 실제 Europe PMC XML 9편의 절 230곳을 근거로 두고 literature v0.7 변환 → v0.8.2 재변환 — `[같음]` 172 · `[변환]` 58 · `[변경]` 0.
+같은 변환을 한 번 더 하면(머리말만 다름) 230곳 모두 `[같음]`.
+
+**반박** — `depends_on` 의 `type: "rebuttal"`(0.5). **caveat 과 같은 방향**: 반박당하는 주장이 반박하는 쪽(리뷰어 rebuttal 노드, 반대 결과를 낸
+문헌 노드)을 자기 depends_on 에 적는다. caveat = "이 한계 아래에서 성립", rebuttal = "이것과 반대 증거가 있다". `impact` 는 caveat 과 같은 무게로
+전파한다. mapgraph [참고]: caveat 간선이 role=rebuttal 주장을 가리키면(반대 증거를 한계로 적었는지), sources 에 `반대 방향` 판정이 있는데
+rebuttal 간선이 없으면.
+
+**같은 뜻** — 새 관계를 만들지 않는다. 다른 그래프와의 짝은 `mapdiff … --pairs … --save-pairs` 로 a 그래프 맨 위 칸
+`pairs_with: {"<b 라벨>": {"a_id": "b_id"}}` 에 적어 두면 다음부터 `--pairs` 없이 쓴다(반대쪽 그래프에 적힌 것도 뒤집어 쓴다).
+한 그래프 안에서 같은 주장이 여러 자리(본문·노트)에 있으면 지금처럼 sites·keys 를 늘린다.
+**다듬음** — 새 관계를 만들지 않는다. 판을 올리며 좁힌 주장은 `supersedes` 목록으로 이력을 남긴다. 앞 주장에 조건을 붙인 뒤 주장은 앞 주장에 premise 로 건다(앞이 바뀌면 `impact` 가 뒤를 올린다).
+
+## 3-3. 관계도 그림 `mapdraw` (v16)
+
+`claim_graph.py mapdraw --claims X.json -o 관계도.md [--impact ID …] [--text]` — Mermaid 글이 든 md 를 쓴다.
+화살표는 **근거 → 그것에 기대는 주장**(아래에서 위로, main 이 위). 굵은 선 premise · 실선 support · 점선 context · "한계" caveat · "반박"(x) rebuttal.
+모양: 육각 main · 네모 evidence · 둥근 claim · 기울임 caveat. `--impact` 면 `impact` 와 같은 계산으로 그 경로의 주장만, 빨강(바뀐 것)·노랑(필수)·파랑(참고).
+`--text` 는 상자에 statement 앞 40자. 그림으로 보는 곳: GitHub, claude.ai 대화창(md 내용을 붙여 "Mermaid 로 보여 줘"). Drive 미리보기는 글로만 보인다.
+덱 그래프도 같은 명령(`claim_graph.py` — 발표 세트에 있다).
 
 ## 3-1. mapgraph 가 잡는 것 (v14)
 
@@ -105,6 +157,8 @@
 | 참고 | extract 가 만든 proposed 후보가 확정되지 않음 |
 | 참고 | **약한 고리**: premise/support 간선의 상류가 confidence=low. weight 내림차순 |
 | 참고 | 간선 weight 가 type 기본값이 아님 |
+| 필수 (v16) | `sources` 가 목록이 아님 / kind·verdict 값 오류 / 문헌·교과서·기타인데 what 이 비었음 |
+| 참고 (v16) | sources 에 at 이 없음 / 덱 근거가 `slide:N`(파일 번호) / `반대 방향` 판정인데 rebuttal 간선 없음 / caveat 간선이 role=rebuttal 을 가리킴 |
 | 참고 (`mapcheck --nums`) | evidence 의 수치 토큰이 sites 어디에도 없음. 소수·%·4자리 이상은 항상, 1~3자리 정수는 n=·±·vs·/ 문맥일 때만(참고문헌 번호 제외). 표기 차이(0.541 vs 0.54)는 잡고 반올림 판단은 사람. **`--nums` 는 "evidence 에 적은 수치가 원고 자리에 실제로 있는가"만 본다** — 리뷰어 그래프처럼 evidence 에 재현값·외부 수치를 함께 적는 용법에서는 참고 건수가 높게 나오는 것이 정상이며 결함이 아니다(v15.4.3; 리뷰어 56 주장 중 35건 실례). 원고 인용 수치만 검증하려면 그 수치만 evidence 에 두고 재현값은 note 등 다른 필드에 둔다 |
 
 ## 4. 명령
@@ -119,9 +173,10 @@ pptx 는 `deck_toolkit.py <명령> deck.pptx --claims ...`, docx/md 는 `claim_g
 | `selfcheck [--dir /mnt/project] [--tests]` | **세션 시작** | 세트 3단계 확인(manifest 판·파일별 판·해시) + 테스트 + 프로젝트 파일 분류 (a)(b)(c). 출력 표를 도구회신 §1 에 그대로 붙인다(v15.6). `②′` 행은 세트 해시를 RELEASE §3 표와도 대조한다(v15.6.1). 세 프로젝트 모두 이 파일이 있어서 여기에 둔다. **GitHub 에서 받은 전체 세트는 `--role 발표|저자|리뷰어` 로**(v15.7) — 추정하지 않고 그 역할의 파일만 보며, 안 쓰는 도구는 삭제 후보로 올리지 않는다. `--compare /mnt/project` 는 예비로 둔 프로젝트 파일과 판·해시를 대조한다. `git clone` 으로 받은 폴더면 받은 커밋 해시를 표에 적는다(v15.8) |
 | `impact --claims <id> [--sites]` | 주장을 뒤집기로 결정 | 다시 볼 하류 주장과 자리. `--sites` 면 [필수] 자리만 한 줄에 하나(v15.5, 목록 대조용) |
 | `mapcheck doc --claims [--nums] [--nums-sep "|"]` | 자리를 다 고친 뒤 | keys/forbidden 대조 + 그래프 검사. `--nums` 면 evidence 수치가 자리에 있는지도. `--nums-sep` 은 evidence 에서 그 구분자 **앞쪽만** 검사(v15.5) — "원고 값 | 재현 값" 용법용, 구분자는 사용자가 선언한다 (교정용, 심사 형식 지적의 대부분이 이 유형) |
-| `mapfreeze doc --claims -o` | 검증을 **실제로** 마친 뒤 | 해시 기록 = "확인했다" 선언 |
-| `mapstale doc --claims` | 그 뒤 어떤 편집이든 한 뒤 | [변경] 주장, [필수]/[참고] 하류, 기록 없는 새 주장. v15.5: freeze 가 `verified.keys` 해시를 함께 적어 **keys 만 바꾼 그래프도 [변경]**(구판 freeze 는 그 해시가 없어 검사 안 함). 출력 끝에 "실제로 바뀐 주장의 자리(직접)"를 하류 전파와 구분해 낸다 |
-| `mapdiff a.json b.json --labels 저자 리뷰어 [--pairs a1=b1,…]` | 독립으로 쓴 두 그래프 대조 | sites·keys 겹침으로 짝지어 (a) 양쪽 (b) 한쪽만 (c) 다른 쪽만, 간선 type·weight 차이, caveat 부착 차이. 간선·caveat 차이 줄의 **`?` 접두는 상대 그래프에 짝이 없는 노드 id** 를 뜻한다(v15.4.3 문서화) — 예 `?within-participant-design` 은 그 노드가 (b)/(c) 목록에 있다는 신호이므로 먼저 `--pairs` 로 짝을 확인한다. v15.4: role 계열(claim/evidence/caveat/…)이 다르면 짝짓지 않음. **명명만 다른 주장은 자동으로 못 잡는다** — (b)(c)가 크면 사람이 짝을 만들어 `--pairs`로 넘긴다. **반대 방향 오류도 있다**(v15.4.4): 의미상 대응하는 두 주장의 role 을 서로 다르게 쓰면(한쪽 main, 다른 쪽 claim) 같은 계열이라 짝지어져 (a) 에 들어가고, 그 상대의 진짜 짝은 (c) 에 남는다 — (a) 목록도 id 쌍을 눈으로 보고 어긋난 쌍은 `--pairs` 로 고정한다(실물: 저자 `group-a-b-distinct`(main) ↔ 리뷰어 `claim-mechanism-x`(claim)) — 문자열 `a1=b1,a2=b2`, json 파일 `{"a_id": "b_id"}`, 또는 한 줄에 `a_id=b_id` 인 텍스트 파일(v15.4.1). **1:N 짝**은 같은 a_id 를 반복(`s10=nested,s10=delta-r2`) 또는 json 값을 리스트로 — 한쪽이 한 노드로 묶은 것을 다른 쪽이 둘로 나눈 경우(v15.5), 출력에 `nested+delta-r2` 로 표시 |
+| `mapfreeze doc --claims -o [--sources 폴더]` | 검증을 **실제로** 마친 뒤 | 해시 기록 = "확인했다" 선언. `--sources` 면 근거 원문도(§3-2). 폴더 없이 다시 freeze 하면 전 근거 기록은 그대로 |
+| `mapstale doc --claims [--sources 폴더]` | 그 뒤 어떤 편집이든 한 뒤 | v16: `--sources` 면 근거 원문 `[같음]`·`[변환]`·`[변경]`(§3-2). [변경] 주장, [필수]/[참고] 하류, 기록 없는 새 주장. v15.5: freeze 가 `verified.keys` 해시를 함께 적어 **keys 만 바꾼 그래프도 [변경]**(구판 freeze 는 그 해시가 없어 검사 안 함). 출력 끝에 "실제로 바뀐 주장의 자리(직접)"를 하류 전파와 구분해 낸다 |
+| `mapdraw --claims -o 관계도.md [--impact ID …] [--text]` | 설명·검토용 그림 | Mermaid 글(§3-3, v16) |
+| `mapdiff a.json b.json --labels 저자 리뷰어 [--pairs a1=b1,…] [--save-pairs]` | 독립으로 쓴 두 그래프 대조 | v16: `--save-pairs` 는 짝을 a 의 `pairs_with` 에 적고, 다음부터 `--pairs` 없이 쓴다. sites·keys 겹침으로 짝지어 (a) 양쪽 (b) 한쪽만 (c) 다른 쪽만, 간선 type·weight 차이, caveat 부착 차이. 간선·caveat 차이 줄의 **`?` 접두는 상대 그래프에 짝이 없는 노드 id** 를 뜻한다(v15.4.3 문서화) — 예 `?within-participant-design` 은 그 노드가 (b)/(c) 목록에 있다는 신호이므로 먼저 `--pairs` 로 짝을 확인한다. v15.4: role 계열(claim/evidence/caveat/…)이 다르면 짝짓지 않음. **명명만 다른 주장은 자동으로 못 잡는다** — (b)(c)가 크면 사람이 짝을 만들어 `--pairs`로 넘긴다. **반대 방향 오류도 있다**(v15.4.4): 의미상 대응하는 두 주장의 role 을 서로 다르게 쓰면(한쪽 main, 다른 쪽 claim) 같은 계열이라 짝지어져 (a) 에 들어가고, 그 상대의 진짜 짝은 (c) 에 남는다 — (a) 목록도 id 쌍을 눈으로 보고 어긋난 쌍은 `--pairs` 로 고정한다(실물: 저자 `group-a-b-distinct`(main) ↔ 리뷰어 `claim-mechanism-x`(claim)) — 문자열 `a1=b1,a2=b2`, json 파일 `{"a_id": "b_id"}`, 또는 한 줄에 `a_id=b_id` 인 텍스트 파일(v15.4.1). **1:N 짝**은 같은 a_id 를 반복(`s10=nested,s10=delta-r2`) 또는 json 값을 리스트로 — 한쪽이 한 노드로 묶은 것을 다른 쪽이 둘로 나눈 경우(v15.5), 출력에 `nested+delta-r2` 로 표시 |
 | `remap-refs --claims X.json --map refmap.json -o Y.json [--force]` | 참고문헌 재번호 뒤 | `verify_toolkit renumber` 가 낸 매핑으로 statement·evidence 의 `[n-m]`·keys 의 `refs n-m` 치환. `mapcheck` 는 `refs n-m` key 를 리터럴이 아니라 인용번호로 보고 자리의 대괄호 인용(`[26-28]`·`[26–28]`·`[24,26-28]`)을 펼쳐 대조한다(v15.4.2) — **그래프의 `doc` 이 가리키는 판의 번호 체계에 맞는 매핑만** 적용할 것. keys 의 순수 숫자("42", "29-31")는 **어떤 옵션으로도 건드리지 않는다**(v15.4.1 — 실물에서 참여자 수 42 가 바뀔 뻔함) — 인용번호 key 는 `refs 29-31` 로 쓸 것. 적용한 매핑을 상위 `refs_maps_applied` 에 기록하고 같은 매핑을 두 번 적용하려 하면 중단(`--force` 로 강행). **손으로 재번호한 그래프에는 표지가 없으므로 돌리지 말 것** — 돌리면 한 단계 더 밀린다. verified 있는 주장이 바뀌면 mapfreeze 재실행 경고 |
 
 ## 5. 작업 순서

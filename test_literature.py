@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.8.1'
+EXPECT_VERSION = '0.8.2'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 
@@ -300,7 +300,7 @@ def t_v07_page_marker_printed_first():
 
 
 JATS_BLOCKS = (b'<article><front><article-meta><title-group><article-title>T</article-title></title-group>'
-               b'<abstract><sec><title>Purpose</title><p>Abstract purpose words.</p></sec></abstract>'
+               b'<abstract><title>Abstract</title><sec><title>Purpose</title><p>Abstract purpose words.</p></sec><sec><p>Untitled psi part.</p></sec></abstract>'
                b'<abstract abstract-type="highlights"><title>Key tau points</title><list><list-item><p>Highlight chi.</p></list-item></list></abstract></article-meta></front><body>'
                b'<p>Body lead paragraph before sections.</p>'
                b'<sec><title>Methods</title>'
@@ -340,6 +340,7 @@ def t_v08_jats_blocks_not_dropped():
     assert '0.6312' not in md and 'eta0.63' not in md, md
     assert '[§ Sub (a) part]' in md, md                                                     # 제목 안 ] 는 ) 로 — locate 가 표지로 나눈다
     assert '[§ Abstract · Key tau points]' in md and '- Highlight chi.' in md, md
+    assert 'Abstract · Abstract' not in md and '· 절]' not in md and 'Untitled psi part' in md, md     # v0.8.2 (실제 XML): 초록 제목이 겹치지 않는다
     assert '[§ Abstract · Purpose]' in md and '[§ 부록 · Appendix A]' in md and '[§ 상자 · Key points]' in md, md
     # 상자 뒤 문단은 다시 원래 절 표지 아래에 — 상자 표지가 뒤 문단까지 가져가지 않는다
     before = md[:md.index('After the box epsilon')]

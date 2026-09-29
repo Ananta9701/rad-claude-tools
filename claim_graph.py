@@ -29,6 +29,10 @@ claim_graph.py — 문서(발표·원고·심사 회신)의 주장 의존 그래
           weight 는 "의존 강도"(type 기본값으로 고정), confidence 는 "그 주장 자체의 근거 강도".
           둘을 한 숫자에 섞지 않는다. "weight 높은 간선의 상류가 low" = 약한 고리.
     origin: human | extract                                              (v13, extract 가 붙임)
+    sources: [{kind, what, at, element?, verdict?, via?, pdf?, date?, note?}]  (v16, 선택 — 근거 칸)
+          kind 문헌|교과서|덱|원고|기타, what = DOI·책 폴더·파일, at = 쪽 표지 [p.인쇄 · PDF N]·절 표지 [§ …]·slide@sldId.
+          verdict(요소별 판정) 부합|부분|근거 없음|반대 방향. mapfreeze/mapstale --sources 폴더 로 원문 바뀜을 본다
+    supersedes: {statement, retracted} 또는 그 목록(v16 — 범위를 좁힌 이력, 마지막이 가장 최근)
 
 원리는 소프트웨어에서 가져왔다: 빌드 시스템의 의존 DAG + 내용 해시(바뀐 것과 하류만
 다시), 요구사항 추적의 suspect link(상류가 바뀌면 사람이 풀 때까지 의심), 스프레드시트의
@@ -42,12 +46,15 @@ import re
 import sys
 import zipfile
 
-__version__ = '15.8.4'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.0'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
-EDGE_TYPES = ('premise', 'support', 'context', 'caveat')
-EDGE_DEFAULT_WEIGHT = {'premise': 1.0, 'support': 0.7, 'context': 0.3, 'caveat': 0.5}
+EDGE_TYPES = ('premise', 'support', 'context', 'caveat', 'rebuttal')
+# v16 (저자·리뷰어 09-29): rebuttal = 반대 증거. caveat(한계)와 같은 방향 — 반박당하는 주장이 반박하는 쪽을 depends_on 에 적는다
+EDGE_DEFAULT_WEIGHT = {'premise': 1.0, 'support': 0.7, 'context': 0.3, 'caveat': 0.5, 'rebuttal': 0.5}
+SOURCE_KINDS = ('문헌', '교과서', '덱', '원고', '기타')
+VERDICTS = ('부합', '부분', '근거 없음', '반대 방향')
 IMPACT_CUTOFF = 0.25
 CLAIM_STATUS = ('accepted', 'proposed', 'superseded')
 CLAIM_ROLES = ('main', 'claim', 'evidence', 'background', 'method', 'caveat', 'rebuttal', 'premise')
@@ -226,6 +233,38 @@ class DocSource:
 # 그래프
 # ----------------------------------------------------------------------------
 
+def _supersedes(c):
+    """v16 (저자 09-29 '다듬음'): supersedes 는 하나(dict) 또는 이력 목록. 늘 목록으로, 마지막이 가장 최근."""
+    sp = c.get('supersedes') or []
+    return [x for x in (sp if isinstance(sp, list) else [sp]) if isinstance(x, dict)]
+
+
+def _source_problems(c, edges):
+    """v16 근거 칸 검사 — kind·what 필수, at 권장, verdict 는 정해진 넷, 덱 자리는 sldId."""
+    out, srcs = [], c.get('sources')
+    if srcs is None:
+        return out
+    if not isinstance(srcs, list):
+        return ['%s: sources 는 목록이어야 함' % c['id']]
+    for k, x in enumerate(srcs, 1):
+        tag = '%s: sources[%d]' % (c['id'], k)
+        if not isinstance(x, dict):
+            out.append('%s 는 {kind, what, at, …} 이어야 함' % tag); continue
+        if x.get('kind') not in SOURCE_KINDS:
+            out.append('%s: kind "%s" 는 %s 중 하나여야 함' % (tag, x.get('kind'), '/'.join(SOURCE_KINDS)))
+        if not x.get('what') and x.get('kind') not in ('덱', '원고'):
+            out.append('%s: what(DOI·책·파일)이 비어 있음' % tag)
+        if not x.get('at'):
+            out.append('[참고] %s: at(쪽·절·화면)이 없음 — 원문 전체로 본다' % tag)
+        if x.get('verdict') and x['verdict'] not in VERDICTS:
+            out.append('%s: verdict "%s" 는 %s 중 하나여야 함' % (tag, x['verdict'], '/'.join(VERDICTS)))
+        if x.get('kind') == '덱' and re.match(r'^(slide|notes):\d+$', str(x.get('at', ''))):
+            out.append('[참고] %s: 덱 자리 %s 는 파일 번호 — 화면이 밀리면 틀린다. slide@sldId 로(deck_toolkit mapcheck --to-sldid)' % (tag, x['at']))
+        if x.get('verdict') == '반대 방향' and not any(t == 'rebuttal' for _, t, _ in edges.get(c['id'], [])):
+            out.append('[참고] %s: 반대 방향 근거 — 반박 노드를 만들어 type rebuttal 로 걸지 확인' % tag)
+    return out
+
+
 def _edges(claims):
     out = {}
     for c in claims:
@@ -318,9 +357,10 @@ def mapgraph(claims, stream=sys.stdout):
             problems.append('[참고] %s: forbidden 이 있는데 supersedes(철회한 옛 주장) 기록이 없음'
                             % c['id'])
         if c.get('supersedes') and not c.get('forbidden'):
-            hint = _forbidden_hints(c['supersedes'].get('statement', ''))
+            hint = _forbidden_hints(_supersedes(c)[-1].get('statement', ''))
             problems.append('%s: supersedes 가 있는데 forbidden 이 비어 있음 — 옛 문구를 넣지 않으면 '
                             'mapcheck 가 옛 주장을 통과시킨다. 후보: %s' % (c['id'], ' / '.join(hint) or '-'))
+        problems.extend(_source_problems(c, edges))
         if c.get('role') in ('main', 'claim') and not any(t == 'premise' for _, t, _ in edges[c['id']]):
             problems.append('[참고] %s: role=%s 인데 premise 간선이 없음 — 검정 없는 해석이 결론 자리에 있는지 확인'
                             % (c['id'], c['role']))
@@ -332,6 +372,8 @@ def mapgraph(claims, stream=sys.stdout):
                                 % (c['id'], up, typ, '/'.join(EDGE_TYPES)))
             if not (0.0 <= w <= 1.0):
                 problems.append('%s -> %s: weight %.2f 는 0~1 이어야 함' % (c['id'], up, w))
+            if typ == 'caveat' and by_id.get(up, {}).get('role') == 'rebuttal':
+                problems.append('[참고] %s -> %s: caveat 간선이 role=rebuttal 주장을 가리킴 — 한계가 아니라 반대 증거면 type rebuttal' % (c['id'], up))
 
     for c in claims:
         if c.get('role') == 'evidence' and not any(t == 'caveat' for _, t, _ in edges[c['id']]):
@@ -431,6 +473,74 @@ def impact(claims, changed, stream=sys.stdout):
     if not rows:
         print('  하류 주장 없음 — 바뀐 주장의 자리만 고치면 됨', file=stream)
     return [(cid, s, path) for cid, (s, path) in rows]
+
+
+# ----------------------------------------------------------------------------
+# 관계도 그림 (v16) — Mermaid 글. 그래프 전체 또는 impact 결과(바뀐 주장 → 하류 경로)
+# ----------------------------------------------------------------------------
+
+_ROLE_SHAPE = {'main': ('{{', '}}'), 'evidence': ('[', ']'), 'claim': ('(', ')'), 'caveat': ('[/', '/]'),
+               'rebuttal': ('[\\', '\\]'), 'background': ('([', '])'), 'method': ('[[', ']]'), 'premise': ('[', ']')}
+_EDGE_ARROW = {'premise': '==>', 'support': '-->', 'context': '-.->', 'caveat': '-. 한계 .->', 'rebuttal': '-- 반박 --x'}
+
+
+def _mm(t):
+    return (t or '').replace('"', '#quot;').replace('<', '#lt;').replace('>', '#gt;')
+
+
+def mapdraw(claims, changed=None, text=False, stream=sys.stdout):
+    """Mermaid flowchart 글(```mermaid 블록이 든 md)을 돌려준다. 화살표는 근거 → 기대는 주장(아래로 main).
+    changed 가 있으면 impact 와 같은 계산으로 그 경로의 주장만 그리고, 바뀐 것·필수·참고를 색으로 나눈다.
+    GitHub·claude.ai(artifact) 에서 그림으로 보인다. Drive 미리보기는 글로만 보인다."""
+    by_id = {c['id']: c for c in claims}
+    edges = _edges(claims)
+    keep, lvl = set(by_id), {}
+    title = '그래프 전체'
+    if changed:
+        rows = impact(claims, changed, stream=io.StringIO())
+        keep = {x for x in changed if x in by_id} | {cid for cid, _, _ in rows}
+        for cid, sc, _ in rows:
+            lvl[cid] = 'must' if sc >= IMPACT_CUTOFF else 'ref'
+        for x in changed:
+            lvl[x] = 'changed'
+        title = 'impact: %s' % ', '.join(changed)
+    nid = {cid: 'n%d' % k for k, cid in enumerate(by_id, 1)}
+    L = ['# 관계도 — %s' % title, '',
+         '> claim_graph.py v%s mapdraw. 화살표: 근거 → 그것에 기대는 주장. 굵은 선 premise · 실선 support · 점선 context · '
+         '"한계" caveat · "반박"(x) rebuttal. 모양: 육각 main · 네모 evidence · 둥근 claim · 기울임 caveat.' % __version__, '',
+         '```mermaid', 'flowchart BT']
+    for cid, c in by_id.items():
+        if cid not in keep:
+            continue
+        a, b = _ROLE_SHAPE.get(c.get('role'), ('[', ']'))
+        lab = [cid, '%s·%s' % (c.get('role') or '-', c.get('confidence', 'mid'))]
+        if text and c.get('statement'):
+            st = c['statement']
+            lab.append(st[:40] + ('…' if len(st) > 40 else ''))
+        if c.get('status') == 'superseded':
+            lab.append('(철회)')
+        L.append('  %s%s"%s"%s' % (nid[cid], a, '<br/>'.join(_mm(x) for x in lab), b))   # 줄바꿈 <br/> 은 두고 글만 이스케이프
+    for cid in by_id:
+        if cid not in keep:
+            continue
+        for up, typ, w in edges[cid]:
+            if up in keep and up in nid:
+                L.append('  %s %s %s' % (nid[up], _EDGE_ARROW.get(typ, '-->'), nid[cid]))
+    if lvl:
+        L += ['  classDef changed fill:#f8d7da,stroke:#b02a37,stroke-width:3px',
+              '  classDef must fill:#fff3cd,stroke:#b58105', '  classDef ref fill:#e7f1ff,stroke:#6c8ebf']
+        for k in ('changed', 'must', 'ref'):
+            ids = [nid[x] for x, v in lvl.items() if v == k and x in nid]
+            if ids:
+                L.append('  class %s %s' % (','.join(ids), k))
+    sup = [nid[c['id']] for c in claims if c.get('status') == 'superseded' and c['id'] in keep]
+    if sup:
+        L += ['  classDef old fill:#eeeeee,color:#777777', '  class %s old' % ','.join(sup)]
+    L += ['```', '']
+    if lvl:
+        L.append('빨강 = 바뀐 주장 · 노랑 = 다시 볼 것(필수, 강도 ≥ %.2f) · 파랑 = 참고.' % IMPACT_CUTOFF)
+    out = '\n'.join(L) + '\n'
+    return out
 
 
 # ----------------------------------------------------------------------------
@@ -556,6 +666,11 @@ def mapreport(claims, stream=sys.stdout):
             print('      근거: %s' % c['evidence'], file=stream)
         if c.get('forbidden'):
             print('      철회: %s' % ' / '.join(c['forbidden']), file=stream)
+        for x in c.get('sources') or []:         # v16 근거 칸
+            if isinstance(x, dict):
+                print('      원문: %s %s %s%s%s' % (x.get('kind', ''), x.get('what', ''), x.get('at', ''),
+                                                 (' · ' + x['element']) if x.get('element') else '',
+                                                 (' → ' + x['verdict']) if x.get('verdict') else ''), file=stream)
     return sites
 
 
@@ -570,7 +685,112 @@ def _fingerprint(text):
     return hashlib.sha1(re.sub(r'\s+', ' ', t).strip().encode('utf8')).hexdigest()[:12]
 
 
-def mapfreeze(resolve, claims, at=None):
+# ----------------------------------------------------------------------------
+# 근거 원문 (v16) — 문헌 보관소 paper.md · 교과서 분할 md 에서 at 자리의 글
+# ----------------------------------------------------------------------------
+
+_MARK_LINE = re.compile(r'^(\[p\.[^\]]*\]|\[§ [^\]]*\])\s*$', re.M)
+
+
+def _page_of(mark):
+    """쪽 표지·자리 → (인쇄 쪽 문자열 또는 None, PDF 쪽 int 또는 None).
+    `[p.인쇄 · PDF N]`(새 표지) · `[p.N]`(대괄호 — 옛 문헌 md, N = PDF 쪽) · `PDF N` · `p.56`(대괄호 없음 = 인쇄 쪽)."""
+    t = mark.strip()
+    m = re.match(r'^\[?p\.\s*([^\]·]*?)\s*·\s*PDF\s*(\d+)\]?$', t)
+    if m:
+        pr = m.group(1).strip()
+        return (None if pr in ('', '—', '-') else pr), int(m.group(2))
+    m = re.match(r'^\[p\.\s*(\d+)\]$', t)
+    if m:
+        return None, int(m.group(1))
+    m = re.match(r'^PDF\s*(\d+)$', t)
+    if m:
+        return None, int(m.group(1))
+    m = re.match(r'^p\.\s*(\S+)$', t)
+    return (m.group(1), None) if m else (None, None)
+
+
+def _norm_body(t):
+    """비교용 본문 — 쪽·절 표지 줄과 '> ' 머리말 줄을 빼고 NFKC·띄어쓰기를 맞춘다(형식만 바뀐 것은 같게)."""
+    import unicodedata
+    t = _MARK_LINE.sub('', t or '')
+    t = '\n'.join(l for l in t.splitlines() if not l.startswith('> '))
+    return re.sub(r'\s+', ' ', unicodedata.normalize('NFKC', t)).strip()
+
+
+def _at_text(md, at):
+    """md 에서 at 자리의 글. at 없음/'전체' → 머리말 뒤 전부. [§ 절] → 그 표지가 붙은 덩이 모두(상자 뒤 다시 붙은 것 포함)."""
+    parts = _MARK_LINE.split(md)          # [앞, 표지, 글, 표지, 글, …]
+    at = (at or '').strip()
+    if not at or at == '전체':
+        return md
+    if at.startswith('[§'):
+        want = re.sub(r'\s+', ' ', at)
+        got = [parts[k + 1] for k in range(1, len(parts) - 1, 2) if re.sub(r'\s+', ' ', parts[k].strip()) == want]
+        if not got:
+            raise KeyError('절 표지 %s 없음' % at)
+        return '\n'.join(got)
+    pr, pdf = _page_of(at)
+    if pr is None and pdf is None:
+        raise KeyError('자리 %s 를 쪽 표지로 읽지 못함' % at)
+    for k in range(1, len(parts) - 1, 2):
+        mpr, mpdf = _page_of(parts[k].strip())
+        if (pdf is not None and mpdf == pdf) or (pdf is None and pr is not None and mpr == pr):
+            return parts[k + 1]
+    raise KeyError('쪽 %s 없음' % at)
+
+
+def _source_file(root, src):
+    """(md 경로 목록, 원 파일 sha 또는 None). 문헌: 보관소에서 meta.md 의 doi= 로. 교과서: 분할 폴더 안 책 폴더(이름에 what 이 든 것)의 md."""
+    kind, what = src.get('kind'), str(src.get('what', '')).strip()
+    if kind == '문헌':
+        want = what.lower().replace('https://doi.org/', '')
+        for d in sorted(os.listdir(root)):
+            mp = os.path.join(root, d, 'meta.md')
+            if os.path.exists(mp):
+                head = open(mp, encoding='utf8').readline()
+                m = re.search(r'doi=(\S+)', head)
+                if (m and m.group(1).lower() == want) or d == what:
+                    sha = re.search(r'sha=([0-9a-f]+)', head)
+                    return [os.path.join(root, d, 'paper.md')], (sha.group(1) if sha else None)
+        raise KeyError('보관소에 %s 없음' % what)
+    if kind == '교과서':
+        books = [d for d in sorted(os.listdir(root)) if os.path.isdir(os.path.join(root, d)) and what and what in d]
+        if len(books) != 1:
+            raise KeyError('교과서 폴더 "%s" %s' % (what, '없음' if not books else '여럿: ' + ', '.join(books)))
+        bd = os.path.join(root, books[0])
+        return [os.path.join(bd, f) for f in sorted(os.listdir(bd)) if f.endswith('.md') and f != 'INDEX.md'], None
+    raise KeyError('kind %s 는 원문 폴더로 읽지 않는다' % kind)
+
+
+def _source_read(src, root, resolve=None):
+    """근거 하나 → {'text': 그 자리 본문 해시, 'raw': 파일 전체 해시, 'orig': 원 파일 sha}. 덱·원고는 문서 resolver 로."""
+    import hashlib
+    h = lambda t: hashlib.sha1(t.encode('utf8')).hexdigest()[:12]
+    if src.get('kind') in ('덱', '원고'):
+        if resolve is None:
+            raise KeyError('문서가 없다')
+        t = resolve(src.get('at', ''))
+        return {'text': h(_norm_body(t)), 'raw': h(t), 'orig': None}
+    if not root:
+        raise KeyError('원문 폴더(--sources)가 없다')
+    files, orig = _source_file(root, src)
+    last = None
+    for fp in files:
+        md = open(fp, encoding='utf8').read()
+        try:
+            t = _at_text(md, src.get('at'))
+        except KeyError as e:
+            last = e; continue
+        return {'text': h(_norm_body(t)), 'raw': h(md), 'orig': orig}
+    raise last or KeyError('md 없음')
+
+
+def _src_key(x):
+    return '%s|%s|%s|%s' % (x.get('kind', ''), x.get('what', ''), x.get('at', ''), x.get('element', ''))
+
+
+def mapfreeze(resolve, claims, at=None, sources=None, stream=None):
     """검증 완료 선언. 자리 텍스트와 statement/evidence 의 해시를 기록."""
     import datetime
     at = at or datetime.date.today().isoformat()
@@ -586,6 +806,23 @@ def mapfreeze(resolve, claims, at=None):
     if bad:
         raise SystemExit('[멈춤] 자리를 읽지 못해 검증 기록(mapfreeze)을 하지 않았다 — 지운 화면·바뀐 절 제목이면 sites 를 먼저 고친다:\n  '
                          + '\n  '.join(bad[:20]))
+    src_rec, src_skip = {}, []
+    for c in claims:                      # v16: 근거 원문 — 폴더를 준 때만. 못 읽는 근거는 기록하지 않고 알린다(근거 칸은 선택)
+        old = (c.get('verified') or {}).get('sources', {})
+        rec = {}
+        for x in c.get('sources') or []:
+            if not isinstance(x, dict):
+                continue
+            k = _src_key(x)
+            if sources is None and x.get('kind') not in ('덱', '원고'):
+                if k in old:
+                    rec[k] = old[k]        # 폴더 없이 다시 freeze — 전 기록을 그대로 둔다
+                continue
+            try:
+                rec[k] = _source_read(x, sources, resolve)
+            except (KeyError, OSError) as e:
+                src_skip.append('%s: %s %s %s (%s)' % (c['id'], x.get('kind'), x.get('what', ''), x.get('at', ''), e))
+        src_rec[c['id']] = rec
     for c in claims:
         fp = {site: fps[(c['id'], site)] for site in c.get('sites', [])}
         c['verified'] = {'at': at, 'sites': fp,
@@ -593,11 +830,20 @@ def mapfreeze(resolve, claims, at=None):
                          # v15.5: keys 만 바꾼 그래프(mapstale 0 · mapcheck 실패)를 잡기 위한 별도 해시.
                          # 구판 freeze 에는 이 키가 없고, 없으면 mapstale 이 검사하지 않는다(기존 그래프 무영향)
                          'keys': _fingerprint('|'.join(c.get('keys', [])))}
+        if src_rec.get(c['id']):
+            c['verified']['sources'] = src_rec[c['id']]
+    if src_skip and stream is not None:
+        print('[참고] 근거 원문 %d곳은 기록하지 않음(원문 폴더·자리를 못 찾음 — mapstale 이 보지 않는다):\n  %s'
+              % (len(src_skip), '\n  '.join(src_skip[:20])), file=stream)
     return claims
 
 
-def mapstale(resolve, claims, stream=sys.stdout):
+def mapstale(resolve, claims, stream=sys.stdout, sources=None):
+    """sources(v16): 근거 원문 폴더(문헌 보관소·교과서 분할). 주면 freeze 때 적은 근거 원문과 비교한다 —
+    본문이 같으면 쪽 표지·머리말이 바뀌어도 알리지 않고(형식만), 원 파일(PDF·XML sha)이 같은데 본문이 다르면 '변환 바뀜' 으로 따로
+    (하류 전파 없음, '근거 없음'·'부분' 판정만 다시 볼 것), 원 파일이 다르거나 sha 가 없는데 본문이 다르면 [변경]."""
     changed, unverified, detail = [], [], []
+    fmt_only, converted, conv_recheck = [], [], []
     for c in claims:
         v = c.get('verified')
         if not v:
@@ -613,14 +859,51 @@ def mapstale(resolve, claims, stream=sys.stdout):
                 changed.append(c['id']); detail.append('%s: %s 자리를 읽을 수 없다(지운 화면·바뀐 절 제목?)' % (c['id'], site)); break   # v15.8.4
             if v.get('sites', {}).get(site) != now:
                 changed.append(c['id']); detail.append('%s: %s 텍스트가 바뀜' % (c['id'], site)); break
+        if c['id'] in changed or not v.get('sources'):
+            continue
+        for x in c.get('sources') or []:
+            k = _src_key(x) if isinstance(x, dict) else None
+            was = v['sources'].get(k)
+            if not was or (sources is None and x.get('kind') not in ('덱', '원고')):
+                continue
+            label = '%s %s %s' % (x.get('kind'), x.get('what', ''), x.get('at', ''))
+            try:
+                now = _source_read(x, sources, resolve)
+            except (KeyError, OSError) as e:
+                try:                      # 원 파일(XML·PDF)은 같은데 새 변환에 그 표지가 없다 — 내용 변경이 아니라 at 을 고칠 일
+                    same = bool(was.get('orig')) and _source_file(sources, x)[1] == was['orig']
+                except (KeyError, OSError):
+                    same = False
+                if same:
+                    converted.append('%s: %s' % (c['id'], label))
+                    conv_recheck.append('%s: %s — 새 변환에 이 자리 표지가 없다, at 을 새 표지로 고칠 것' % (c['id'], label)); continue
+                changed.append(c['id']); detail.append('%s: 근거 원문 %s 를 찾을 수 없음 (%s)' % (c['id'], label, e)); break
+            if now['text'] == was['text']:
+                if now['raw'] != was['raw']:
+                    fmt_only.append('%s: %s' % (c['id'], label))
+                continue
+            if was.get('orig') and now.get('orig') == was['orig']:
+                converted.append('%s: %s' % (c['id'], label))
+                if x.get('verdict') in ('근거 없음', '부분'):
+                    conv_recheck.append('%s: %s — 판정 "%s"' % (c['id'], label, x['verdict']))
+                continue
+            changed.append(c['id']); detail.append('%s: 근거 원문 %s 의 글이 바뀜%s' % (
+                c['id'], label, ' (원 파일도 다름)' if was.get('orig') and now.get('orig') else '')); break
     print('=== 검증 이후 변경 ===', file=stream)
     if unverified:
         print('  [!] 아직 검증 기록 없음: %s' % ', '.join(unverified), file=stream)
     for d in detail:
         print('  [변경] %s' % d, file=stream)
+    if fmt_only:
+        print('  [같음] 근거 원문 %d곳은 파일은 바뀌었으나 그 자리 본문은 그대로(쪽 표지·머리말·다른 쪽) — 할 일 없음' % len(fmt_only), file=stream)
+    if converted:
+        print('  [변환] 근거 원문 %d곳은 원 파일(PDF·XML)이 같고 md 변환만 바뀜 — 하류로 번지지 않는다' % len(converted), file=stream)
+        for r in conv_recheck:
+            print('    다시 볼 것(전에 없던 글이 생겼을 수 있음): %s' % r, file=stream)
+    extra = {'format_only': fmt_only, 'converted': converted, 'recheck': conv_recheck}
     if not changed and not unverified:
         print('  검증 이후 바뀐 것 없음', file=stream)
-        return {'changed': [], 'suspect': [], 'unverified': []}
+        return dict({'changed': [], 'suspect': [], 'unverified': []}, **extra)
     sus = impact(claims, changed, stream) if changed else []
     if changed:
         by_id = {c['id']: c for c in claims}
@@ -630,7 +913,7 @@ def mapstale(resolve, claims, stream=sys.stdout):
         print('\n실제로 바뀐 주장의 자리(직접) : %s' % (', '.join(direct) or '(없음)'), file=stream)
         print('위 "다시 봐야 할 자리" 중 나머지는 하류 전파 — 내용이 바뀐 것이 아니라 근거가 흔들린 자리다.', file=stream)
     print('\n위 자리를 확인한 뒤 mapfreeze 로 다시 기록하십시오.', file=stream)
-    return {'changed': changed, 'suspect': sus, 'unverified': unverified}
+    return dict({'changed': changed, 'suspect': sus, 'unverified': unverified}, **extra)
 
 
 # ----------------------------------------------------------------------------
@@ -1217,8 +1500,14 @@ def main():
     g = sub.add_parser('mapgraph'); g.add_argument('--claims', required=True)
     i = sub.add_parser('impact'); i.add_argument('--claims', required=True); i.add_argument('ids', nargs='+')
     i.add_argument('--sites', action='store_true', help='자리 목록만 한 줄에 하나씩 (v15.5, 저자 v48 목록 검증용)')
+    dr = sub.add_parser('mapdraw', help='관계도 Mermaid 글(md) — 전체 또는 --impact 주장 경로 (v16)')
+    dr.add_argument('--claims', required=True); dr.add_argument('-o', required=True, help='쓸 md 파일')
+    dr.add_argument('--impact', nargs='+', default=None, metavar='ID', help='이 주장들이 바뀌었을 때의 하류만')
+    dr.add_argument('--text', action='store_true', help='상자에 statement 앞 40자도')
     for name in ('mapcheck', 'mapfreeze', 'mapstale'):
         p = sub.add_parser(name); p.add_argument('doc'); p.add_argument('--claims', required=True)
+        if name in ('mapfreeze', 'mapstale'):
+            p.add_argument('--sources', default=None, help='근거 원문 폴더(문헌 보관소·교과서 분할) — 주면 근거 원문 바뀜도 본다 (v16)')
         if name == 'mapfreeze':
             p.add_argument('-o', required=True)
         if name == 'mapcheck':
@@ -1231,6 +1520,7 @@ def main():
     d = sub.add_parser('mapdiff'); d.add_argument('a'); d.add_argument('b')
     d.add_argument('--labels', nargs=2, default=['A', 'B'])
     d.add_argument('--pairs', help='수동 짝. 문자열 "a1=b1,a2=b2" 또는 파일 경로 — json {"a_id": "b_id"} 이거나 한 줄에 a_id=b_id 인 텍스트')
+    d.add_argument('--save-pairs', action='store_true', help='--pairs 를 a 그래프의 맨 위 칸 pairs_with[b 라벨] 에 적어 둔다 — 다음부터 --pairs 없이 (v16)')
     rr = sub.add_parser('remap-refs', help='참고문헌 재번호 매핑으로 claims 의 인용번호 갱신 (v15.4, #4)')
     rr.add_argument('--claims', required=True); rr.add_argument('--map', required=True, dest='refmap')
     rr.add_argument('-o', required=True)
@@ -1259,13 +1549,35 @@ def main():
                         seen.append(s); print(s)
         else:
             impact(load_claims(a.claims), a.ids)
+    elif a.cmd == 'mapdraw':
+        out = mapdraw(load_claims(a.claims), changed=a.impact, text=a.text)
+        with open(a.o, 'w', encoding='utf8') as f:
+            f.write(out)
+        print('저장: %s' % a.o)
     elif a.cmd == 'mapreport':
         mapreport(load_claims(a.claims))
     elif a.cmd == 'scaffold':
         scaffold(load_claims(a.claims))
     elif a.cmd == 'mapdiff':
+        ma, ca = load_claims_full(a.a)
+        mb, cb = load_claims_full(a.b)
         pairs = parse_pairs(a.pairs) if a.pairs else None
-        mapdiff(load_claims(a.a), load_claims(a.b), a.labels[0], a.labels[1], pairs=pairs)
+        if pairs is None:                 # v16 (리뷰어 09-29 '같은 뜻'): 그래프에 적어 둔 짝 — a 쪽 먼저, 없으면 b 쪽을 뒤집어
+            pairs = (ma.get('pairs_with') or {}).get(a.labels[1])
+            if not pairs and (mb.get('pairs_with') or {}).get(a.labels[0]):
+                pairs = {}
+                for ib, ia in mb['pairs_with'][a.labels[0]].items():
+                    for x in (ia if isinstance(ia, list) else [ia]):
+                        pairs.setdefault(x, []).append(ib)
+                pairs = {k: (v[0] if len(v) == 1 else v) for k, v in pairs.items()}
+            if pairs:
+                print('(그래프에 적힌 짝 %d개를 씀 — pairs_with)' % len(pairs))
+        mapdiff(ca, cb, a.labels[0], a.labels[1], pairs=pairs)
+        if a.save_pairs:
+            if not a.pairs:
+                print('[중단] --save-pairs 는 --pairs 와 함께'); sys.exit(2)
+            ma.setdefault('pairs_with', {})[a.labels[1]] = parse_pairs(a.pairs)
+            print('짝 저장: %s (pairs_with.%s)' % (save_claims(a.a, ca, meta=ma), a.labels[1]))
     elif a.cmd == 'remap-refs':
         import hashlib, json
         meta, cl = load_claims_full(a.claims)
@@ -1289,14 +1601,14 @@ def main():
             sys.exit(1 if any(not p.startswith('[참고]') for p in probs) else 0)
         elif a.cmd == 'mapfreeze':
             meta, cl = load_claims_full(a.claims)
-            mapfreeze(src.resolve, cl)
+            mapfreeze(src.resolve, cl, sources=a.sources, stream=sys.stdout)
             print('기록 완료: %s' % save_claims(a.o, cl, meta=meta, doc=a.doc))
         elif a.cmd == 'mapstale':
             meta, cl = load_claims_full(a.claims)
             stale_doc = meta.get('doc') or meta.get('deck')
             if stale_doc and doc_name(stale_doc) != doc_name(a.doc):
                 print('[경고] 그래프의 doc=%s 와 대상 %s 가 다름 — 다른 판에 대한 freeze 일 수 있음' % (doc_name(stale_doc), doc_name(a.doc)))
-            r = mapstale(src.resolve, cl)
+            r = mapstale(src.resolve, cl, sources=a.sources)
             sys.exit(1 if (r['changed'] or r['unverified']) else 0)
 
 

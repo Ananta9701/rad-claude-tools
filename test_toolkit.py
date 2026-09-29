@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.40'
+EXPECT_VERSION = '16.41'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -2311,6 +2311,24 @@ def t_v1640_deck_mapfreeze_keeps_top_level():
     json.dump(dict(meta, claims=bad), open(cj, 'w', encoding='utf8'), ensure_ascii=False)
     os.remove(oj); r = cli('mapfreeze', src, '--claims', cj, '-o', oj)
     assert r.returncode != 0 and 'slide:999' in (r.stdout + r.stderr) and not os.path.exists(oj), (r.returncode, r.stdout, r.stderr)
+
+
+def t_v1641_deck_sources_textbook_and_deck():
+    # 5판(발표 09-29): 덱 그래프의 근거 칸 — 교과서 쪽은 --sources 폴더에서, 덱 자리(slide@sldId 등)는 덱 자신에서 바뀜을 본다
+    import copy, tempfile
+    root = tempfile.mkdtemp(prefix='dksrc_'); bd = os.path.join(root, '01_시험책'); os.makedirs(bd)
+    open(os.path.join(bd, '02_장.md'), 'w', encoding='utf8').write('[p.60 · PDF 61]\n\nanswer basis text\n')
+    d = T.Deck.open(SRC, wd('dks')); d.set_title(7, 'title x'); d.set_notes(7, ['note y']); d.set_notes(8, ['z'])
+    g = copy.deepcopy(GRAPH)
+    g[0]['sources'] = [{'kind': '교과서', 'what': '시험책', 'at': 'p.60'}, {'kind': '덱', 'at': 'notes:8'}]
+    g = T.mapfreeze(d, g, at='2026-01-01', sources=root)
+    assert len(g[0]['verified']['sources']) == 2, g[0]['verified']
+    r = T.mapstale(d, g, io.StringIO(), sources=root); assert r['changed'] == [], r                 # 성공 길: 그대로면 조용
+    open(os.path.join(bd, '02_장.md'), 'w', encoding='utf8').write('[p.60 · PDF 61]\n\nanswer basis text revised\n')
+    r = T.mapstale(d, g, io.StringIO(), sources=root); assert r['changed'] == ['a'] and 'b' in [x[0] for x in r['suspect']], r   # 실패 길: 근거 쪽이 바뀜
+    open(os.path.join(bd, '02_장.md'), 'w', encoding='utf8').write('[p.60 · PDF 61]\n\nanswer basis text\n')
+    d.set_notes(8, ['z changed'])
+    r = T.mapstale(d, g, io.StringIO(), sources=root); assert 'a' in r['changed'], r                 # 덱 근거 자리가 바뀜
 
 
 def t_unmapped_sites():

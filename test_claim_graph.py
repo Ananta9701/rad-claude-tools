@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '15.8.4'
+EXPECT_VERSION = '16.0'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -520,6 +520,168 @@ def t_numtokens_and_mapcheck_nums():
     assert any('수치 0.39' in p and p.startswith('[참고]') for p in probs), probs
     probs, _ = CGm.mapcheck(src.resolve, cl, io.StringIO())
     assert not probs, probs                                        # nums 안 켜면 안 본다
+
+
+# ---------------------------------------------------------------- v16 (5판: 근거 칸 · 반박 · 짝 저장 · 이력 · 관계도)
+def _probs(g):
+    return CGm.mapgraph(g, io.StringIO())[0]
+
+
+def t_v16_sources_validation():
+    g = copy.deepcopy(GRAPH)
+    g[0]['sources'] = [{'kind': '문헌', 'what': '10.1000/abc', 'at': '[p.5 · PDF 5]', 'element': '방향', 'verdict': '부합'},
+                       {'kind': '교과서', 'what': '시험책', 'at': 'p.56'}, {'kind': '덱', 'at': 'slide@260'}]
+    assert not [p for p in _probs(g) if 'sources' in p], _probs(g)                 # 성공 길: 맞는 근거 칸은 조용
+    g[0]['sources'] = [{'kind': '잡지', 'what': 'x', 'at': 'y'}, {'kind': '문헌', 'at': 'p.1'}, {'kind': '문헌', 'what': 'd', 'at': 'p.1', 'verdict': '맞음'},
+                       {'kind': '덱', 'at': 'slide:7'}, {'kind': '문헌', 'what': 'd'}, 'x']
+    ps = _probs(g)
+    assert any('kind "잡지"' in p for p in ps) and any('what' in p and '비어' in p for p in ps) and any('verdict "맞음"' in p for p in ps), ps
+    assert any(p.startswith('[참고]') and 'slide@sldId' in p for p in ps) and any(p.startswith('[참고]') and 'at(' in p for p in ps), ps
+    assert any('sources[6]' in p for p in ps), ps
+    g[0]['sources'] = 'x'
+    assert any('목록이어야' in p for p in _probs(g))
+
+
+def t_v16_rebuttal_edge():
+    g = copy.deepcopy(GRAPH)
+    g.append({'id': 'r', 'statement': 'R', 'role': 'rebuttal', 'depends_on': []})
+    g[1]['depends_on'].append({'id': 'r', 'type': 'rebuttal'})
+    assert not [p for p in _probs(g) if not p.startswith('[참고]')], _probs(g)   # 성공 길: 새 type 을 받는다
+    rows = dict((cid, s) for cid, s, _ in CGm.impact(g, ['r'], io.StringIO()))
+    assert abs(rows['b'] - 0.5) < 1e-9 and 'c' in rows, rows                          # caveat 과 같은 무게로 하류까지
+    g[1]['depends_on'][-1]['type'] = 'caveat'
+    assert any('type rebuttal' in p and p.startswith('[참고]') for p in _probs(g))      # 한계로 적은 반박 노드는 알린다
+    g[1]['depends_on'][-1]['type'] = 'rebut'
+    assert any('type "rebut"' in p for p in _probs(g))                                  # 실패 길: 모르는 type
+    g[1]['depends_on'][-1]['type'] = 'rebuttal'
+    g[0]['sources'] = [{'kind': '문헌', 'what': 'd', 'at': 'p.1', 'verdict': '반대 방향'}]
+    assert any('반박 노드' in p for p in _probs(g))                                      # a 에는 rebuttal 간선이 없다
+    g[1]['sources'] = [{'kind': '문헌', 'what': 'd', 'at': 'p.1', 'verdict': '반대 방향'}]
+    assert not any(p.startswith('[참고] b:') and '반박 노드' in p for p in _probs(g))
+
+
+def t_v16_supersedes_history():
+    g = copy.deepcopy(GRAPH)
+    g[0]['supersedes'] = [{'statement': 'whole sample alpha beta', 'retracted': '2026-08-01'},
+                          {'statement': 'subgroup gamma delta', 'retracted': '2026-09-01'}]
+    ps = _probs(g)
+    assert any('supersedes 가 있는데 forbidden' in p and 'gamma' in p for p in ps), ps  # 가장 최근 것에서 후보
+    assert CGm._supersedes({'supersedes': {'statement': 's'}}) == [{'statement': 's'}] and CGm._supersedes({}) == []
+
+
+def _store(root, doi='10.1000/abc', sha='aaaa', md=None):
+    d = os.path.join(root, doi.replace('/', '_')); os.makedirs(d, exist_ok=True)
+    open(os.path.join(d, 'meta.md'), 'w', encoding='utf8').write('<!-- lit: doi=%s pages=2 blank=0 sha=%s -->\n# t\n' % (doi, sha))
+    open(os.path.join(d, 'paper.md'), 'w', encoding='utf8').write(md)
+    return d
+
+
+OLD_PDF_MD = '# t\n\n> 원문 PDF 의 글자층(literature.py v0.6). 쪽 표지 [p.N].\n\n[p.1]\n\nIntro words here.\n\n[p.2]\n\nThe sensitivity was 92 percent in lesions.\n'
+NEW_PDF_MD = '# t\n\n> 원문 PDF 의 글자층(literature.py v0.8.1). 쪽 표지 [p.인쇄 · PDF N].\n\n[p.e11 · PDF 1]\n\nIntro words here.\n\n[p.e12 · PDF 2]\n\nThe sensitivity was 92 percent in lesions.\n'
+
+
+def t_v16_mapstale_sources():
+    import tempfile
+    root = tempfile.mkdtemp(prefix='cgsrc_')
+    d = _store(root, md=OLD_PDF_MD)
+    cl = [{'id': 's', 'statement': 'S', 'evidence': 'e', 'sites': [], 'keys': [], 'depends_on': [],
+           'sources': [{'kind': '문헌', 'what': '10.1000/abc', 'at': '[p.2]', 'verdict': '부합'},
+                       {'kind': '문헌', 'what': '10.1000/abc', 'at': '[p.1]', 'element': 'x', 'verdict': '근거 없음'}]},
+          {'id': 't', 'statement': 'T', 'sites': [], 'keys': [], 'depends_on': [{'id': 's', 'type': 'premise'}]}]
+    CGm.mapfreeze(lambda s: '', cl, sources=root)
+    assert len(cl[0]['verified']['sources']) == 2, cl[0]['verified']
+    # 1. 쪽 표지 형식·머리말만 바뀐 새 ingest(v0.7+) — 알림 없음, '형식만' 한 줄
+    open(os.path.join(d, 'paper.md'), 'w', encoding='utf8').write(NEW_PDF_MD)
+    out = io.StringIO(); r = CGm.mapstale(lambda s: '', cl, out, sources=root)
+    assert not r['changed'] and len(r['format_only']) == 2 and '검증 이후 바뀐 것 없음' in out.getvalue(), out.getvalue()
+    # 2. 원 파일 같음(sha)인데 1쪽 글이 늘었다(변환 개선) — '변환', 하류로 안 번짐, '근거 없음' 판정만 다시 볼 것
+    open(os.path.join(d, 'paper.md'), 'w', encoding='utf8').write(NEW_PDF_MD.replace('Intro words here.', 'Intro words here. - listed item now visible'))
+    out = io.StringIO(); r = CGm.mapstale(lambda s: '', cl, out, sources=root)
+    assert not r['changed'] and r['converted'] and len(r['recheck']) == 1 and '근거 없음' in r['recheck'][0], out.getvalue()
+    # 2-1. 원 파일 같음인데 새 변환에 그 자리 표지가 없다 — [변경] 이 아니라 '변환' + at 을 고치라는 줄
+    open(os.path.join(d, 'paper.md'), 'w', encoding='utf8').write('# t\n\n[§ Whole]\n\nIntro words here. The sensitivity was 92 percent in lesions.\n')
+    out = io.StringIO(); r = CGm.mapstale(lambda s: '', cl, out, sources=root)
+    assert not r['changed'] and any('at 을 새 표지로' in x for x in r['recheck']), out.getvalue()
+    # 3. 원 파일이 바뀌고(다른 PDF) 2쪽 글도 다름 — [변경], 하류 t 까지
+    _store(root, sha='bbbb', md=NEW_PDF_MD.replace('92 percent', '90 percent'))
+    out = io.StringIO(); r = CGm.mapstale(lambda s: '', cl, out, sources=root)
+    assert r['changed'] == ['s'] and any(x[0] == 't' for x in r['suspect']) and '원 파일도 다름' in out.getvalue(), out.getvalue()
+    # 4. 폴더를 주지 않으면 근거 원문은 보지 않는다(전처럼)
+    r = CGm.mapstale(lambda s: '', cl, io.StringIO())
+    assert not r['changed'], r
+    # 5. 보관소에서 그 DOI 가 없어졌다 — [변경](조용히 '같음' 이 되지 않는다)
+    import shutil; shutil.rmtree(d)
+    out = io.StringIO(); r = CGm.mapstale(lambda s: '', cl, out, sources=root)
+    assert r['changed'] == ['s'] and '찾을 수 없음' in out.getvalue(), out.getvalue()
+    # 6. 폴더 없이 다시 freeze 하면 전 근거 기록을 그대로 둔다
+    CGm.mapfreeze(lambda s: '', cl)
+    assert len(cl[0]['verified']['sources']) == 2
+
+
+def t_v16_sources_textbook_and_section():
+    import tempfile
+    root = tempfile.mkdtemp(prefix='cgtb_')
+    bd = os.path.join(root, '01_시험책'); os.makedirs(bd)
+    open(os.path.join(bd, '03_장.md'), 'w', encoding='utf8').write('[p.55 · PDF 69]\n\nalpha\n\n[p.56 · PDF 70]\n\nbeta finding.\n')
+    cl = [{'id': 'q', 'statement': 'Q', 'sites': [], 'keys': [], 'depends_on': [],
+           'sources': [{'kind': '교과서', 'what': '시험책', 'at': 'p.56'}, {'kind': '교과서', 'what': '없는책', 'at': 'p.1'}]}]
+    out = io.StringIO(); CGm.mapfreeze(lambda s: '', cl, sources=root, stream=out)
+    assert list(cl[0]['verified']['sources']) == ['교과서|시험책|p.56|'] and '없는책' in out.getvalue(), out.getvalue()   # 못 찾은 근거는 알리고 기록 안 함
+    open(os.path.join(bd, '03_장.md'), 'w', encoding='utf8').write('[p.55 · PDF 69]\n\nalpha changed\n\n[p.56 · PDF 70]\n\nbeta finding.\n')
+    assert not CGm.mapstale(lambda s: '', cl, io.StringIO(), sources=root)['changed']      # 다른 쪽이 바뀐 것은 무관
+    open(os.path.join(bd, '03_장.md'), 'w', encoding='utf8').write('[p.55 · PDF 69]\n\nalpha\n\n[p.56 · PDF 70]\n\nbeta finding revised.\n')
+    assert CGm.mapstale(lambda s: '', cl, io.StringIO(), sources=root)['changed'] == ['q']  # 원 sha 가 없는 교과서는 글이 바뀌면 [변경]
+    # 절 표지(oa XML md): 상자 뒤 다시 붙은 같은 절 표지도 한 절로
+    md = '# t\n\n> Europe PMC 전문 XML(PMC1)에서(변환 v0.8.1)\n\n[§ Methods]\n\nfirst part.\n\n[§ 상자 · K]\n\nbox.\n\n[§ Methods]\n\nsecond part.\n'
+    assert 'first part' in CGm._at_text(md, '[§ Methods]') and 'second part' in CGm._at_text(md, '[§ Methods]') and 'box' not in CGm._at_text(md, '[§ Methods]')
+    try:
+        CGm._at_text(md, '[§ Results]'); assert False
+    except KeyError:
+        pass
+    assert CGm._page_of('[p.e12 · PDF 2]') == ('e12', 2) and CGm._page_of('[p.— · PDF 3]') == (None, 3) and CGm._page_of('[p.7]') == (None, 7) and CGm._page_of('p.7') == ('7', None)
+
+
+def t_v16_mapdraw():
+    g = copy.deepcopy(GRAPH)
+    g[0]['role'] = 'evidence'; g[1]['role'] = 'main'; g[1]['statement'] = 'He said "yes" <b>'
+    g.append({'id': 'r', 'statement': 'R', 'role': 'rebuttal', 'depends_on': []})
+    g.append({'id': 'z', 'statement': 'Z', 'depends_on': []})
+    g[1]['depends_on'].append({'id': 'r', 'type': 'rebuttal'})
+    md = CGm.mapdraw(g, text=True)
+    assert md.count('```mermaid') == 1 and 'flowchart BT' in md, md
+    assert 'n1 ==> n2' in md and 'n2 -.-> n3' in md and 'n4 -- 반박 --x n2' in md, md       # 근거 → 주장 방향, 종류별 선
+    assert '#quot;yes#quot;' in md and '<b>' not in md and '#lt;b#gt;' in md, md             # 따옴표·꺾쇠는 Mermaid 가 깨지지 않게
+    assert 'n1["a<br/>evidence·mid' in md and '#lt;br' not in md, md                          # 줄바꿈 <br/> 은 그대로(v16 첫 빌드 결함)
+    assert 'n5' in md                                                                       # 전체 그림은 외톨이도
+    md = CGm.mapdraw(g, changed=['a'])
+    assert 'n5' not in md and 'n4' not in md and 'class n1 changed' in md and 'class n2 must' in md, md   # impact: 경로만, 색
+    md = CGm.mapdraw(g, changed=['nope'])                                                   # 실패 길: 없는 id — 멈추지 않고 빈 그림
+    assert 'flowchart BT' in md and 'n1' not in md, md
+
+
+def t_v16_mapdraw_and_saved_pairs_cli():
+    import json, tempfile
+    d = tempfile.mkdtemp(prefix='cgcli_')
+    cg = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'claim_graph.py')
+    A = os.path.join(d, 'a.json'); B = os.path.join(d, 'b.json')
+    json.dump({'doc': 'x.docx', 'claims': [{'id': 'a1', 'statement': 's', 'sites': ['doc:p:1'], 'keys': ['k1'], 'depends_on': []}]}, open(A, 'w'))
+    json.dump({'claims': [{'id': 'b9', 'statement': 's', 'sites': ['doc:p:9'], 'keys': ['k9'], 'depends_on': []}]}, open(B, 'w'))
+    run = lambda *a: subprocess.run([sys.executable, cg] + list(a), capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    r = run('mapdiff', A, B, '--labels', '저자', '리뷰어')
+    assert '양쪽이 잡은 주장 0개' in r.stdout, r.stdout                                      # 자리·keys 가 달라 자동으로는 못 짝짓는다
+    r = run('mapdiff', A, B, '--labels', '저자', '리뷰어', '--save-pairs')
+    assert r.returncode == 2 and '--pairs 와 함께' in r.stdout, r.stdout                     # 실패 길: 짝 없이 저장하지 않는다
+    r = run('mapdiff', A, B, '--labels', '저자', '리뷰어', '--pairs', 'a1=b9', '--save-pairs')
+    assert json.load(open(A))['pairs_with'] == {'리뷰어': {'a1': 'b9'}} and json.load(open(A))['doc'] == 'x.docx', open(A).read()
+    r = run('mapdiff', A, B, '--labels', '저자', '리뷰어')
+    assert '양쪽이 잡은 주장 1개' in r.stdout and 'pairs_with' in r.stdout, r.stdout           # 다음부터 --pairs 없이
+    r = run('mapdiff', B, A, '--labels', '리뷰어', '저자')
+    assert '양쪽이 잡은 주장 1개' in r.stdout, r.stdout                                      # 반대쪽에서 불러도 뒤집어 쓴다
+    out = os.path.join(d, '관계도.md')
+    r = run('mapdraw', '--claims', A, '-o', out)
+    assert r.returncode == 0 and 'flowchart BT' in open(out, encoding='utf8').read(), r.stderr
+    r = run('mapdraw', '--claims', A, '-o', out, '--impact', 'a1', '--text')
+    assert r.returncode == 0 and 'class n1 changed' in open(out, encoding='utf8').read()
 
 
 def run():

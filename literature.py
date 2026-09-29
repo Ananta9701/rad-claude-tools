@@ -20,7 +20,7 @@ import shutil
 import sys
 import unicodedata
 
-__version__ = '0.8.1'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.8.2'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
 
 DOI_RE = re.compile(r'\b(10\.\d{4,9}/[^\s"<>]+)', re.I)
 PMID_RE = re.compile(r'\bPMID:?\s*(\d{5,9})\b', re.I)
@@ -670,12 +670,17 @@ def jats_to_md(xml_bytes):
     L += ['# %s' % txt(t), '']
     meta = root.find('.//article-meta')
     for ab in (meta.findall('abstract') if meta is not None else []) or root.findall('.//abstract')[:1]:
-        kind = title_of(ab) or ab.get('abstract-type')        # 'Key points' 같은 초록 제목(실제 XML)
+        kind = title_of(ab) or ab.get('abstract-type') or ''    # 'Key points' 같은 초록 제목(실제 XML)
+        if kind.strip().lower() in ('abstract', '초록'):          # v0.8.2: 제목이 'Abstract' 면 [§ Abstract · Abstract] 가 되던 것
+            kind = ''
         am = '[§ Abstract%s]' % (' · %s' % kind if kind else '')
         mark(am, force=True)
         for ch in ab:
-            if ch.tag == 'sec':
-                walk(ch, '%s · %s]' % (am[:-1], title_of(ch) or '절'))
+            if ch.tag == 'sec' and title_of(ch):
+                walk(ch, '[§ Abstract · %s]' % title_of(ch))  # v0.8.2: 구조 초록 절은 제목 둘을 겹치지 않는다
+            elif ch.tag == 'sec':                             # 제목 없는 절 — '· 절' 을 만들지 않고 초록 표지 아래로
+                for x in ch:
+                    block(x, am)
             else:
                 block(ch, am)
     body = root.find('.//body')
@@ -697,7 +702,7 @@ def jats_to_md(xml_bytes):
     return '\n'.join(L).strip() + '\n'
 
 
-JATS_MD = '변환 v0.8.1'      # XML → md 변환 판 — 바꾸면 oa 가 보관소의 paper.xml 에서 paper.md 를 다시 만든다
+JATS_MD = '변환 v0.8.2'      # XML → md 변환 판 — 바꾸면 oa 가 보관소의 paper.xml 에서 paper.md 를 다시 만든다
 
 
 def _xml_md(dd, pmcid, xmlb):
