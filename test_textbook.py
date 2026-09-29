@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import textbook as TB          # noqa: E402
 
-EXPECT_VERSION = '0.6'
+EXPECT_VERSION = '0.7'
 TMP = tempfile.mkdtemp(prefix='ttb_')
 
 

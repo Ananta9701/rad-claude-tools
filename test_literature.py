@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.6'
+EXPECT_VERSION = '0.7'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 
@@ -110,7 +110,7 @@ def t_plan_ingest_locate():
     k1 = got[1][0]
     assert k1 == '10.1000_abc123' and got[3][0].startswith('nodoi_')
     md = open(os.path.join(store, k1, 'paper.md'), encoding='utf8').read()
-    assert '[p.1]' in md and '[p.2]' in md and 'sensitivity of DWI' in md
+    assert '[p.— · PDF 1]' in md and '[p.— · PDF 2]' in md and 'sensitivity of DWI' in md
     lst = open(os.path.join(out, '시험_원고_v1_문헌목록.md'), encoding='utf8').read()
     assert '| 4 | Jones 1998 | — | **못 받음** |' in lst and '받음 3 / 4' in lst, lst
     assert 'INDEX' in open(os.path.join(store, 'INDEX.md'), encoding='utf8').read()
@@ -124,8 +124,8 @@ def t_plan_ingest_locate():
     # 주장별 후보 — 판정은 하지 않는다
     fp = LT.locate(instr, store, out, stream=io.StringIO())
     loc = open(fp, encoding='utf8').read()
-    assert '[p.2] 맞은 말 2/2(sensitivity, 92%)' in loc, loc                # '92 %' 도 띄어쓰기 무시로
-    assert '**원문 전체에서 0회: 없음' in loc and '"sensitivity" → [p.2]' in loc and '"92%" → 위와 같은 문단 [p.2]' in loc, loc
+    assert '[p.— · PDF 2] 맞은 말 2/2(sensitivity, 92%)' in loc, loc                # '92 %' 도 띄어쓰기 무시로
+    assert '**원문 전체에서 0회: 없음' in loc and '"sensitivity" → [p.— · PDF 2]' in loc and '"92%" → 위와 같은 문단 [p.— · PDF 2]' in loc, loc
     assert re.search(r'문헌 3 `nodoi_[0-9a-f]+/paper.md`:\n  - \*\*원문 전체에서 0회: 없음', loc), loc
     assert '문헌 4: **원문 없음**' in loc and re.search(r'문헌 3 `nodoi_[0-9a-f]+/paper.md`', loc), loc
     assert '판정은 리뷰어가' in loc
@@ -173,7 +173,7 @@ def t_v03_check_text_layer_and_md_pages():
     rows = {f: (r, w) for f, r, w in LT.check(instr, os.path.join(d, 'inbox'), stream=io.StringIO(), store=store)}
     assert rows['download (3).pdf'][0] == '○' and 'paper.md 쪽 표지 2 = 쪽 수' in rows['download (3).pdf'][1], rows
     mdp = os.path.join(store, got[2][0], 'paper.md'); t = open(mdp, encoding='utf8').read()
-    open(mdp, 'w', encoding='utf8').write(t[:t.index('\n[p.2]')])                 # md 가 잘린 꼴
+    open(mdp, 'w', encoding='utf8').write(t[:t.index('\n[p.— · PDF 2]')])                 # md 가 잘린 꼴
     rows = {f: (r, w) for f, r, w in LT.check(instr, os.path.join(d, 'inbox'), stream=io.StringIO(), store=store)}
     assert rows['download (3).pdf'][0] == '✗' and 'md 가 잘렸다' in rows['download (3).pdf'][1], rows
     make_pdf(os.path.join(d, 'inbox', '002_scan.pdf'), [[], [], ['x']])           # 3쪽 중 2쪽 글자층 없음
@@ -276,6 +276,27 @@ def t_v05_jats_table_spans_and_breaks():
     assert cells(rows[5]) == ['Z', '1'] and cells(rows[6]) == ['Z', '2'], rows[5:7]
     assert cells(rows[7]) == ['Q', 'a'] and cells(rows[8]) == ['b', 'c'], rows[7:9]
     assert len(rows) == 9, rows
+
+
+def t_v07_page_marker_printed_first():
+    # 사용자 09-29 (코드 리뷰 ⑩ (가)): 교과서와 같은 [p.인쇄 · PDF N] — 인쇄 쪽을 모르면 —, 같아도 늘 둘 다. 옛 [p.N] md 도 계속 읽는다
+    from pypdf import PdfReader, PdfWriter
+    d, instr = _fixture()
+    src = os.path.join(d, 'inbox', '001_Smith_2020.pdf')
+    w = PdfWriter(); w.append(PdfReader(src)); w.set_page_label(0, 1, style='/D', prefix='e', start=11); w.write(src)   # e11, e12 (e-번호 학술지)
+    store, out = os.path.join(d, 'store'), os.path.join(d, 'out')
+    LT.ingest(instr, os.path.join(d, 'inbox'), store, out, stream=io.StringIO())
+    md = open(os.path.join(store, '10.1000_abc123', 'paper.md'), encoding='utf8').read()
+    assert '[p.e11 · PDF 1]' in md and '[p.e12 · PDF 2]' in md, md[:600]                      # 성공 길: 쪽 번호 표가 있으면 그 값
+    md3 = open(os.path.join(store, [k for k in os.listdir(store) if 'nodoi' in k][0], 'paper.md'), encoding='utf8').read()
+    assert '[p.— · PDF 1]' in md3 and not re.search(r'^\[p\.\d+\]$', md3, re.M), md3[:400]        # 표가 없으면 — (줄이지 않음)
+    # 옛 형식 호환: 보관소에 이미 있는 [p.N] md(v0.6 까지)도 locate·check 가 그대로 읽는다
+    old = re.sub(r'\[p\.[^\]]* · PDF (\d+)\]', r'[p.\1]', md)
+    open(os.path.join(store, '10.1000_abc123', 'paper.md'), 'w', encoding='utf8').write(old)
+    loc = open(LT.locate(instr, store, out, stream=io.StringIO()), encoding='utf8').read()
+    assert '[p.2] 맞은 말 2/2' in loc, loc
+    rows = LT.check(instr, os.path.join(d, 'inbox'), store=store, stream=io.StringIO())
+    assert not any('잘렸다' in str(r) for r in (rows or [])), rows
 
 
 def t_cli():

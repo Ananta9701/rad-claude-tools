@@ -27,7 +27,7 @@ import time
 import unicodedata
 from collections import Counter
 
-__version__ = '0.6'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.7'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
 
 TOC_WORDS = re.compile(r'차\s*[례려레]|목\s*차|c\s*o\s*n\s*t\s*e\s*n\s*t\s*s', re.I)   # v0.2: OCR '차려'·'C O N T E N T S'
 NUM_LINE = re.compile(r'^\s*[-–—]?\s*(\d{1,4})\s*[-–—]?\s*$')
@@ -835,6 +835,26 @@ def printed_to_pdf(index_md, printed):
 MIN_IMG = 32      # v0.5 (Cowork split 7-1): 이보다 작은 이미지(스캔 PDF 의 1×1 마스크 등)는 건너뛴다
 
 
+def _image_of(im):
+    """v0.7 (예비 대화창 09-29 [결함]): CMYK JPEG(/DCTDecode) 는 JPEG 바이트를 직접 풀어 PDF 뷰어와 같은 규칙으로 색을 정한다.
+    Pillow 는 Adobe 표지가 있는 CMYK JPEG 를 이미 되돌려 읽는데, pypdf 5.x 는 그 위에 /Decode [1 0 …] 를 한 번 더 적용해 검정이 됐다
+    (pypdf 6.19 는 맞음 — 판에 따라 색이 뒤집혔다). 규칙: 저장값 = Adobe 면 Pillow 값의 반전, 그 저장값에 /Decode 가 반전이면 반전."""
+    try:
+        o = im.indirect_reference.get_object()
+    except Exception:
+        o = None
+    if o is not None and o.get('/Filter') == '/DCTDecode':
+        import io
+        from PIL import Image
+        pic = Image.open(io.BytesIO(o._data)); pic.load()
+        if pic.mode == 'CMYK':
+            dec = [float(v) for v in (o.get('/Decode') or [])][:2]
+            if ('adobe' in pic.info) != (dec == [1.0, 0.0]):
+                pic = Image.eval(pic, lambda v: 255 - v)
+            return pic
+    return im.image
+
+
 PNG_MODES = ('1', 'L', 'LA', 'I', 'I;16', 'P', 'RGB', 'RGBA')
 
 
@@ -919,7 +939,7 @@ def page_images(folder, book, out, pdf_page=None, printed=None, split_dir=None, 
             raise SystemExit('[멈춤] 이미지를 읽지 못했다: %s: %s' % (type(e).__name__, str(e)[:120]))
         for i, im in enumerate(imgs, 1):
             try:
-                pic = im.image
+                pic = _image_of(im)
             except Exception as e:
                 print('[참고] 이미지 %d 풀기 실패: %s' % (i, type(e).__name__), file=stream); continue
             if min(pic.size) < MIN_IMG:

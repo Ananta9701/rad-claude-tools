@@ -1,4 +1,4 @@
-# TEXTBOOK — 교과서 분할·색인 도구 규약 (textbook.py v0.6)
+# TEXTBOOK — 교과서 분할·색인 도구 규약 (textbook.py v0.7)
 
 > 교과서 원본(스캔 PDF)은 Drive 에 그대로 둔다. 분할본·색인은 Cowork 가 Mac 의 Google Drive 동기화 폴더에서 만들고,
 > 대화창은 색인 → 필요한 장 파일만 Drive 연결로 읽는다. 외부 AI(Gemini 등)의 조사 결과는 위치 안내일 뿐이고, 장 파일에서

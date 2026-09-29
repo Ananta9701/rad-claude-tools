@@ -20,7 +20,7 @@ import shutil
 import sys
 import unicodedata
 
-__version__ = '0.6'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.7'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
 
 DOI_RE = re.compile(r'\b(10\.\d{4,9}/[^\s"<>]+)', re.I)
 PMID_RE = re.compile(r'\bPMID:?\s*(\d{5,9})\b', re.I)
@@ -269,11 +269,11 @@ def ingest(instr_path, inbox, store, out, stream=sys.stdout):
             dd = os.path.join(store, key); os.makedirs(dd, exist_ok=True)
             shutil.copyfile(path, os.path.join(dd, 'paper.pdf'))
             L = ['# %s' % (r['title'] or r['raw'][:80]), '',
-                 '> 원문 PDF 의 글자층(literature.py v%s). 쪽 표지 `[p.PDF쪽 · 인쇄쪽]`. 인용 문구는 이 md 로 찾고, 표·그림은 `paper.pdf` 로 확인한다.' % __version__, '']
+                 '> 원문 PDF 의 글자층(literature.py v%s). 쪽 표지 `[p.인쇄쪽 · PDF 쪽]`(인쇄 쪽 = PDF 의 쪽 번호 표, 없으면 —). 인용 문구는 이 md 로 찾고, 표·그림은 `paper.pdf` 로 확인한다.' % __version__, '']
             blank = boiler = 0
             for k, lab, t in pages:
                 t, nb = _strip_boiler(t); boiler += nb
-                L += ['[p.%d%s]' % (k, (' · %s' % lab) if lab and lab != str(k) else ''), '', t or '(글자층 없음 — 스캔 쪽)', '']
+                L += ['[p.%s · PDF %d]' % (lab or '—', k), '', t or '(글자층 없음 — 스캔 쪽)', '']   # v0.7 (사용자 09-29): 교과서와 같게 인쇄 쪽 먼저, 늘 둘 다
                 blank += not t
             if boiler:
                 L.insert(3, '> 출판사 다운로드 안내 줄 %d개를 뺐다(쪽마다 붙는 기관·날짜 줄).' % boiler)
