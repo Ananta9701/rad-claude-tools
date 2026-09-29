@@ -27,7 +27,7 @@ import time
 import unicodedata
 from collections import Counter
 
-__version__ = '0.7'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.7.1'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
 
 TOC_WORDS = re.compile(r'차\s*[례려레]|목\s*차|c\s*o\s*n\s*t\s*e\s*n\s*t\s*s', re.I)   # v0.2: OCR '차려'·'C O N T E N T S'
 NUM_LINE = re.compile(r'^\s*[-–—]?\s*(\d{1,4})\s*[-–—]?\s*$')
@@ -868,7 +868,7 @@ def _fit(pic, max_px):
 
 
 def _render(pdf_path, pdf_page, dpi, stream):
-    """v0.6: 쪽 전체를 그림으로 — pdftoppm(poppler) 에 맡긴다. pypdf 는 쪽을 그리지 못한다. PyMuPDF 는 쓰지 않는다(사용자 09-28)."""
+    """v0.6: 쪽 전체를 그림으로 — pdftoppm(poppler) 에 맡긴다. pypdf 는 쪽을 그리지 못한다. `--render` 는 pdftoppm 으로(09-28 — 설치 하나 덜고 AGPL 피함)."""
     import shutil, tempfile
     exe = shutil.which('pdftoppm')
     if not exe:

@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.7'
+EXPECT_VERSION = '0.8'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 
@@ -297,6 +297,111 @@ def t_v07_page_marker_printed_first():
     assert '[p.2] 맞은 말 2/2' in loc, loc
     rows = LT.check(instr, os.path.join(d, 'inbox'), store=store, stream=io.StringIO())
     assert not any('잘렸다' in str(r) for r in (rows or [])), rows
+
+
+JATS_BLOCKS = (b'<article><front><article-meta><title-group><article-title>T</article-title></title-group>'
+               b'<abstract><sec><title>Purpose</title><p>Abstract purpose words.</p></sec></abstract></article-meta></front><body>'
+               b'<p>Body lead paragraph before sections.</p>'
+               b'<sec><title>Methods</title>'
+               b'<p>Inclusion criteria were:</p>'
+               b'<list list-type="bullet"><list-item><p>age alpha over 18</p></list-item>'
+               b'<list-item><p>proven beta lesion<list><list-item><p>nested gamma item</p></list-item></list></p></list-item></list>'
+               b'<boxed-text><caption><title>Key points</title><p>Box caption rho words.</p></caption><p>Box delta sentence.</p></boxed-text>'
+               b'<sec><title>Sub [a] part</title><p>Sub section sigma words here.</p></sec>'
+               b'<p>After the box epsilon sentence.</p>'
+               b'<p>We measured <disp-formula><mml:math xmlns:mml="http://www.w3.org/1998/Math/MathML"><mml:mi>x</mml:mi></mml:math></disp-formula> and then zeta tail words follow.</p>'
+               b'<p>Values are in the table <table-wrap><label>Table 5</label><caption><p>Inline</p></caption><table>'
+               b'<tr><td>eta</td><td>0.63</td></tr><tr><td>theta</td><td>12</td></tr></table>'
+               b'<table-wrap-foot><fn><p>AUC, area under iota curve.</p></fn></table-wrap-foot></table-wrap> shown here.</p>'
+               b'<disp-formula>y = kappa</disp-formula>'
+               b'<def-list><def-item><term>ADC</term><def><p>apparent lambda coefficient</p></def></def-item></def-list>'
+               b'<custom-block>unknown omega text</custom-block>'
+               b'</sec></body>'
+               b'<back><ack><p>We thank mu people.</p></ack>'
+               b'<app-group><app><title>Appendix A</title><p>Appendix nu text.</p></app></app-group>'
+               b'<ref-list><ref><mixed-citation>Reference xi title words.</mixed-citation></ref></ref-list></back>'
+               b'<floats-group><table-wrap><label>Table 6</label><table><tr><td>omicron</td><td>7</td></tr></table></table-wrap>'
+               b'<fig><label>Figure 2</label><caption><p>Figure pi caption.</p></caption></fig></floats-group></article>')
+
+
+def t_v08_jats_blocks_not_dropped():
+    # 코드 리뷰 ⑨: 목록·상자 글·부록·문단 안 표·본문 밖 표(floats-group)·수식 뒤 글이 paper.md 에서 빠져 locate 가 거짓 "0회"
+    md = LT.jats_to_md(JATS_BLOCKS)
+    for w in ('Abstract purpose words', 'Body lead paragraph', 'age alpha over 18', 'proven beta lesion', 'nested gamma item',
+              'Box delta sentence', 'After the box epsilon', 'zeta tail words', 'Values are in the table', 'shown here',
+              'area under iota curve', 'kappa', 'apparent lambda coefficient', 'unknown omega text', 'We thank mu people',
+              'Appendix nu text', 'Figure pi caption', 'Box caption rho words', 'Sub section sigma words'):
+        assert w in md, (w, md)                                                            # 성공 길: 글이 모두 남는다
+    rows = [l for l in md.splitlines() if l.startswith('| ')]
+    assert '| eta | 0.63 |' in rows and '| theta | 12 |' in rows and '| omicron | 7 |' in rows, rows   # 문단 안·본문 밖 표도 행 그대로
+    assert '0.6312' not in md and 'eta0.63' not in md, md
+    assert '[§ Sub (a) part]' in md, md                                                     # 제목 안 ] 는 ) 로 — locate 가 표지로 나눈다
+    assert '[§ Abstract · Purpose]' in md and '[§ 부록 · Appendix A]' in md and '[§ 상자 · Key points]' in md, md
+    # 상자 뒤 문단은 다시 원래 절 표지 아래에 — 상자 표지가 뒤 문단까지 가져가지 않는다
+    before = md[:md.index('After the box epsilon')]
+    assert re.findall(r'^\[§ [^\]]*\]$', before, re.M)[-1] == '[§ Methods]', before[-300:]
+    # 실패 길: 참고문헌 목록은 넣지 않는다(찾을 말이 참고문헌 제목에만 있으면 거짓 "있음")
+    assert 'Reference xi' not in md, md
+    # locate 도 새 표지로 나눈 문단을 찾는다
+    assert md.count('[§ Methods]') >= 2
+
+
+def t_v08_locate_ligature_nfkc():
+    # 리뷰어 09-29(문헌 Cowork): PDF 글자층의 합자(ﬂ U+FB02, ﬁ U+FB01) 때문에 찾을 말이 "원문 전체 0회" 로 나온 거짓 음성
+    d, instr = _fixture()
+    store, out = os.path.join(d, 'store'), os.path.join(d, 'out')
+    LT.ingest(instr, os.path.join(d, 'inbox'), store, out, stream=io.StringIO())
+    mdp = os.path.join(store, '10.1000_abc123', 'paper.md')
+    md = open(mdp, encoding='utf8').read()
+    lig = md + '\n[p.— · PDF 3]\n\nThe ﬂip angle of the sequence was ﬁxed at baseline in every patient.\n'
+    open(mdp, 'w', encoding='utf8').write(lig)
+    ins = _write(os.path.join(d, 'i8.md'), INSTR.replace('| C1 | 1 | DWI 민감도 92% | sensitivity, 92% |',
+                                                         '| C1 | 1 | 숙임각 | flip angle, fixed, zzqq |'))
+    loc = open(LT.locate(ins, store, out, stream=io.StringIO()), encoding='utf8').read()
+    part = loc[loc.index('## C1'):loc.index('## C2')]
+    assert '원문 전체에서 0회: zzqq' in part, part                                          # 성공 길: 합자로 적힌 말은 0회가 아니다
+    assert '[p.— · PDF 3] 맞은 말 2/3' in part, part                                          # 후보 문단으로도 나온다
+    assert 'ﬂip angle of the sequence' in part, part                                      # 인용은 원문 글자 그대로(찾기용 사본만 바꿈)
+    assert '"flip angle" → [p.— · PDF 3] …The ﬂip angle of the sequence' in part, part   # 찾을 말별 첫 자리도 원문 위치로
+    assert open(mdp, encoding='utf8').read() == lig                                            # paper.md 는 그대로
+    # 실패 길: 합자 풀기가 없는 말을 만들지 않는다
+    assert 'fixed(' not in part and 'zzqq(' not in part, part
+    # 제목 짝짓기도 합자를 푼다(ﬁ 가 빠져 'brosis' 로 쪼개지지 않게)
+    assert 'fibrosis' in LT._tokens('Liver ﬁbrosis staging')
+
+
+def t_v08_old_xml_md_reconverted():
+    # v0.8: 보관소에 이미 있는 옛 XML 변환 md(목록 등이 빠진 것)는 locate 가 알리고, oa 를 다시 돌리면 paper.xml 에서 네트워크 없이 다시 만든다
+    import json
+    d, instr = _fixture()
+    store, out = os.path.join(d, 'store'), os.path.join(d, 'out')
+    def fake_get(url, timeout=30):
+        if 'fullTextXML' in url:
+            return JATS_BLOCKS
+        if 'unpaywall' in url:
+            return json.dumps({'best_oa_location': None}).encode()
+        return json.dumps({'resultList': {'result': [{'pmcid': 'PMC7654321', 'isOpenAccess': 'Y', 'inEPMC': 'Y'}]}} if 'xyz456' in url else {'resultList': {'result': []}}).encode()
+    LT.oa(instr, 'me@example.invalid', store, out, fetch=True, getter=fake_get, sleep=0, stream=io.StringIO())
+    dd = os.path.join(store, '10.1000_xyz456'); mdp = os.path.join(dd, 'paper.md')
+    assert LT.JATS_MD in open(mdp, encoding='utf8').read() and not LT._xml_md_old(dd)
+    old = '# T\n\n> Europe PMC 전문 XML(PMC7654321)에서 — 쪽 표지 대신 절 표지 `[§ …]`.\n\n[§ Methods]\n\nInclusion criteria were:\n'   # v0.7 까지의 모양
+    open(mdp, 'w', encoding='utf8').write(old)
+    ins = _write(os.path.join(d, 'i9.md'), INSTR.replace('| C2 | 3, 4 | 예측 정확도 | accuracy, fracture healing |', '| C2 | 2 | 목록 | age alpha |'))
+    loc = open(LT.locate(ins, store, out, stream=io.StringIO()), encoding='utf8').read()
+    assert '옛 XML 변환' in loc and '원문 전체에서 0회: age alpha' in loc, loc                    # 실패 길: 옛 md 는 0회를 믿지 말라고 알린다
+    def no_net(url, timeout=30):
+        if 'xyz456' in url or 'fullTextXML' in url:
+            raise AssertionError('보관소에 있는 문헌을 다시 조회했다: ' + url)
+        return fake_get(url)
+    res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=no_net, sleep=0, stream=io.StringIO()))
+    assert res[2] == 'redo' and 'age alpha over 18' in open(mdp, encoding='utf8').read(), res   # 성공 길: paper.xml 에서 다시 만듦
+    loc = open(LT.locate(ins, store, out, stream=io.StringIO()), encoding='utf8').read()
+    assert '옛 XML 변환' not in loc and '원문 전체에서 0회: 없음' in loc, loc
+    res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=no_net, sleep=0, stream=io.StringIO()))
+    assert res[2] == 'have', res                                                                    # 한 번 다시 만든 뒤에는 그대로
+    # PDF 로 받은 문헌(paper.xml 없음)은 옛 변환으로 보지 않는다
+    LT.ingest(instr, os.path.join(d, 'inbox'), store, out, stream=io.StringIO())
+    assert not LT._xml_md_old(os.path.join(store, '10.1000_abc123'))
 
 
 def t_cli():

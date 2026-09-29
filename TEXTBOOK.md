@@ -1,4 +1,4 @@
-# TEXTBOOK — 교과서 분할·색인 도구 규약 (textbook.py v0.7)
+# TEXTBOOK — 교과서 분할·색인 도구 규약 (textbook.py v0.7.1)
 
 > 교과서 원본(스캔 PDF)은 Drive 에 그대로 둔다. 분할본·색인은 Cowork 가 Mac 의 Google Drive 동기화 폴더에서 만들고,
 > 대화창은 색인 → 필요한 장 파일만 Drive 연결로 읽는다. 외부 AI(Gemini 등)의 조사 결과는 위치 안내일 뿐이고, 장 파일에서
@@ -109,7 +109,7 @@ python3 ~/rct/textbook.py page "<교과서 폴더>" --book 부인과 --printed 6
 ```bash
 python3 ~/rct/textbook.py page "<교과서 폴더>" --book <책> --printed 56 --split "<교과서 분할>" --render --dpi 150 --max-px 1600 --png --name "<책약칭>_p{printed:03d}" --out "<보낼 폴더>"
 ```
-- `--render` 는 poppler 의 `pdftoppm` 이 그린다(Mac VM 에 있음). 없으면 멈춘다 — pypdf 는 쪽을 그리지 못하고, PyMuPDF 는 쓰지 않는다(사용자 09-28).
+- `--render` 는 poppler 의 `pdftoppm` 이 그린다(Mac VM 에 있음). 없으면 멈춘다 — pypdf 는 쪽을 그리지 못한다. `--render` 는 pdftoppm 으로(09-28 — 설치 하나 덜고 AGPL 피함).
 - `--dpi` 기본 150(36–600). `--max-px` 는 긴 변 상한 — 그림 뽑기 길에도 쓴다.
 - `--name` 이름 틀: `{printed}`(인쇄 쪽)·`{pdf}`(PDF 쪽), 예 `Book_p{printed:03d}` → `Book_p056`. `{printed}` 는 `--printed` 로 줄 때만. 한 쪽에서 그림이 여러 장이면 뒤에 `_1`·`_2`.
 - 출력 첫 줄 `[쪽] 인쇄 N · PDF M` — INDEX 를 쓸 때 그대로 옮긴다.

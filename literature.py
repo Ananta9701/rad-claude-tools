@@ -20,7 +20,7 @@ import shutil
 import sys
 import unicodedata
 
-__version__ = '0.7'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.8'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
 
 DOI_RE = re.compile(r'\b(10\.\d{4,9}/[^\s"<>]+)', re.I)
 PMID_RE = re.compile(r'\bPMID:?\s*(\d{5,9})\b', re.I)
@@ -210,7 +210,7 @@ def mathfont_count(text):
 
 
 def _tokens(s):
-    return {w for w in re.findall(r'[0-9a-z가-힣]{3,}', _nfc(s).lower())}
+    return {w for w in re.findall(r'[0-9a-z가-힣]{3,}', _fold(s)[0].lower())}      # v0.8: 합자(ﬁ)로 낱말이 쪼개지지 않게
 
 
 def match_pdf(fname, pages, refs):
@@ -339,8 +339,18 @@ def _write_store_index(store):
 
 
 # ─────────────────────────── 주장 → 원문 후보 문단 ───────────────────────────
+def _fold(s):
+    """찾기용 사본 — 글자마다 NFKC(합자 ﬂ→fl·ﬁ→fi, 위첨자 ²→2, 전각→반각). 반환 (사본, 사본 자리 → 원문 자리 표).
+    v0.8 (리뷰어 09-29, 문헌 Cowork): PDF 글자층의 합자(ﬂ·ﬁ) 때문에 찾을 말이 "원문 전체 0회" 로 나왔다. 원문(paper.md·인용)은 그대로."""
+    out, idx = [], []
+    for k, ch in enumerate(_nfc(s)):
+        f = unicodedata.normalize('NFKC', ch) if ord(ch) > 127 else ch
+        out.append(f); idx.extend([k] * len(f))
+    return ''.join(out), idx
+
+
 def _term_re(term):
-    core = re.sub(r'\s+', '', _nfc(term))
+    core = re.sub(r'\s+', '', _fold(term)[0])
     return re.compile(r'\s*'.join(map(re.escape, core)), re.I)
 
 
@@ -362,6 +372,7 @@ def locate(instr_path, store, out, top=3, stream=sys.stdout):
     L = ['# %s — 주장별 원문 후보' % name, '',
          '> literature.py v%s locate. 주장마다 그 문헌 원문에서 "찾을 말" 이 가장 많이 든 문단(띄어쓰기·대소문자 무시). '
          '**맞는지 판정은 리뷰어가 한다** — 후보가 없거나 낱말만 겹칠 수 있다.' % __version__, '']
+    folded = {}                          # 문헌마다 한 번만: [(표지, 문단, 찾기 사본)], 전체 사본, 밑줄 등 뺀 사본
     for c in claims:
         L += ['## %s — 문헌 %s' % (c['id'], ', '.join(map(str, c['refs'])) or '?'), '', '원고: %s' % c['sentence'],
               '찾을 말: %s' % ', '.join(c['terms']), '']
@@ -371,23 +382,29 @@ def locate(instr_path, store, out, top=3, stream=sys.stdout):
             if not key or not os.path.exists(os.path.join(store, key, 'paper.md')):
                 L += ['- 문헌 %d: **원문 없음**(못 받음 — 입수 불가 문헌으로)' % n, '']; continue
             md = open(os.path.join(store, key, 'paper.md'), encoding='utf8').read()
-            parts = re.split(r'^(\[p\.[^\]]*\]|\[§ [^\]]*\])$', md, flags=re.M)   # v0.6 (코드 리뷰 ⑪): oa md 의 절 표지도
+            if _xml_md_old(os.path.join(store, key)):
+                L.append('- 문헌 %d: **옛 XML 변환(v0.8 전) — 목록·상자 글·부록·수식 뒤 글이 빠졌을 수 있어 "0회" 를 믿지 않는다.** '
+                         '`oa` 를 다시 돌리면 받아 둔 paper.xml 에서 다시 만든다' % n)
+            if key not in folded:
+                paras = []
+                parts = re.split(r'^(\[p\.[^\]]*\]|\[§ [^\]]*\])$', md, flags=re.M)   # v0.6 (코드 리뷰 ⑪): oa md 의 절 표지도
+                for k in range(1, len(parts) - 1, 2):
+                    for para in re.split(r'\n\s*\n|(?<=[.:])\n', parts[k + 1]):
+                        flat = re.sub(r'\s+', ' ', _nfc(para)).strip()
+                        if len(flat) >= 20:
+                            paras.append((parts[k], flat, _fold(flat)[0]))
+                fm = _fold(md)[0]                       # v0.8: 찾기는 NFKC 사본으로(합자)
+                folded[key] = (paras, re.sub(r'\s+', ' ', fm), re.sub(r'[\s_\-‐–.]+', '', fm).lower())
+            paras, whole, flat_all = folded[key]
             cands = []
-            for k in range(1, len(parts) - 1, 2):
-                mark = parts[k]
-                for para in re.split(r'\n\s*\n|(?<=[.:])\n', parts[k + 1]):
-                    flat = re.sub(r'\s+', ' ', para).strip()
-                    if len(flat) < 20:
-                        continue
-                    hit = [t for t, p in pats if p.search(flat)]
-                    if hit:
-                        cands.append((len(hit), mark, hit, flat))
+            for mark, flat, fk in paras:
+                hit = [t for t, p in pats if p.search(fk)]
+                if hit:
+                    cands.append((len(hit), mark, hit, flat))
             # v0.2 (리뷰어 09-28): 원문 전체에서 한 번도 안 나온 말 — 원문 검증에서 가장 강한 신호
-            whole = re.sub(r'\s+', ' ', md)
             zero = [t for t, p in pats if not p.search(whole)]
             # v0.4 (리뷰어 09-28): 아래첨자가 떨어져 나온 기호(F_ISF → 'F ISF')가 0회로 잡힌 거짓 양성 — 밑줄·하이픈·공백·마침표를 뺀 꼴로 다시 센다
-            flat_all = re.sub(r'[\s_\-‐–.]+', '', _nfc(md)).lower()
-            loose = {t: flat_all.count(re.sub(r'[\s_\-‐–.]+', '', _nfc(t)).lower()) for t in zero}
+            loose = {t: flat_all.count(re.sub(r'[\s_\-‐–.]+', '', _fold(t)[0]).lower()) for t in zero}
             zero = ['%s(표기 차이로 0회일 수 있음 — 밑줄·하이픈·공백 무시하면 %d회)' % (t, loose[t]) if loose[t] else t for t in zero]
             order = list(cands)
             cands.sort(key=lambda z: -z[0])
@@ -408,8 +425,10 @@ def locate(instr_path, store, out, top=3, stream=sys.stdout):
                     if first[1] in shown:
                         L.append('    - "%s" → 위와 같은 문단 %s' % (t, first[0])); continue
                     shown.add(first[1])
-                    m_ = p.search(first[1]); a_ = max(0, m_.start() - 120)
-                    L.append('    - "%s" → %s …%s…' % (t, first[0], first[1][a_:m_.end() + 160]))
+                    fk, idx = _fold(first[1]); m_ = p.search(fk)            # 사본에서 찾고 원문 자리로 되돌린다
+                    s_, e_ = idx[m_.start()], idx[m_.end() - 1] + 1
+                    a_ = max(0, s_ - 120)
+                    L.append('    - "%s" → %s …%s…' % (t, first[0], first[1][a_:e_ + 160]))
             L.append('')
     os.makedirs(out, exist_ok=True)
     fp = os.path.join(out, '%s_주장위치.md' % name)
@@ -525,40 +544,160 @@ def _jats_table_rows(tw, txt):
     return out
 
 
+JATS_BLOCK = {'table-wrap', 'table-wrap-group', 'fig', 'fig-group', 'list', 'boxed-text', 'disp-quote', 'def-list', 'statement',
+              'supplementary-material', 'sec'}
+JATS_SKIP = {'title', 'label', 'ref-list', 'sec-meta', 'object-id', 'alt-text'}   # 제목·이름표는 부모가 쓴다. 참고문헌 목록은 뺀다
+
+
+def _jats_text(e, split=True):
+    """글과 그 안의 블록(문단 안 표·목록 등)을 나눈다 — 반환 (한 줄 글, [블록]). split=False 면 블록 글도 이어 붙인다(표 칸·설명).
+    수식은 [수식], 그 뒤 글(tail)은 남긴다(v0.8 — 전에는 수식을 clear() 로 지워 뒤 글까지 사라졌다)."""
+    parts, blocks = [], []
+    def rec(x):
+        if x.text:
+            parts.append(x.text)
+        for c in x:
+            if split and c.tag in JATS_BLOCK:
+                blocks.append(c); parts.append(' ')
+            elif c.tag == 'disp-formula':
+                parts.append(' [수식] ')
+            elif c.tag == 'break':
+                parts.append(' / ')
+            else:
+                rec(c)
+            if c.tail:
+                parts.append(c.tail)
+    if e is not None:
+        rec(e)
+    return re.sub(r'\s+', ' ', ''.join(parts)).strip(), blocks
+
+
 def jats_to_md(xml_bytes):
-    """Europe PMC 전문 XML(JATS) → md: 제목·초록·절 표지 `[§ 절 이름]`·문단·표(행마다 칸을 ' | ' 로)·그림 설명. 수식은 [수식]."""
+    """Europe PMC 전문 XML(JATS) → md: 제목·초록·절 표지 `[§ 절 이름]`·문단·목록·상자 글·표(행마다 칸을 ' | ' 로)·그림 설명·부록.
+    수식은 [수식]. v0.8 (코드 리뷰 ⑨): 모르는 요소도 글이 있으면 남긴다 — 빠진 글은 locate 의 거짓 "0회" 가 된다. 참고문헌 목록만 뺀다."""
     import xml.etree.ElementTree as ET
     root = ET.fromstring(xml_bytes)
-    txt = lambda e: re.sub(r'\s+', ' ', ''.join(e.itertext())).strip() if e is not None else ''
-    L = []
+    txt = lambda e: _jats_text(e, split=False)[0]
+    L, cur = [], [None]
+
+    def mark(m, force=False):
+        if force or cur[0] != m:
+            L.extend([m, '']); cur[0] = m
+
+    def title_of(e):
+        t = e.find('title')
+        if t is None and e.find('caption') is not None:
+            t = e.find('caption').find('title')
+        return (txt(t) if t is not None else txt(e.find('label'))).replace('[', '(').replace(']', ')')   # 표지 안 ] 는 locate 가 못 나눈다
+
+    def items(lst, depth):
+        for li in lst:
+            if li.tag != 'list-item':
+                continue
+            t, sub = _jats_text(li)
+            if t:
+                L.append('  ' * depth + '- ' + t)
+            for b in sub:
+                if b.tag == 'list':
+                    items(b, depth + 1)
+                else:
+                    L.append(''); block(b, cur[0])
+
+    def block(ch, m):
+        """ch 하나를 절 표지 m 아래에 쓴다."""
+        tag = ch.tag
+        if tag in JATS_SKIP or not isinstance(tag, str):
+            return
+        if tag == 'sec':
+            walk(ch); return
+        if tag == 'boxed-text':
+            walk(ch, '[§ 상자 · %s]' % (title_of(ch) or '상자')); return
+        mark(m)
+        if tag == 'caption':             # 상자·묶음의 설명 — 제목은 표지로 썼으니 나머지 글만
+            t = ' '.join(txt(c) for c in ch if c.tag != 'title')
+            if t.strip():
+                L.extend([t.strip(), ''])
+        elif tag == 'table-wrap':
+            L.append('표 %s — %s' % (txt(ch.find('label')), txt(ch.find('caption'))))
+            L.extend(_jats_table_rows(ch, txt))
+            for f in ch.iter('table-wrap-foot'):
+                t = txt(f)
+                if t:
+                    L.append('표 주: %s' % t)
+            L.append('')
+        elif tag == 'fig':
+            L.extend(['그림 %s — %s' % (txt(ch.find('label')), txt(ch.find('caption'))), ''])
+        elif tag == 'list':
+            items(ch, 0); L.append('')
+        elif tag == 'def-list':
+            for di in ch.iter('def-item'):
+                L.append('- %s — %s' % (txt(di.find('term')), txt(di.find('def'))))
+            L.append('')
+        elif tag == 'disp-formula':
+            L.extend(['[수식] %s' % txt(ch) if txt(ch) and len(txt(ch)) < 200 else '[수식]', ''])
+        elif tag in ('table-wrap-group', 'fig-group'):
+            if title_of(ch):
+                L.extend([title_of(ch), ''])
+            for c in ch:
+                block(c, m)
+        else:
+            t, sub = _jats_text(ch)
+            if t:
+                L.extend([t, ''])
+            for b in sub:
+                block(b, m)
+
+    def walk(sec, own=None):
+        m = own or '[§ %s]' % (title_of(sec) or '절')
+        mark(m, force=True)
+        for ch in sec:
+            block(ch, m)             # 하위 절·상자에서 돌아오면 다음 블록이 이 표지를 다시 쓴다(mark 가 비교)
+
     t = root.find('.//article-title')
     L += ['# %s' % txt(t), '']
-    ab = root.find('.//abstract')
-    if ab is not None:
-        L += ['[§ Abstract]', ''] + [txt(p) for p in ab.iter('p')] + ['']
-    def walk(sec, depth):
-        title = sec.find('title')
-        L.extend(['[§ %s]' % (txt(title) or '절'), ''])
-        for ch in sec:
-            if ch.tag == 'p':
-                for f in ch.iter('disp-formula'):
-                    f.clear(); f.text = '[수식]'
-                L.extend([txt(ch), ''])
-            elif ch.tag == 'sec':
-                walk(ch, depth + 1)
-            elif ch.tag == 'table-wrap':
-                L.append('표 %s — %s' % (txt(ch.find('label')), txt(ch.find('caption'))))
-                L.extend(_jats_table_rows(ch, txt))
-                L.append('')
-            elif ch.tag == 'fig':
-                L.extend(['그림 %s — %s' % (txt(ch.find('label')), txt(ch.find('caption'))), ''])
+    meta = root.find('.//article-meta')
+    for ab in (meta.findall('abstract') if meta is not None else []) or root.findall('.//abstract')[:1]:
+        kind = ab.get('abstract-type')
+        am = '[§ Abstract%s]' % (' · %s' % kind if kind else '')
+        mark(am, force=True)
+        for ch in ab:
+            if ch.tag == 'sec':
+                walk(ch, '%s · %s]' % (am[:-1], title_of(ch) or '절'))
+            else:
+                block(ch, am)
     body = root.find('.//body')
-    for sec in (body if body is not None else []):
-        if sec.tag == 'sec':
-            walk(sec, 1)
-        elif sec.tag == 'p':
-            L.extend([txt(sec), ''])
+    for ch in (body if body is not None else []):
+        block(ch, '[§ 본문]')
+    back = root.find('back')
+    names = {'ack': '감사의 글', 'fn-group': '각주', 'glossary': '용어', 'notes': '주'}
+    for ch in (back if back is not None else []):
+        if ch.tag in ('app-group', 'app'):
+            for app in ([ch] if ch.tag == 'app' else [a for a in ch if a.tag == 'app']):
+                walk(app, '[§ 부록 · %s]' % (title_of(app) or '부록'))
+        elif ch.tag in names:
+            walk(ch, '[§ %s]' % (title_of(ch) or names[ch.tag]))
+        else:
+            block(ch, '[§ 뒤]')
+    fl = root.find('floats-group')        # 표·그림을 본문 밖에 모아 둔 XML
+    for ch in (fl if fl is not None else []):
+        block(ch, '[§ 본문 밖 표·그림]')
     return '\n'.join(L).strip() + '\n'
+
+
+JATS_MD = '변환 v0.8'      # XML → md 변환 판 — 바꾸면 oa 가 보관소의 paper.xml 에서 paper.md 를 다시 만든다
+
+
+def _xml_md(dd, pmcid, xmlb):
+    """paper.xml → paper.md(머리에 변환 판). oa --fetch 와 다시 변환이 같이 쓴다."""
+    md = jats_to_md(xmlb)
+    hdr = '> Europe PMC 전문 XML(%s)에서(%s) — 쪽 표지 대신 절 표지 `[§ …]`. 게재 PDF 와 판(정정·판본)이 다를 수 있다 — 쪽 인용은 PDF 로.\n\n' % (pmcid, JATS_MD)
+    open(os.path.join(dd, 'paper.md'), 'w', encoding='utf8').write(md.replace('\n', '\n' + hdr, 1) if md.startswith('# ') else hdr + md)
+
+
+def _xml_md_old(dd):
+    """보관소 폴더의 paper.md 가 옛 XML 변환(v0.8 전 — 목록·상자 글·부록·수식 뒤 글이 빠질 수 있다)인가."""
+    mp = os.path.join(dd, 'paper.md')
+    return os.path.exists(os.path.join(dd, 'paper.xml')) and os.path.exists(mp) and JATS_MD not in open(mp, encoding='utf8').read(3000)
 
 
 def oa(instr_path, email, store, out, fetch=False, sleep=1.0, getter=None, stream=sys.stdout):
@@ -577,7 +716,13 @@ def oa(instr_path, email, store, out, fetch=False, sleep=1.0, getter=None, strea
         if not r['doi']:
             rows.append('| %d | %s %s | — | DOI 없음 — 브라우저·사용자 | |' % (r['n'], r['author'], r['year'])); res.append((r['n'], 'nodoi')); continue
         if r['doi'] in by_doi:
-            rows.append('| %d | %s %s | %s | 보관소에 있음 `%s` | |' % (r['n'], r['author'], r['year'], r['doi'], by_doi[r['doi']])); res.append((r['n'], 'have')); continue
+            dd, note = os.path.join(store, by_doi[r['doi']]), ''
+            if _xml_md_old(dd):           # v0.8: 옛 변환은 받아 둔 paper.xml 에서 다시 만든다(네트워크 없이)
+                pm = re.search(r'Europe PMC 전문 XML (PMC\d+)', open(os.path.join(dd, 'meta.md'), encoding='utf8').read())
+                _xml_md(dd, pm.group(1) if pm else '?', open(os.path.join(dd, 'paper.xml'), 'rb').read())
+                note = '다시 변환(%s — 옛 변환은 목록·상자 글·부록이 빠졌다)' % JATS_MD
+            rows.append('| %d | %s %s | %s | 보관소에 있음 `%s` | %s |' % (r['n'], r['author'], r['year'], r['doi'], by_doi[r['doi']], note))
+            res.append((r['n'], 'redo' if note else 'have')); continue
         up, ep = {}, {}
         try:
             up = json.loads(get('https://api.unpaywall.org/v2/%s?email=%s' % (r['doi'], email)))
@@ -607,9 +752,7 @@ def oa(instr_path, email, store, out, fetch=False, sleep=1.0, getter=None, strea
             try:
                 xmlb = get('https://www.ebi.ac.uk/europepmc/webservices/rest/%s/fullTextXML' % pmcid)
                 key = doi_key(r['doi']); dd = os.path.join(store, key); os.makedirs(dd, exist_ok=True)
-                md = jats_to_md(xmlb)
-                hdr = '> Europe PMC 전문 XML(%s)에서 — 쪽 표지 대신 절 표지 `[§ …]`. 게재 PDF 와 판(정정·판본)이 다를 수 있다 — 쪽 인용은 PDF 로.\n\n' % pmcid
-                open(os.path.join(dd, 'paper.md'), 'w', encoding='utf8').write(md.replace('\n', '\n' + hdr, 1) if md.startswith('# ') else hdr + md)
+                _xml_md(dd, pmcid, xmlb)
                 open(os.path.join(dd, 'paper.xml'), 'wb').write(xmlb)
                 open(os.path.join(dd, 'meta.md'), 'w', encoding='utf8').write(
                     '<!-- lit: doi=%s pages=0 blank=0 sha=%s -->\n# %s\n\n- DOI: %s\n- 출처: Europe PMC 전문 XML %s(OA)\n- 첫 저자·해: %s %s\n- 참고문헌: %s\n- 받은 날: %s\n' % (
