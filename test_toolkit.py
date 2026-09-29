@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.38'
+EXPECT_VERSION = '16.39'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -2216,10 +2216,10 @@ def t_v1638_validate_missing_is_not_pass():
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             r = T.validate(SRC, SRC)
-        assert r is None and '검증 못 함' in buf.getvalue(), (r, buf.getvalue())
+        assert r is None and '구조 검사 통과(정밀 검사 없음)' in buf.getvalue(), (r, buf.getvalue())   # v16.39: 없으면 구조 검사
         cp = subprocess.run([sys.executable, os.path.join(HERE, 'deck_toolkit.py'), 'verify', SRC, '--original', SRC],
                             capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
-        assert '통과' not in cp.stdout.splitlines()[-1] and '검증 못 함' in cp.stdout, cp.stdout
+        assert cp.stdout.splitlines()[-1] == 'verify --original: 구조 검사 통과(정밀 검사 없음)', cp.stdout
     finally:
         if real is None:
             os.environ.pop('HANDOFF_VALIDATE_PY', None)
@@ -2227,6 +2227,49 @@ def t_v1638_validate_missing_is_not_pass():
             os.environ['HANDOFF_VALIDATE_PY'] = real
     if os.path.exists(T.validate_path()):                       # 성공 길: 있으면 전처럼 True
         assert T.validate(SRC, SRC) is True
+
+
+def _broken_copy(name, how):
+    """SRC 사본을 망가뜨린다 — how='xml': 슬라이드 XML 한 곳을 닫지 않음, 'zip': 파일 끝을 잘라 zip 이 깨짐."""
+    dst = os.path.join(TMP, name)
+    if how == 'zip':
+        b = open(SRC, 'rb').read(); open(dst, 'wb').write(b[:len(b) // 2]); return dst
+    zin = zipfile.ZipFile(SRC); zout = zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED)
+    for it in zin.namelist():
+        d = zin.read(it)
+        if it == 'ppt/slides/slide1.xml':
+            d = d.replace(b'</p:sld>', b'')
+        zout.writestr(it, d)
+    zin.close(); zout.close(); return dst
+
+
+def t_v1639_structure_check_when_no_validate():
+    # 사용자 09-29: validate.py 가 없을 때(Cowork) 가벼운 구조 검사 — zip·XML 파싱·python-pptx 다시 열기.
+    # 재현: 전에는 깨진 덱도 '검증 못 함'(None) 으로 지나갔다
+    import contextlib
+    real = os.environ.get('HANDOFF_VALIDATE_PY')
+    os.environ['HANDOFF_VALIDATE_PY'] = '/nonexistent/validate.py'
+    try:
+        for how in ('xml', 'zip'):                              # 실패 길: 깨진 덱은 False 와 '구조 검사 실패'
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                r = T.validate(_broken_copy('broken_%s.pptx' % how, how), SRC)
+            assert r is False and '구조 검사 실패' in buf.getvalue(), (how, r, buf.getvalue())
+        cp = subprocess.run([sys.executable, os.path.join(HERE, 'deck_toolkit.py'), 'verify', os.path.join(TMP, 'broken_xml.pptx')],
+                            capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+        assert cp.returncode == 1 and '구조 검사 실패' in cp.stdout, (cp.returncode, cp.stdout)
+        buf = io.StringIO()                                     # 성공 길: 온전한 덱은 None 과 '구조 검사 통과(정밀 검사 없음)'
+        with contextlib.redirect_stdout(buf):
+            r = T.validate(SRC, SRC)
+        assert r is None and '구조 검사 통과(정밀 검사 없음)' in buf.getvalue(), (r, buf.getvalue())
+        cp = subprocess.run([sys.executable, os.path.join(HERE, 'deck_toolkit.py'), 'verify', SRC],
+                            capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+        assert cp.returncode == 0 and 'verify: 구조 검사 통과(정밀 검사 없음)' in cp.stdout, (cp.returncode, cp.stdout)
+    finally:
+        if real is None:
+            os.environ.pop('HANDOFF_VALIDATE_PY', None)
+        else:
+            os.environ['HANDOFF_VALIDATE_PY'] = real
 
 
 def t_mapcheck_detects_forbidden():

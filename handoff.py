@@ -16,7 +16,7 @@ import os
 import re
 import sys
 
-__version__ = '2.0'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
+__version__ = '2.1'   # HANDOFF_FORMAT.md 첫 줄·test_handoff.EXPECT_VERSION 과 함께 올린다
 
 KEYS = ('작업:', '대본:', '참고:', '본문:', '제목:', '복제본(문제) 대본:')
 PARA_OP = re.compile(r'^문단 (교체|추가|삭제)\b')
@@ -1183,7 +1183,7 @@ def apply(doc, base_path, out_path, imports=None, stream=sys.stdout, workdir=Non
         e['memo_same'] = e['s2'] in ro and R.notes_sections(e['s1'])[2] == R.notes_sections(e['s2'])[2]
     rep.pop('import_src', None)
     rep.update({'mapping': mapping, 'memo_ok': memo_ok, 'memo_bad': memo_bad, 'screens': len(ro),
-                'valid': (bool(T.validate(out_path, base_path)) if os.path.exists(VALIDATE_PY) else None),   # v1.6 (발표 K4): 없으면 '건너뜀'
+                'valid': T.validate(out_path, base_path, vpath=VALIDATE_PY),   # v2.1: 없으면 구조 검사(통과 None · 실패 False) — 전에는 '건너뜀'
                 'sha': hashlib.sha256(open(out_path, 'rb').read()).hexdigest()[:16], 'content': content_hash(out_path)})
     if workdir is None:   # v1.3 (발표 3-7): 임시 폴더(덱마다 수백 MB)를 지운다 — 대화창 디스크가 찼다
         shutil.rmtree(wd, ignore_errors=True)
@@ -1195,7 +1195,7 @@ def report(rep, stream=sys.stdout):
     w('## 넘김 적용 보고 (handoff.py v%s)' % __version__); w()
     w('| 항목 | 값 |'); w('|---|---|')
     w('| 결과 | %d화면 · validate %s · **sha256 앞 16자 `%s`** · 내용 해시 `%s` (둘 다 적용 회신에 — 다음 넘김의 `기준 sha256` 은 어느 쪽이어도 된다) |' % (
-        rep['screens'], {True: '통과', False: '**실패**', None: '건너뜀(validate.py 없음 — 통과 아님)'}[rep['valid']], rep['sha'], rep.get('content', '—')))
+        rep['screens'], {True: '통과', False: '**실패**', None: '구조 검사 통과(정밀 검사 없음)'}[rep['valid']], rep['sha'], rep.get('content', '—')))
     w('| 한 일 | %s |' % (' · '.join(rep['done']) or '없음'))
     pr = rep.get('protected', (0, 0))
     w('| 원작자 메모 | 메모 구역이 있던 기준 화면 %d곳 · 메모 문단 %d개 그대로%s%s%s |' % (

@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.38'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.39'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -5517,20 +5517,61 @@ def validate_path():
 
 
 def vword(r):
-    """validate 결과 → 말. None 은 '통과' 가 아니다."""
-    return {True: '통과', False: '실패', None: '검증 못 함(validate.py 없음)'}[r]
+    """validate 결과 → 말. None 은 validate.py 없이 구조 검사만 통과한 것 — 정밀 검사 '통과' 가 아니다(v16.39)."""
+    return {True: '통과', False: '실패', None: '구조 검사 통과(정밀 검사 없음)'}[r]
 
 
-def validate(pptx, original=None):
+def structure_check(pptx):
+    """v16.39 (사용자 09-29): validate.py 가 없을 때(Cowork) 쓰는 가벼운 구조 검사 — zip 이 온전한지, 모든 XML·rels 가 제대로
+    닫혔는지(파싱), python-pptx 로 다시 열리는지. 스키마·관계 규칙은 보지 않는다(정밀 검사 아님). 반환: 문제 목록(빈 목록 = 통과)."""
+    import xml.etree.ElementTree as ET
+    try:
+        z = zipfile.ZipFile(pptx)
+    except Exception as e:
+        return ['zip 을 열지 못했다: %s: %s' % (type(e).__name__, str(e)[:80])]
+    probs = []
+    with z:
+        try:
+            bad = z.testzip()
+        except Exception as e:
+            return ['zip 을 읽지 못했다: %s: %s' % (type(e).__name__, str(e)[:80])]
+        if bad:
+            probs.append('zip 항목이 깨졌다: %s' % bad)
+        for n in z.namelist():
+            if n.endswith(('.xml', '.rels')):
+                try:
+                    ET.fromstring(z.read(n))
+                except Exception as e:
+                    probs.append('XML 이 온전하지 않다: %s (%s)' % (n, str(e)[:60]))
+    if not probs:
+        try:
+            from pptx import Presentation
+        except ImportError:
+            print('[참고] python-pptx 없음 — 다시 열기 검사는 건너뛴다')
+        else:
+            try:
+                Presentation(pptx)
+            except Exception as e:
+                probs.append('python-pptx 로 열리지 않는다: %s: %s' % (type(e).__name__, str(e)[:80]))
+    return probs
+
+
+def validate(pptx, original=None, vpath=None):
     """검증. **original 을 반드시 넘긴다.**
 
     original 없이 돌리면 원본에 원래 있던 무해한 스키마 오류
     (예: ppt/revisionInfo.xml)까지 실패로 잡혀 위양성이 난다.
     --original 을 주면 '원본 대비 새로 생긴 오류'만 본다.
     """
-    v = validate_path()
-    if not os.path.exists(v):   # v16.38 (코드 리뷰 09-28): 전에는 True('통과') — 없으면 None 과 '검증 못 함'
-        print('검증 못 함 — validate.py 없음(%s). 통과가 아니다' % v)
+    v = vpath or validate_path()
+    if not os.path.exists(v):   # v16.38: 전에는 True('통과'). v16.39: 없으면 구조 검사 — 통과 None, 실패 False
+        probs = structure_check(pptx)
+        if probs:
+            print('구조 검사 실패 — validate.py 없음(%s), 가벼운 검사에서 걸림:' % v)
+            for p_ in probs[:20]:
+                print('  - %s' % p_)
+            return False
+        print('구조 검사 통과(정밀 검사 없음) — validate.py 없음(%s). zip·XML·python-pptx 열기만 봤다' % v)
         return None
     if original is None:
         print('[주의] original 미지정 — 원본에 있던 오류까지 잡힐 수 있음')

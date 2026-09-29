@@ -14,7 +14,7 @@ sys.path.insert(0, HERE)
 import handoff as H          # noqa: E402
 import deck_toolkit as T     # noqa: E402
 
-EXPECT_VERSION = '2.0'
+EXPECT_VERSION = '2.1'
 TMP = tempfile.mkdtemp(prefix='th_')
 # v2.26: validate.py(pptx 스킬)가 없는 환경(Cowork VM)에서는 보고가 '건너뜀'(None) — v2.25 가 이 환경에서 테스트 3개 실패
 VALID = True if os.path.exists(H.VALIDATE_PY) else None
@@ -444,7 +444,15 @@ def t_v16_deterministic_sha_content_hash_and_validate_skip():
         H.VALIDATE_PY = real
     assert r1['sha'] == r2['sha'] and r1['content'] == r2['content'], (r1['sha'], r2['sha'])  # K1
     assert r2['valid'] is None and r1['valid'] is VALID                                        # K4
-    buf = io.StringIO(); H.report(r2, buf); assert '건너뜀(validate.py 없음 — 통과 아님)' in buf.getvalue()
+    buf = io.StringIO(); H.report(r2, buf); assert '구조 검사 통과(정밀 검사 없음)' in buf.getvalue(), buf.getvalue()   # v2.1: 없으면 구조 검사
+    # v2.1 실패 길: 결과 덱이 망가졌으면(validate 가 False) valid False 와 '실패' — 적용 CLI 는 종료 코드 1
+    import deck_toolkit as T_
+    real_v = T_.validate; T_.validate = lambda *a, **k: False
+    try:
+        r3 = H.apply(d, base, os.path.join(TMP, 'k1_3.pptx'), workdir=os.path.join(TMP, 'k1w3'), notes_mode='scripts')
+    finally:
+        T_.validate = real_v
+    buf = io.StringIO(); H.report(r3, buf); assert r3['valid'] is False and '**실패**' in buf.getvalue(), (r3['valid'], buf.getvalue())
     # 같은 내용·다른 zip(시각) 사본 → 기준 sha256 에 내용 해시를 적으면 경고만
     import zipfile
     cp = os.path.join(TMP, 'k1_copy.pptx')
