@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.44'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.45'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -1875,13 +1875,26 @@ class Deck:
 
     def strip_color(self, slide_no, hexcolor='FF0000'):
         """본문 run 의 특정 solidFill 색을 제거해 상속색으로 되돌린다 (전평 build_lgi.strip_answer 일반형, v16.6).
-        시험 풀이 덱의 '정답 빨강'을 지워 문제 제시용 슬라이드를 만드는 데 쓴다. 반환: 제거 수."""
+        시험 풀이 덱의 '정답 빨강'을 지워 문제 제시용 슬라이드를 만드는 데 쓴다. 반환: 제거 수.
+        v16.45 (코드 리뷰 14): **글자 색만** — run·문단 끝·목록 기본 글자 속성(`a:rPr`·`a:endParaRPr`·`a:defRPr`)의 바로 아래 채움.
+        도형 채움·선(병변 화살표·동그라미)과 글자 외곽선(`a:ln`)은 두고, 표기(소문자 `ff0000`, 줄바꿈·들여쓰기,
+        `lumMod` 같은 자식이 붙은 색)가 달라도 잡는다. 전에는 붙여 쓴 한 모양만 잡으면서 파일 전체에서 지웠다."""
         p = self._slide(slide_no); x = open(p, encoding='utf8').read()
-        pat = r'<a:solidFill><a:srgbClr val="%s"/></a:solidFill>' % hexcolor.upper()
-        n = x.count(pat)
-        if n:
-            open(p, 'w', encoding='utf8').write(x.replace(pat, ''))
-        return n
+        fill = re.compile(r'<a:solidFill>\s*<a:srgbClr\s+val="%s"\s*(?:/>|>.*?</a:srgbClr>)\s*</a:solidFill>' % re.escape(hexcolor), re.S | re.I)
+        ln = re.compile(r'<a:ln\b[^>]*/>|<a:ln\b.*?</a:ln>', re.S)
+        n = [0]
+
+        def props(m):
+            body, out, k = m.group(3), [], 0
+            for lm in ln.finditer(body):             # 외곽선 안의 채움은 글자 색이 아니다
+                out.append(fill.subn('', body[k:lm.start()])); out.append((lm.group(0), 0)); k = lm.end()
+            out.append(fill.subn('', body[k:]))
+            n[0] += sum(c for _, c in out)
+            return m.group(1) + ''.join(t for t, _ in out) + m.group(4)
+        y = re.sub(r'(<a:(rPr|endParaRPr|defRPr)\b[^>]*(?<!/)>)(.*?)(</a:\2>)', props, x, flags=re.S)
+        if n[0]:
+            open(p, 'w', encoding='utf8').write(y)
+        return n[0]
 
     def fix_title_box(self, slide_no, cy):
         """제목 placeholder(type="title")의 저장 높이를 cy(EMU)로 맞추고 normAutofit 을 켠다 (전평 build_lgi 흡수, v16.6).

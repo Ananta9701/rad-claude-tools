@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.44'
+EXPECT_VERSION = '16.45'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -2407,6 +2407,33 @@ def t_cli_graph_pptx():
                  ['align', SRC]):
         r = cli(*args); assert r.returncode == 0, (args, r.stderr[-400:])
     assert 'verified' in json.load(open(out('claims_fz.json')))['claims'][0]
+
+def t_v1645_strip_color_text_only_all_forms():
+    """코드 리뷰 14: strip_color 가 한 모양(`<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill>` 붙여 쓴 것)만 잡고,
+    파일 전체에서 지워 도형 채움·선(병변 화살표)의 빨강까지 지웠다 — 글자 색(rPr·endParaRPr·defRPr)만, 쓰는 모양이 달라도."""
+    d = T.Deck.open(SRC, wd('sc2'), theme='cud')
+    fp = d._slide(7); x = open(fp, encoding='utf8').read()
+    runs = ('<a:p><a:r><a:rPr lang="en-US"><a:solidFill><a:srgbClr val="ff0000"/></a:solidFill></a:rPr><a:t>low</a:t></a:r>'
+            '<a:r><a:rPr lang="en-US" b="1"><a:solidFill>\n  <a:srgbClr val="FF0000">\n    <a:lumMod val="95000"/>\n  </a:srgbClr>\n</a:solidFill></a:rPr><a:t>mod</a:t></a:r>'
+            '<a:r><a:rPr lang="en-US"><a:ln w="6350"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:ln><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:rPr><a:t>outl</a:t></a:r>'
+            '<a:r><a:rPr lang="en-US"><a:solidFill><a:srgbClr val="C00000"/></a:solidFill></a:rPr><a:t>dark</a:t></a:r>'
+            '<a:endParaRPr lang="en-US"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:endParaRPr></a:p>')
+    i = x.rfind('</p:txBody>'); x = x[:i] + runs + x[i:]
+    arrow = ('<p:sp><p:nvSpPr><p:cNvPr id="990" name="Red Arrow"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr><p:spPr>'
+             '<a:xfrm><a:off x="100" y="100"/><a:ext cx="500000" cy="200000"/></a:xfrm><a:prstGeom prst="rightArrow"><a:avLst/></a:prstGeom>'
+             '<a:solidFill><a:srgbClr val="FF0000"/></a:solidFill><a:ln w="12700"><a:solidFill><a:srgbClr val="FF0000"/></a:solidFill></a:ln></p:spPr></p:sp>')
+    j = x.rfind('</p:spTree>'); x = x[:j] + arrow + x[j:]
+    open(fp, 'w', encoding='utf8').write(x)
+    n = d.strip_color(7, 'FF0000')
+    y = open(fp, encoding='utf8').read()
+    sp = y[y.index('name="Red Arrow"'):]; sp = sp[:sp.index('</p:sp>')]
+    assert sp.count('val="FF0000"') == 2, sp                                    # 실패 길 옛 코드: 도형 채움·선 빨강까지 지움
+    assert n == 4, n                                                            # 성공 길: 소문자 · 자식 있는 색 · 외곽선 옆 글자 색 · endParaRPr
+    assert re.search(r'<a:ln w="6350"><a:solidFill><a:srgbClr val="FF0000"/>', y), '글자 외곽선(ln)은 건드리지 않는다'
+    assert 'val="C00000"' in y and 'ff0000' not in y and 'lumMod val="95000"' not in y
+    assert all(t in ''.join(d.texts(7)) for t in ('low', 'mod', 'outl', 'dark'))
+    assert d.strip_color(7, 'FF0000') == 0                                      # 두 번째는 지울 것 없음
+    d.save('/tmp/sc2.pptx'); assert T.validate('/tmp/sc2.pptx', SRC) is not False
 
 # ---------------------------------------------------------------- 실행 (한 번만)
 tests = [(n[2:], f) for n, f in list(globals().items()) if n.startswith('t_')]

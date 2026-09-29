@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.8.3'
+EXPECT_VERSION = '0.8.4'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 
@@ -472,6 +472,39 @@ def t_v083_oa_lookup_failure_not_none():
         return b'<html>blocked</html>'
     res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=html200, sleep=0, stream=io.StringIO()))
     assert res[1] == 'err', res
+
+
+def t_v084_oa_unpaywall_404_is_not_lookup_failure():
+    """사용자 09-29: Unpaywall 404 = Crossref 에 없는 DOI(다시 조회해도 같음) — '조회 못 함' 에 세지 않고 'DOI 확인 필요' 로 따로."""
+    import json, urllib.error
+    d, instr = _fixture()
+    store, out = os.path.join(d, 'store'), os.path.join(d, 'out')
+    def g(code, ep_hit=None, ep_err=False):
+        def get(url, timeout=30):
+            if 'unpaywall' in url:
+                if code == 200:
+                    return json.dumps({'best_oa_location': None}).encode()
+                raise urllib.error.HTTPError(url, code, 'x', {}, None)
+            if ep_err:
+                raise urllib.error.URLError('down')
+            return json.dumps({'resultList': {'result': [ep_hit] if ep_hit and 'xyz456' in url else []}}).encode()
+        return get
+    buf = io.StringIO()
+    res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=g(404), sleep=0, stream=buf)); t = buf.getvalue()
+    assert res[1] == 'baddoi' and res[2] == 'baddoi', res                                        # 404 + Europe PMC 없음
+    assert t.count(LT.NOT_IN_UNPAYWALL) == 2 and '조회 못 함' not in t and 'OA 없음' not in t, t
+    assert 'Unpaywall 에 없는 DOI 2편' in t and 'AI 가 제안한 DOI' in t, t
+    buf = io.StringIO()
+    res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=g(404, ep_err=True), sleep=0, stream=buf)); t = buf.getvalue()
+    assert res[1] == 'baddoi' and '(Europe PMC 조회 못 함 URLError)' in t and '조회 못 함 2편' not in t, (res, t)   # 404 가 먼저 — DOI 부터 확인
+    buf = io.StringIO()
+    hit = {'pmcid': 'PMC7654321', 'isOpenAccess': 'Y', 'inEPMC': 'Y'}
+    res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=g(404, ep_hit=hit), sleep=0, stream=buf)); t = buf.getvalue()
+    assert res[2] == 'xml' and 'Europe PMC 전문 XML(PMC7654321) · (Unpaywall 에 없는 DOI — Crossref 밖일 수 있음)' in t, t
+    for code in (422, 500, 503):                                                                   # 404 밖의 HTTP 오류는 그대로 조회 못 함
+        buf = io.StringIO()
+        res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=g(code), sleep=0, stream=buf)); t = buf.getvalue()
+        assert res[1] == 'err' and 'Unpaywall HTTPError %d' % code in t and '조회 못 함 2편' in t and LT.NOT_IN_UNPAYWALL not in t, (code, t)
 
 
 if __name__ == '__main__':

@@ -20,7 +20,7 @@ import shutil
 import sys
 import unicodedata
 
-__version__ = '0.8.3'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.8.4'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
 
 DOI_RE = re.compile(r'\b(10\.\d{4,9}/[^\s"<>]+)', re.I)
 PMID_RE = re.compile(r'\bPMID:?\s*(\d{5,9})\b', re.I)
@@ -496,6 +496,9 @@ def check(instr_path, inbox, out=None, stream=sys.stdout, store=None):
 UA = 'rad-claude-tools literature.py (research verification; one request per second)'
 
 
+NOT_IN_UNPAYWALL = 'Unpaywall 에 없는 DOI — DOI 확인 필요(오타 · 없는 논문 · Crossref 밖)'
+
+
 def _err_name(e):
     """조회 실패의 짧은 이름 — HTTP 오류는 상태 번호까지(422 = 이메일 거부, 403 = 차단 등)."""
     code = getattr(e, 'code', None)
@@ -747,13 +750,17 @@ def oa(instr_path, email, store, out, fetch=False, sleep=1.0, getter=None, strea
                 note = '다시 변환(%s — 옛 변환은 목록·상자 글·부록이 빠지거나 낱말이 붙었다)' % JATS_MD
             rows.append('| %d | %s %s | %s | 보관소에 있음 `%s` | %s |' % (r['n'], r['author'], r['year'], r['doi'], by_doi[r['doi']], note))
             res.append((r['n'], 'redo' if note else 'have')); continue
-        up, ep, err = {}, {}, {}
+        up, ep, err, nf = {}, {}, {}, False
         try:
             up = json.loads(get('https://api.unpaywall.org/v2/%s?email=%s' % (r['doi'], email)))
             if not isinstance(up, dict):
                 raise ValueError('dict 아님')
         except Exception as e:
-            up, err['Unpaywall'] = {}, _err_name(e)
+            up = {}
+            if getattr(e, 'code', None) == 404:   # v0.8.4 (사용자 09-29): Unpaywall 은 Crossref DOI 만 — 없는 DOI 는 404, 다시 조회해도 같다
+                nf = True
+            else:
+                err['Unpaywall'] = _err_name(e)
         time.sleep(sleep)
         try:
             q = get('https://www.ebi.ac.uk/europepmc/webservices/rest/search?query=DOI:%%22%s%%22&format=json&resultType=lite' % r['doi'])
@@ -778,6 +785,10 @@ def oa(instr_path, email, store, out, fetch=False, sleep=1.0, getter=None, strea
             what.append('(Unpaywall 조회 못 함 %s — OA PDF 는 모름)' % err['Unpaywall'])
         if what and 'Europe PMC' in err and not xml_ok:
             what.append('(Europe PMC 조회 못 함 %s — 전문 XML 은 모름)' % err['Europe PMC'])
+        if what and nf:
+            what.append('(Unpaywall 에 없는 DOI — Crossref 밖일 수 있음)')
+        if not what and nf:
+            what.append(NOT_IN_UNPAYWALL + ((' · (Europe PMC 조회 못 함 %s)' % err['Europe PMC']) if err else ''))
         if not what:
             what.append(('조회 못 함 — 다시 조회(%s)' % miss) if err else 'OA 없음 — 브라우저(doi.org)·구독이면 사용자')
         got = ''
@@ -798,13 +809,16 @@ def oa(instr_path, email, store, out, fetch=False, sleep=1.0, getter=None, strea
                 got = 'XML 받기 실패 %s' % type(e).__name__
             time.sleep(sleep)
         rows.append('| %d | %s %s | %s | %s | %s |' % (r['n'], r['author'], r['year'], r['doi'], ' · '.join(what), got))
-        res.append((r['n'], 'xml' if xml_ok else ('pdf' if pdf else ('err' if err else 'none'))))
+        res.append((r['n'], 'xml' if xml_ok else ('pdf' if pdf else ('baddoi' if nf else ('err' if err else 'none')))))
     if store and os.path.isdir(store):
         _write_store_index(store)
     L = ['# %s — 공식 API 조회(OA)' % name, '',
          '> literature.py v%s oa — Unpaywall·Europe PMC(캡차 없는 공식 경로). 남은 것은 받을 목록의 브라우저 순서(doi.org)로, 구독은 사용자.' % __version__, '',
          '| 번호 | 첫 저자·해 | DOI | 찾은 것 | 받음 |', '|---|---|---|---|---|'] + rows + ['']
-    nerr = sum(1 for _, x in res if x == 'err')
+    nerr, nbad = sum(1 for _, x in res if x == 'err'), sum(1 for _, x in res if x == 'baddoi')
+    if nbad:
+        L += ['**Unpaywall 에 없는 DOI %d편** — 다시 조회해도 같다. 지시의 DOI 를 확인한다(오타 · 없는 논문 · Crossref 밖 등록 기관). '
+              'AI 가 제안한 DOI(gaps 작업표)라면 없는 논문일 수 있다.' % nbad, '']
     if nerr:
         L += ['**조회 못 함 %d편** — OA 가 없다는 뜻이 아니다. 네트워크·차단(프록시)·이메일 오류(HTTPError 422)일 수 있다. '
               '같은 명령을 다시 돌린다(보관소에 받은 것은 건너뜀). 계속 막히면 브라우저로(규약 2b).' % nerr, '']
