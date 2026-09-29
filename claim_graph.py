@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.1'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.2'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -390,7 +390,9 @@ def mapgraph(claims, stream=sys.stdout):
     for w, cid, up, typ in sorted(weak, reverse=True):
         problems.append('[참고] 약한 고리: %s 가 기대는 %s 는 confidence=low (%s %.1f)' % (cid, up, typ, w))
     alone = [c['id'] for c in claims if not edges[c['id']] and not rev_any.get(c['id'])]
-    if alone and len(claims) > 1:     # v16.1 (사용자 09-29): 간선이 하나도 없는 주장 — 관계도에서 떨어져 나온다. 한 줄로(간선 없는 옛 그래프가 줄로 쏟아지지 않게)
+    if len(claims) > 1 and not any(edges.values()):   # v16.2 (사용자 09-29): 간선이 하나도 없는 그래프(발표 09-20 판 등)는 목록 대신 한 줄
+        problems.append('[참고] 간선이 하나도 없는 그래프(주장 %d개) — 관계(depends_on)를 아직 적지 않았다' % len(claims))
+    elif alone and len(claims) > 1:     # v16.1 (사용자 09-29): 간선이 하나도 없는 주장 — 관계도에서 떨어져 나온다. 한 줄로(간선 없는 옛 그래프가 줄로 쏟아지지 않게)
         problems.append('[참고] 간선이 하나도 없는 주장(외톨이) %d개: %s' % (len(alone), ', '.join(alone)))
     mains = [c['id'] for c in claims if c.get('role') == 'main']
     if any(c.get('role') for c in claims) and len(mains) != 1:
@@ -515,6 +517,9 @@ def _mapdraw_compact(claims, text=False):
         if any(t != 'caveat' for _, t, _ in edges[cid]):
             return False
         return not any(up == cid and t != 'caveat' for lst in edges.values() for up, t, _ in lst)
+    if len(by_id) > 1 and not any(edges.values()):     # v16.2: 간선 0 — 빈 그림·주장 목록 대신 한 줄
+        return ('# 관계도 — 그래프 전체\n\n> claim_graph.py v%s mapdraw. 간선이 하나도 없는 그래프(주장 %d개) — 그릴 관계가 없다. '
+                'depends_on 을 적은 뒤 다시 그린다(상자만 보려면 `--all-edges`).\n' % (__version__, len(by_id)))
     folded = {cid for cid in by_id if cav_node(cid)}
     drawn = [(up, typ, cid) for cid in by_id if cid not in folded for up, typ, _ in edges[cid]
              if typ != 'caveat' and up in by_id and up not in folded]

@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.1'
+EXPECT_VERSION = '16.2'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -713,9 +713,13 @@ def t_v161_mapdraw_compact_default():
     # --impact 는 v16.0 그대로(저자 확인 끝남): 아래→위, caveat 도 경로에 있으면 그린다
     mi = CGm.mapdraw(g, changed=['cv'])
     assert 'flowchart BT' in mi and 'class n4 changed' in mi and 'classDef r_' not in mi, mi
-    # 실패 길: 간선이 하나도 없는 그래프 — 빈 그림, 모두 목록으로
-    md = CGm.mapdraw([{'id': 'x', 'depends_on': []}, {'id': 'y', 'depends_on': []}])
-    assert 'flowchart LR' in md and '"x' not in md and '`x` (역할 없음)' in md and '`y`' in md, md
+    # 실패 길: 간선이 하나도 없는 그래프(발표 09-20 판 모양) — 빈 그림·목록 대신 한 줄(v16.2)
+    none = [{'id': 'x%02d' % k, 'depends_on': []} for k in range(21)]
+    md = CGm.mapdraw(none)
+    assert '```mermaid' not in md and '간선이 하나도 없는 그래프(주장 21개)' in md and 'x05' not in md, md
+    assert 'flowchart BT' in CGm.mapdraw(none, all_edges=True) and '"x05' in CGm.mapdraw(none, all_edges=True)   # 상자는 --all-edges 로
+    one = CGm.mapdraw([{'id': 'solo', 'depends_on': []}])                                     # 주장 하나는 그래프 모양 그대로(목록 한 줄)
+    assert '`solo`' in one, one
 
 
 def t_v161_mapgraph_isolated_note():
@@ -724,6 +728,8 @@ def t_v161_mapgraph_isolated_note():
     assert ps == ['[참고] 간선이 하나도 없는 주장(외톨이) 2개: z1, z2'], ps                    # 한 줄로, 이름과 함께
     assert not [p for p in CGm.mapgraph(copy.deepcopy(GRAPH), io.StringIO())[0] if '외톨이' in p]   # 다 이어졌으면 없음
     assert not [p for p in CGm.mapgraph([{'id': 'solo'}], io.StringIO())[0] if '외톨이' in p]        # 주장 하나뿐이면 알리지 않음
+    ps = [p for p in CGm.mapgraph([{'id': 'x%02d' % k} for k in range(21)], io.StringIO())[0] if '간선이 하나도' in p]
+    assert ps == ['[참고] 간선이 하나도 없는 그래프(주장 21개) — 관계(depends_on)를 아직 적지 않았다'], ps   # v16.2: 21개 이름을 늘어놓지 않는다
 
 
 def run():
