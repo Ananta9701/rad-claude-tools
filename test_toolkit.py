@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.49'
+EXPECT_VERSION = '16.50'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -998,6 +998,39 @@ def t_v1649_oral_freeze_stale_and_sync():
     # sync 없이 새 판을 주면 [필수] 로 멈춘다(판이 다르다)
     r = cli('mapstale', SRC, '--oral', O2, '--author', A3)
     assert r.returncode == 1 and '판이 다르다' in r.stdout, r.stdout[-500:]
+
+def t_v1650_oral_keys_missing_and_note():
+    # 발표 도구회신 09-30 O1·O2: mapfreeze --oral 이 화면에 keys 가 없는 자리도 말없이 확인 기록을 찍었다 — 기록하되 keys_missing 표시·[!] 한 줄,
+    # mapstale 도 그 표시를 다시 알린다. use[id].note 는 공식 칸 — mapcheck --oral 의 [!] 줄 옆에 붙인다
+    import json
+    d = T.Deck.open(SRC, wd('oralkm'))
+    o = [s for s, _, _ in d.order()]; sid = d.sld_id(o[3])
+    word = next(w for w in re.findall(r'[A-Za-z]{5,}', ' '.join(d.texts(o[3]))))
+    A, O, O2, O3 = out('okm_a.json'), out('okm_o.json'), out('okm_o2.json'), out('okm_o3.json')
+    json.dump({'doc': 'Fake_ms', 'claims': [
+        {'id': 'ev2', 'role': 'evidence', 'statement': 'S0', 'sites': ['doc:find:S0'], 'keys': ['s0'], 'depends_on': []},
+        {'id': 'mn', 'role': 'main', 'statement': 'S2', 'sites': ['doc:find:S2'], 'keys': ['s2'], 'depends_on': [{'id': 'ev2', 'type': 'premise'}]}]},
+        open(A, 'w'), ensure_ascii=False)
+    ov = T.CG.oral_init(A, deck='d')
+    ov['use'] = {'mn': {'sites': ['slide@%d' % sid], 'keys': [word.lower()]},
+                 'ev2': {'sites': ['slide@%d' % sid], 'keys': ['zzqx-old-value'], 'note': '옛 판 값 — 의도한 낡은 화면'}}
+    json.dump(ov, open(O, 'w'), ensure_ascii=False)
+    r = cli('mapcheck', SRC, '--oral', O, '--author', A)                  # O2: [!] 줄 옆에 note
+    bang = [l for l in r.stdout.splitlines() if l.strip().startswith('[!]')]
+    assert len(bang) == 1 and 'ev2' in bang[0] and '옛 판 값 — 의도한 낡은 화면' in bang[0], r.stdout[-700:]
+    r = cli('mapfreeze', SRC, '--oral', O, '--author', A, '-o', O2)       # O1: 기록하되 표시와 [!] 한 줄
+    assert r.returncode == 0 and any(l.strip().startswith('[!]') and 'ev2' in l and 'keys_missing' in l for l in r.stdout.splitlines()), r.stdout[-700:]
+    f = json.load(open(O2))
+    assert f['use']['ev2']['keys_missing'] is True and f['use']['ev2']['verified'] and 'keys_missing' not in f['use']['mn'], f['use']
+    assert f['use']['ev2']['note'] == '옛 판 값 — 의도한 낡은 화면'                     # note 는 보존
+    r = cli('mapstale', SRC, '--oral', O2, '--author', A)                 # 실패 길: 조용히 넘기지 않는다
+    assert '바뀐 것 없음' in r.stdout and any(l.strip().startswith('[!]') and 'ev2' in l and 'keys_missing' in l for l in r.stdout.splitlines()), r.stdout[-700:]
+    f['use']['ev2']['keys'] = [word.lower()]; json.dump(f, open(O2, 'w'), ensure_ascii=False)
+    r = cli('mapfreeze', SRC, '--oral', O2, '--author', A, '-o', O3)      # 성공 길: keys 를 고치면 표시가 빠진다
+    f = json.load(open(O3))
+    assert r.returncode == 0 and 'keys_missing' not in f['use']['ev2'] and not any(l.strip().startswith('[!]') for l in r.stdout.splitlines()), (f['use'], r.stdout[-500:])
+    r = cli('mapstale', SRC, '--oral', O3, '--author', A)
+    assert r.returncode == 0 and 'keys_missing' not in r.stdout, r.stdout[-500:]
 
 def _memo_notes(d, sn):
     """원작자 메모 흉내: 여러 run(굵게·색·하이퍼링크) 문단 + & < > + sldNum 자리."""

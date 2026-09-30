@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.13'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.14'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -870,6 +870,7 @@ def mapcheck(resolve, claims, stream=sys.stdout, nums=False, nums_sep=None):
     nums_sep (v15.5, 리뷰어 요청): 사용자가 명시한 구분자 **앞쪽**만 검사한다. evidence 를
     "원고 값 | 재현 값" 으로 쓰는 리뷰어 용법에서 `--nums-sep "|"` 로 재현값을 뺀다. 구분자는 도구가
     가정하지 않고 사용자가 선언하는 것이므로 서식 의존이 아니다. 지정하지 않으면 종전대로 전체."""
+    notes = {c['id']: c['oral_note'] for c in claims if c.get('oral_note')}   # v16.14 (발표 O2)
     problems, matrix, suppl = [], {}, []
     for c in claims:
         cid = c['id']
@@ -911,7 +912,8 @@ def mapcheck(resolve, claims, stream=sys.stdout, nums=False, nums_sep=None):
     print('주장 %d개 / 자리 %d곳' % (len(claims), len(matrix)), file=stream)
     if problems:
         for p in problems:
-            print('  [!] %s' % p, file=stream)
+            nt = notes.get(p.split(':', 1)[0])        # 구연 덧붙임의 note — 왜 [!] 인지 바로 보이게
+            print('  [!] %s%s' % (p, ('  — note: %s' % nt) if nt else ''), file=stream)
     else:
         print('  모든 주장의 자리에 찾는 표현이 있음 — 주장·evidence 가 최신인지는 보지 않는다(mapstale·판 올림 때 evidence 갱신)', file=stream)   # v16.9 (저자 4)
     return problems, matrix
@@ -1976,6 +1978,10 @@ def oral_merge(author_meta, author, overlay, author_sha=None):
             d['sites'] = list(u.get('sites', [])); d['keys'] = list(u.get('keys', []))
             if u.get('verified'):
                 d['verified'] = u['verified']
+            if u.get('note'):                     # v16.14 (발표 O2): 공식 칸 — 왜 그 화면이 [!] 인지 적는다
+                d['oral_note'] = u['note']
+            if u.get('keys_missing'):
+                d['keys_missing'] = True
             if d['sites'] and not d['keys']:
                 nokeys.append(c['id'])
         else:
@@ -1987,6 +1993,8 @@ def oral_merge(author_meta, author, overlay, author_sha=None):
         out.append(d)
     for c in pcl:
         d = _copy.deepcopy(c)
+        if d.get('note'):
+            d['oral_note'] = d['note']
         if d.get('sites') and not d.get('keys'):
             nokeys.append(d.get('id'))
         out.append(d)
@@ -2000,11 +2008,39 @@ def oral_merge(author_meta, author, overlay, author_sha=None):
     return meta, out, probs
 
 
-def oral_store_verified(overlay, merged):
+def oral_keys_missing(resolve, merged):
+    """v16.14 (발표 O1): 화면 keys 가 그 자리에 없는 주장 {id: [자리]} — mapcheck 의 "반영되지 않음" 과 같은 판정(무대 밖·keys 없는 주장은 뺀다)."""
+    out = {}
+    for c in merged:
+        keys = [k.lower() for k in c.get('keys', [])]
+        if c.get('offstage') or not keys:
+            continue
+        for site in c.get('sites', []):
+            try:
+                txt = resolve(site).lower()
+            except Exception:
+                continue                          # 못 읽는 자리는 mapfreeze 가 따로 멈춘다
+            if not any(_key_hit(k, txt) for k in keys):
+                out.setdefault(c['id'], []).append(site)
+    return out
+
+
+def oral_store_verified(overlay, merged, keys_missing=None):
     """v16.13: mapfreeze 가 합친 그래프에 적은 확인 기록을 덧붙임으로 — 쓴 주장은 use[id].verified, 발표 주장은 그 칸,
     무대 밖 상류는 offstage_verified[id](글 지문 — 받침이 바뀌면 mapstale 이 하류 화면까지). 저자 파일에는 쓰지 않는다."""
     use = overlay.setdefault('use', {})
     own = {c.get('id'): c for c in overlay.get('claims') or []}
+    km = keys_missing or {}
+    for cid, u in use.items():                    # v16.14 (발표 O1): 화면에 keys 가 없던 채로 기록한 주장 — 표시(다시 확인해 keys 가 있으면 빠진다)
+        if cid in km:
+            u['keys_missing'] = True
+        else:
+            u.pop('keys_missing', None)
+    for pid, c in own.items():
+        if pid in km:
+            c['keys_missing'] = True
+        else:
+            c.pop('keys_missing', None)
     offv = {}
     for c in merged:
         v = c.get('verified')

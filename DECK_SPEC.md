@@ -1,4 +1,6 @@
-# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.49)
+# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.50)
+
+> v16.50 (발표 도구회신 09-30 O1·O2): 구연 `mapfreeze --oral` 은 화면 keys 가 없는 자리도 기록하되 덧붙임 `use[id].keys_missing: true` 와 [!] 한 줄, `mapstale --oral` 은 그 표시를 [!] 로 다시 알린다. `mapcheck --oral` 의 [!] 줄에 `use[id].note` 를 붙인다(CLAIM_GRAPH §3-5).
 
 > v16.49 (사용자 09-30, 구연 2판): `mapfreeze 덱.pptx --oral 덧붙임.json --author 저자claims.json -o 덧붙임.json` — 화면 확인 기록을 덧붙임에(저자 파일은 그대로, 무대 밖 받침은 글 지문). `mapstale … --oral … --author …` — 화면 글·저자 글·무대 밖 받침이 바뀐 것을 잡는다. 저자 판이 바뀌었으면 먼저 `claim_graph oral sync`(CLAIM_GRAPH §3-5).
 

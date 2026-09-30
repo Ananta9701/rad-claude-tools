@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.49'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.50'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -6583,14 +6583,25 @@ def main():
     elif args.cmd == 'mapfreeze' and (args.oral or args.author):
         import json as _json
         _, cl, _ = CG._claims_arg(args)                   # [필수] 면 여기서 멈춘다
-        mapfreeze(Deck.open(args.pptx), cl, sources=args.sources, stream=sys.stdout)
-        ov = CG.oral_store_verified(_json.load(open(args.oral, encoding='utf8')), cl)
+        dk = Deck.open(args.pptx)
+        mapfreeze(dk, cl, sources=args.sources, stream=sys.stdout)
+        km = CG.oral_keys_missing(_resolver(dk), cl)       # v16.50 (발표 O1): 기록하되 표시 — 말없이 찍지 않는다
+        by = {c['id']: c for c in cl}
+        for cid, sites in km.items():
+            print(_relabel_sldid(dk, '  [!] %s: 화면 %s 에 keys 가 없는 채로 기록 — keys_missing 표시%s' % (
+                cid, ', '.join(sites), ('  — note: %s' % by[cid]['oral_note']) if by[cid].get('oral_note') else '')))
+        ov = CG.oral_store_verified(_json.load(open(args.oral, encoding='utf8')), cl, keys_missing=km)
         with open(args.o, 'w', encoding='utf8') as f:
             _json.dump(ov, f, ensure_ascii=False, indent=2)
         print('기록 완료(덧붙임): %s — 저자 claims 는 그대로' % args.o)
     elif args.cmd == 'mapstale' and (args.oral or args.author):
         _, cl, _ = CG._claims_arg(args)
-        r = mapstale(Deck.open(args.pptx), cl, sources=args.sources)
+        dk = Deck.open(args.pptx)
+        r = mapstale(dk, cl, sources=args.sources)
+        for c in cl:                                        # v16.50 (발표 O1): keys 없이 기록된 주장은 "조용" 으로 넘기지 않는다
+            if c.get('keys_missing'):
+                print(_relabel_sldid(dk, '  [!] %s: 화면 %s 은 keys 가 없는 채로 기록됨(keys_missing)%s' % (
+                    c['id'], ', '.join(c.get('sites', [])), ('  — note: %s' % c['oral_note']) if c.get('oral_note') else '')))
         sys.exit(1 if (r['changed'] or r['unverified']) else 0)
     elif args.cmd in ('mapfreeze', 'mapstale') and not args.claims:
         print('[중단] --claims 또는 --oral·--author 가 필요하다'); sys.exit(2)
