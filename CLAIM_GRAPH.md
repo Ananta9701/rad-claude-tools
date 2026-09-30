@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.14
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.15
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -240,6 +240,36 @@ mapgraph: `kind: 증례` 라 논문용 [참고]는 나오지 않고, 배제된 �
   "바뀐 것 없음" 이어도 그 주장을 [!] 한 줄로 다시 알린다(종료 코드는 바뀐 것이 없으면 0).
 - 전달(사용자 09-30): 저자 판이 바뀌면 사용자가 저자 대화창에서 파일을 받아 Drive 에 올린다. 저자 대화창은 `to발표` 에 전달 통보 md(판·주장 수·sha 앞 16자)를 올린다.
 
+## 3-6. 초점 그림 `focus` — 교신저자 이메일용 (v16.15, 사용자 09-30)
+
+선택한 주장 하나(또는 몇 개)를 가운데 두고 **받침**(기대는 쪽)과 **영향**(그 주장에 기대는 쪽)을 한 그림에. 세 칸: 받침 | 선택한 주장 | 영향.
+
+- 받침 = premise·support·context 로 **2단계**(`--up N`). 한계(caveat)·반박(rebuttal) = **선택한 주장과 받침 1단계에 직접 달린 것**. 영향 = `impact` 하류(강도 0.25 이상).
+- 상자 글: **선택한 주장은 문장 전문**(줄바꿈), 나머지는 **앞 40자**. `--ids` 면 id 만. 구연(`--oral … --author …`)이면 화면 자리를 붙이고(`--pptx 덱` 을 주면 "화면 N"),
+  무대 밖 받침은 흐린 점선 "(화면에 없음)".
+- 범례(쉬운 말): **선택한 주장 · 핵심 근거 · 한계 · 반박 · 영향받는 결론 · 화면에 없음** — 그림에 있는 것만(반박 선이 없으면 "반박" 도 뺀다).
+
+```bash
+python3 claim_graph.py focus <주장 id> --claims <저자 claims> -o 초점.md --png 초점.png            # 원고 기준(이메일)
+python3 claim_graph.py focus <주장 id> --oral <덧붙임> --author <저자 claims> --pptx <덱> -o 초점.md --png 초점.png   # 구연 기준
+```
+
+- `-o` 는 mermaid md(그림 글 + 범례 줄). `--png` 는 옆에 `초점.html` 을 만들고 **로컬 브라우저 headless** 로 찍어 여백을 잘라 저장한다(2배 해상도, `--size 1800x1400` 창).
+- **mermaid 파일을 찾는 순서**: ① `--mermaid-js 파일` ② 환경변수 `CLAIM_GRAPH_MERMAID_JS` ③ npm 으로 받은 `node_modules/mermaid/dist/mermaid.min.js`(지금 폴더·도구 옆·홈)
+  ④ 마지막에 CDN(jsdelivr — claude.ai 컨테이너에서는 막혀 있다).
+- **브라우저 찾는 순서**: 환경변수 `CLAIM_GRAPH_BROWSER`(`none` 이면 끔) → macOS Chrome·Chromium → `/opt/pw-browsers/chromium-*/chrome-linux/chrome`(claude.ai 컨테이너) →
+  PATH 의 `chromium`·`google-chrome`. **없으면 md·html 은 남기고 "[!] 브라우저를 찾지 못해 PNG 를 만들지 못했다" — 종료 코드 1**(조용히 넘어가지 않는다).
+- 찍은 뒤 끝나지 않는 Chrome 이 있어(09-30 Mac) PNG 가 생기면 그 임시 프로필의 브라우저만 끈다. 그림이 창보다 크면 [참고] "잘렸을 수 있다 — --size".
+- PNG 에는 **원고 문장**이 들어간다 — 이메일에 붙이는 용도이며 저장소·공개 파일에 두지 않는다.
+
+**저자 대화창 첫 사용(claude.ai 컨테이너)** — Chromium·한글 Noto CJK 는 이미 있다(09-30 부관리자 확인). mermaid 만 npm 으로 한 번 받는다:
+
+```bash
+cd /tmp && npm install mermaid@11 && python3 ~/rct/claim_graph.py focus <id> --claims <저자 claims> -o /tmp/f.md --png /tmp/f.png
+```
+
+(`/tmp` 에서 돌리면 `/tmp/node_modules/mermaid/…` 를 찾는다. 다른 곳이면 `--mermaid-js /tmp/node_modules/mermaid/dist/mermaid.min.js`.) 출력의 `mermaid: … (npm node_modules) · 브라우저: …` 줄로 무엇을 썼는지 본다.
+
 ## 3-3. 관계도 그림 `mapdraw` (v16, 전체 그림 v16.1)
 
 `claim_graph.py mapdraw --claims X.json -o 관계도.md [--impact ID …] [--text] [--all-edges]` — Mermaid 글이 든 md 를 쓴다.
@@ -297,6 +327,7 @@ pptx 는 `deck_toolkit.py <명령> deck.pptx --claims ...`, docx/md 는 `claim_g
 | `mapstale doc --claims [--sources 폴더]` | 그 뒤 어떤 편집이든 한 뒤 | v16: `--sources` 면 근거 원문 `[같음]`·`[변환]`·`[변경]`(§3-2). [변경] 주장, [필수]/[참고] 하류, 기록 없는 새 주장. v15.5: freeze 가 `verified.keys` 해시를 함께 적어 **keys 만 바꾼 그래프도 [변경]**(구판 freeze 는 그 해시가 없어 검사 안 함). 출력 끝에 "실제로 바뀐 주장의 자리(직접)"를 하류 전파와 구분해 낸다 |
 | `gaps --claims -o 작업표.md` · `gaps --to-instr 작업표.md -o 검증지시.md` | 근거 채우기 전 | 근거 공백 작업표 · 채운 표 → literature 검증지시 (§3-4, v16.5) |
 | `mapdraw --claims -o 관계도.md [--impact ID …] [--text] [--all-edges]` | 설명·검토용 그림 | Mermaid 글(§3-3, v16 · 전체 그림 v16.1) |
+| `focus <id…> (--claims … \| --oral … --author …) -o 초점.md [--png 초점.png] [--pptx 덱] [--up 2] [--ids]` | 교신저자 설명·구연 준비 | §3-6 초점 그림 — 받침 2단계·한계·반박·영향, 쉬운 말 범례, 로컬 브라우저로 PNG (v16.15) |
 | `oral init --author 저자.json -o 덧붙임.json` · `oral check --author … --oral …` · `oral sync --author 새판 --oral … -o … [--pairs] [--drop]` | 구연 덱 시작 · 덧붙임을 고친 뒤 · 저자 판이 바뀐 뒤 | §3-5. 저자 claims 는 읽기만. mapgraph·impact·mapdraw 도 `--oral … --author …` 로 합친 그래프를 읽는다 (v16.12). sync 는 v16.13 |
 | `mapdiff a.json b.json --labels 저자 리뷰어 [--pairs a1=b1,…] [--save-pairs]` | 독립으로 쓴 두 그래프 대조 | v16: `--save-pairs` 는 짝을 a 의 `pairs_with` 에 적고, 다음부터 `--pairs` 없이 쓴다. sites·keys 겹침으로 짝지어 (a) 양쪽 (b) 한쪽만 (c) 다른 쪽만, 간선 type·weight 차이, caveat 부착 차이. 간선·caveat 차이 줄의 **`?` 접두는 상대 그래프에 짝이 없는 노드 id** 를 뜻한다(v15.4.3 문서화) — 예 `?within-participant-design` 은 그 노드가 (b)/(c) 목록에 있다는 신호이므로 먼저 `--pairs` 로 짝을 확인한다. v15.4: role 계열(claim/evidence/caveat/…)이 다르면 짝짓지 않음. **명명만 다른 주장은 자동으로 못 잡는다** — (b)(c)가 크면 사람이 짝을 만들어 `--pairs`로 넘긴다. **반대 방향 오류도 있다**(v15.4.4): 의미상 대응하는 두 주장의 role 을 서로 다르게 쓰면(한쪽 main, 다른 쪽 claim) 같은 계열이라 짝지어져 (a) 에 들어가고, 그 상대의 진짜 짝은 (c) 에 남는다 — (a) 목록도 id 쌍을 눈으로 보고 어긋난 쌍은 `--pairs` 로 고정한다(실물: 저자 `group-a-b-distinct`(main) ↔ 리뷰어 `claim-mechanism-x`(claim)) — 문자열 `a1=b1,a2=b2`, json 파일 `{"a_id": "b_id"}`, 또는 한 줄에 `a_id=b_id` 인 텍스트 파일(v15.4.1). **1:N 짝**은 같은 a_id 를 반복(`s10=nested,s10=delta-r2`) 또는 json 값을 리스트로 — 한쪽이 한 노드로 묶은 것을 다른 쪽이 둘로 나눈 경우(v15.5), 출력에 `nested+delta-r2` 로 표시 |
 | `remap-refs --claims X.json --map refmap.json -o Y.json [--force]` | 참고문헌 재번호 뒤 | `verify_toolkit renumber` 가 낸 매핑으로 statement·evidence 의 `[n-m]`·keys 의 `refs n-m` 치환. `mapcheck` 는 `refs n-m` key 를 리터럴이 아니라 인용번호로 보고 자리의 대괄호 인용(`[26-28]`·`[26–28]`·`[24,26-28]`)을 펼쳐 대조한다(v15.4.2) — **그래프의 `doc` 이 가리키는 판의 번호 체계에 맞는 매핑만** 적용할 것. keys 의 순수 숫자("42", "29-31")는 **어떤 옵션으로도 건드리지 않는다**(v15.4.1 — 실물에서 참여자 수 42 가 바뀔 뻔함) — 인용번호 key 는 `refs 29-31` 로 쓸 것. 적용한 매핑을 상위 `refs_maps_applied` 에 기록하고 같은 매핑을 두 번 적용하려 하면 중단(`--force` 로 강행). **손으로 재번호한 그래프에는 표지가 없으므로 돌리지 말 것** — 돌리면 한 단계 더 밀린다. verified 있는 주장이 바뀌면 mapfreeze 재실행 경고. **v16.9 `--suppl S매핑.json`**(저자 09-29): 보충 표·그림 번호 `Suppl S{n}`(`Supplementary Table S4 and S2` 처럼 이어진 것도)을 같은 형식의 매핑으로 바꾼다. `--map`·`--suppl` 은 따로도 함께도 — 본문 `[n]` 과 보충 `S{n}` 은 서로 건드리지 않는다. 매핑에 없거나 삭제(null)된 보충 번호는 그대로 두고 [경고](글에서 지우는 것은 사람). 적용 기록은 `refs_maps_applied` 에 `kind: suppl` 로 |

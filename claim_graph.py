@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.14'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.15'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -2187,6 +2187,223 @@ def _claims_arg(a):
     return meta, cl, []
 
 
+# ----------------------------------------------------------------------------
+# 초점 그림 (v16.15, 사용자 09-30 큰 방향 ②) — 선택한 주장을 가운데, 받침(상류 2단계·한계·반박)과 영향(하류)을 한 그림에.
+# 교신저자 이메일용: 쉬운 말 범례, 상자는 문장(선택한 주장은 전문). --png 는 로컬 브라우저(Chrome·Chromium) headless 로 찍는다.
+# ----------------------------------------------------------------------------
+
+FOCUS_UP = 2
+FOCUS_CDN = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js'
+_FOCUS_STYLE = {'focus': 'fill:#ffd8a8,stroke:#c2410c,stroke-width:3px,color:#111',
+                'base': 'fill:#d0e7ff,stroke:#1d4ed8,color:#111',
+                'limit': 'fill:#fff3cd,stroke:#b58105,stroke-dasharray:4 3,color:#111',
+                'rebut': 'fill:#fde2e2,stroke:#b91c1c,color:#111',
+                'impact': 'fill:#e9d8fd,stroke:#6b46c1,color:#111',
+                'offstage': 'fill:#fafafa,stroke:#aaaaaa,stroke-dasharray:2 3,color:#777'}
+_FOCUS_WORD = [('focus', '선택한 주장'), ('base', '핵심 근거'), ('limit', '한계'), ('rebut', '반박'), ('impact', '영향받는 결론')]
+
+
+def focus_graph(claims, ids, up=FOCUS_UP):
+    """{'claims', 'ids', 'kind': {id: focus|base|limit|rebut|impact}, 'edges': [(위, 종류, 아래)]}.
+    받침 = premise·support·context 로 up 단계까지, 한계(caveat)·반박(rebuttal) = 선택한 주장과 받침 1단계에 직접 달린 것,
+    영향 = impact 의 하류(강도 IMPACT_CUTOFF 이상)."""
+    by = {c['id']: c for c in claims}
+    bad = [i for i in ids if i not in by]
+    if bad:
+        raise ValueError('없는 주장 id: %s' % ', '.join(bad))
+    edges = _edges(claims)
+    kind = {i: 'focus' for i in ids}
+    level = {i: 0 for i in ids}
+    frontier = list(ids)
+    for depth in range(1, up + 1):
+        nxt = []
+        for v in frontier:
+            for u, typ, _ in edges.get(v, []):
+                if u in by and typ in ('premise', 'support', 'context') and u not in kind:
+                    kind[u] = 'base'; level[u] = depth; nxt.append(u)
+        frontier = nxt
+    for v in [x for x, lv in level.items() if lv <= 1]:
+        for u, typ, _ in edges.get(v, []):
+            if u in by and u not in kind and typ in ('caveat', 'rebuttal'):
+                kind[u] = 'limit' if typ == 'caveat' else 'rebut'
+    for cid, strength, _ in impact(claims, list(ids), stream=io.StringIO()):
+        if strength >= IMPACT_CUTOFF and cid not in kind:
+            kind[cid] = 'impact'
+    drawn = [(u, typ, v) for v in kind for u, typ, _ in edges.get(v, []) if u in kind]
+    return {'claims': [by[i] for i in by if i in kind], 'ids': list(ids), 'kind': kind, 'edges': drawn}
+
+
+def _focus_text(c, full, ids, screen):
+    if ids:
+        t = c['id']
+    else:
+        st = re.sub(r'\s+', ' ', c.get('statement', '') or c['id']).strip()
+        if full:
+            words, lines, cur = st.split(' '), [], ''
+            for w in words:
+                if cur and len(cur) + 1 + len(w) > 34:
+                    lines.append(cur); cur = w
+                else:
+                    cur = (cur + ' ' + w).strip()
+            lines.append(cur)
+            t = '<br/>'.join(lines)
+        else:
+            t = st if len(st) <= 40 else st[:40].rstrip() + '…'
+    if c.get('offstage'):
+        t += '<br/>(화면에 없음)'
+    elif c.get('sites') and screen is not False:
+        scr = [(screen(x) if screen else x) for x in c['sites'] if _DECK_SITE.match(str(x))]
+        if scr:
+            t += '<br/>' + ', '.join(dict.fromkeys(scr))
+    return t.replace('"', '#quot;')
+
+
+def focus_mermaid(fg, ids=False, screen=None):
+    """mermaid 글 — 받침 | 선택한 주장 | 영향 세 칸(LR). screen(자리) → '화면 N' 을 주면 화면 번호로."""
+    kind = fg['kind']; nid = {c['id']: 'n%d' % k for k, c in enumerate(fg['claims'], 1)}
+    L = ['flowchart LR']
+    cols = [('s_up', '받침', ('base', 'limit', 'rebut')), ('s_focus', '선택한 주장', ('focus',)), ('s_down', '영향', ('impact',))]
+    for sid, title, ks in cols:
+        mem = [c for c in fg['claims'] if kind[c['id']] in ks]
+        if not mem:
+            continue
+        L.append('  subgraph %s["%s"]' % (sid, title))
+        for c in mem:
+            L.append('    %s["%s"]' % (nid[c['id']], _focus_text(c, kind[c['id']] == 'focus' and not ids, ids, screen)))
+        L.append('  end')
+    for u, typ, v in fg['edges']:
+        L.append('  %s %s %s' % (nid[u], _EDGE_ARROW.get(typ, '-->'), nid[v]))
+    for k_, style in _FOCUS_STYLE.items():
+        mem = [nid[c['id']] for c in fg['claims'] if (k_ == 'offstage' and c.get('offstage')) or (k_ != 'offstage' and kind[c['id']] == k_ and not c.get('offstage'))]
+        if mem:
+            L += ['  classDef %s %s' % (k_, style), '  class %s %s' % (','.join(mem), k_)]
+    return '\n'.join(L) + '\n'
+
+
+def focus_legend(fg):
+    """[(말, 스타일)] — 그림에 있는 것만. 반박 선이 없으면 반박도 뺀다(사용자 09-30)."""
+    have = set(fg['kind'].values())
+    if not any(t == 'rebuttal' for _, t, _ in fg['edges']):
+        have.discard('rebut')
+    out = [(w, _FOCUS_STYLE[k]) for k, w in _FOCUS_WORD if k in have]
+    if any(c.get('offstage') for c in fg['claims']):
+        out.append(('화면에 없음', _FOCUS_STYLE['offstage']))
+    return out
+
+
+def focus_md(fg, ids=False, screen=None):
+    L = ['# 초점 그림 — %s' % ', '.join(fg['ids']), '', '```mermaid', focus_mermaid(fg, ids, screen).rstrip(), '```', '', '범례: ' + ' · '.join(w for w, _ in focus_legend(fg)), '']
+    return '\n'.join(L)
+
+
+def find_mermaid_js(given=None, cwd=None, env=None):
+    """(src, 어디서) — ① --mermaid-js ② 환경변수 CLAIM_GRAPH_MERMAID_JS ③ npm 으로 받은 node_modules/mermaid/dist/mermaid.min.js
+    (지금 폴더·이 파일 옆·홈) ④ CDN(마지막 — claude.ai 컨테이너는 jsdelivr 가 막혀 있다, 사용자 09-30)."""
+    env = os.environ if env is None else env
+    if given:
+        if not os.path.exists(given):
+            raise ValueError('--mermaid-js %s 가 없다' % given)
+        return os.path.abspath(given), '--mermaid-js'
+    e = env.get('CLAIM_GRAPH_MERMAID_JS')
+    if e:
+        if not os.path.exists(e):
+            raise ValueError('환경변수 CLAIM_GRAPH_MERMAID_JS=%s 가 없다' % e)
+        return os.path.abspath(e), '환경변수'
+    for base in (cwd or os.getcwd(), os.path.dirname(os.path.abspath(__file__)), os.path.expanduser('~')):
+        p = os.path.join(base, 'node_modules', 'mermaid', 'dist', 'mermaid.min.js')
+        if os.path.exists(p):
+            return os.path.abspath(p), 'npm node_modules'
+    return FOCUS_CDN, 'CDN'
+
+
+def focus_html(fg, mermaid_src, ids=False, screen=None, title=''):
+    import html as _h
+    src = ('file://' + mermaid_src) if mermaid_src.startswith('/') else mermaid_src
+    leg = ''.join('<span class="k"><i style="%s"></i>%s</span>' % (_h.escape(st.replace(',', ';').replace('fill:', 'background:').replace('stroke-dasharray:4 3', '').replace('stroke-dasharray:2 3', '')), _h.escape(w))
+                  for w, st in focus_legend(fg))
+    return ('<!doctype html><html><head><meta charset="utf-8"><title>%s</title><style>'
+            'body{margin:24px;background:#fff;font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans CJK KR","Noto Sans KR",sans-serif;color:#111}'
+            '.leg{margin-top:14px;font-size:15px}.k{margin-right:18px;white-space:nowrap}.k i{display:inline-block;width:14px;height:14px;border:1px solid #666;'
+            'vertical-align:-2px;margin-right:6px}</style></head><body><pre class="mermaid">%s</pre><div class="leg">%s</div>'
+            '<script src="%s"></script><script>mermaid.initialize({startOnLoad:false,flowchart:{htmlLabels:true,wrappingWidth:520},'
+            'fontFamily:\'-apple-system,"Apple SD Gothic Neo","Noto Sans CJK KR",sans-serif\'});'
+            'mermaid.run().then(function(){document.title="done"});</script></body></html>'
+            % (_h.escape(title or ', '.join(fg['ids'])), _h.escape(focus_mermaid(fg, ids, screen)), leg, _h.escape(src)))
+
+
+def find_browser(env=None):
+    """headless 로 찍을 브라우저. 환경변수 CLAIM_GRAPH_BROWSER(= none 이면 끔) → macOS Chrome·Chromium → Linux /opt/pw-browsers/chromium-*/chrome-linux/chrome
+    (claude.ai 컨테이너) → PATH 의 chromium·google-chrome. 없으면 None."""
+    import glob, shutil
+    env = os.environ if env is None else env
+    e = env.get('CLAIM_GRAPH_BROWSER')
+    if e:
+        return None if e.lower() == 'none' else e
+    for p in ('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/Applications/Chromium.app/Contents/MacOS/Chromium'):
+        if os.path.exists(p):
+            return p
+    pw = sorted(glob.glob('/opt/pw-browsers/chromium-*/chrome-linux/chrome'), key=lambda q: [int(x) for x in re.findall(r'\d+', q)], reverse=True)
+    if pw:
+        return pw[0]
+    for n in ('chromium', 'chromium-browser', 'google-chrome', 'google-chrome-stable'):
+        w = shutil.which(n)
+        if w:
+            return w
+    return None
+
+
+def render_png(html_path, png_path, browser, size=(1800, 1400), timeout=90):
+    """headless 로 찍고 여백을 자른다. 찍은 뒤 끝나지 않는 Chrome 이 있어(09-30 Mac 시험) — PNG 가 생겨 크기가 멈추면 그 임시 프로필의
+    프로세스만 끈다. 반환 (성공, 알림). 2배 해상도."""
+    import subprocess, tempfile, time, shutil, signal
+    prof = tempfile.mkdtemp(prefix='cg_chrome_')
+    if os.path.exists(png_path):
+        os.remove(png_path)
+    cmd = [browser, '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars',
+           '--user-data-dir=%s' % prof, '--force-device-scale-factor=2', '--window-size=%d,%d' % size,
+           '--virtual-time-budget=15000', '--screenshot=%s' % png_path, 'file://' + os.path.abspath(html_path)]
+    if hasattr(os, 'geteuid') and os.geteuid() == 0:
+        cmd.insert(1, '--no-sandbox')              # 컨테이너(root)
+    p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    t0, last = time.time(), -1
+    try:
+        while time.time() - t0 < timeout:
+            if os.path.exists(png_path):
+                sz = os.path.getsize(png_path)
+                if sz and sz == last:
+                    break
+                last = sz
+            if p.poll() is not None and os.path.exists(png_path):
+                break
+            time.sleep(0.5)
+    finally:
+        if p.poll() is None:
+            try:
+                os.killpg(p.pid, signal.SIGTERM)
+            except Exception:
+                p.terminate()
+            try:
+                p.wait(5)
+            except Exception:
+                p.kill()
+        shutil.rmtree(prof, ignore_errors=True)
+    if not os.path.exists(png_path) or not os.path.getsize(png_path):
+        return False, 'PNG 를 만들지 못했다(%d초) — %s 를 브라우저로 열어 저장한다' % (timeout, html_path)
+    note = ''
+    try:
+        from PIL import Image, ImageChops
+        im = Image.open(png_path).convert('RGB')
+        box = ImageChops.difference(im, Image.new('RGB', im.size, (255, 255, 255))).getbbox()
+        if box:
+            m = 40
+            if box[3] >= im.size[1] - 2 or box[2] >= im.size[0] - 2:
+                note = '[참고] 그림이 창(%dx%d)보다 커서 잘렸을 수 있다 — --size 를 키운다' % size
+            im.crop((max(0, box[0] - m), max(0, box[1] - m), min(im.size[0], box[2] + m), min(im.size[1], box[3] + m))).save(png_path)
+    except Exception as e:
+        note = '[참고] 여백을 자르지 못했다(%s)' % type(e).__name__
+    return True, note
+
+
 _CLAIMS_ONLY = ('mapgraph', 'gaps', 'impact', 'mapdraw', 'mapreport', 'scaffold', 'add', 'link')
 
 
@@ -2209,6 +2426,13 @@ def main():
     dr.add_argument('--all-edges', action='store_true', help='전체 그림을 v16.0 모양으로 — 아래→위, caveat 상자·간선까지 모두 (v16.1)')
     for p_ in (g, i, dr):                 # v16.12: 구연 — 저자 파일(읽기 전용) + 덧붙임을 읽는 순간 합쳐서
         p_.add_argument('--oral', default=None, metavar='덧붙임.json'); p_.add_argument('--author', default=None, metavar='저자claims.json')
+    fo = sub.add_parser('focus', help='초점 그림 — 선택한 주장의 받침(상류 2단계·한계·반박)과 영향(하류), 이메일용 (v16.15)')
+    fo.add_argument('ids', nargs='+'); fo.add_argument('--claims', default=None); fo.add_argument('-o', required=True, help='쓸 md')
+    fo.add_argument('--oral', default=None); fo.add_argument('--author', default=None)
+    fo.add_argument('--up', type=int, default=FOCUS_UP, help='받침 단계(기본 2)'); fo.add_argument('--ids', dest='ids_flag', action='store_true', help='상자에 id 만')
+    fo.add_argument('--pptx', default=None, help='구연: 화면 자리를 화면 번호로(덱)')
+    fo.add_argument('--png', default=None, help='PNG 도 — 로컬 브라우저 headless'); fo.add_argument('--mermaid-js', default=None, help='mermaid.min.js 파일(없으면 환경변수·npm·CDN 순)')
+    fo.add_argument('--size', default='1800x1400', help='찍을 창 크기(2배로 찍힌다)')
     orl = sub.add_parser('oral', help='구연 덧붙임 — 저자 claims 는 읽기만, 화면 자리·keys 는 덧붙임에 (v16.12)')
     orl.add_argument('what', choices=('init', 'check', 'sync')); orl.add_argument('--author', required=True, metavar='저자claims.json')
     orl.add_argument('--oral', default=None, metavar='덧붙임.json', help='check 에서 읽을 덧붙임'); orl.add_argument('-o', default=None, help='init 이 쓸 덧붙임')
@@ -2286,6 +2510,44 @@ def main():
         name, _, cl = load_claims_meta(a.claims)
         open(a.o, 'w', encoding='utf8').write(gaps_table(cl, a.name or doc_name(name or '원고')))
         print('저장: %s (공백 %d)' % (a.o, len(find_gaps(cl)[0]))); sys.exit(0)
+    if a.cmd == 'focus':
+        meta_, cl_, _ = _claims_arg(a)
+        try:
+            fg_ = focus_graph(cl_, a.ids, up=a.up)
+        except ValueError as e:
+            print('[중단] %s' % e); sys.exit(2)
+        scr_ = None
+        if a.pptx:
+            import deck_toolkit as _T
+            dk_ = _T.Deck.open(a.pptx)
+            def scr_(site_, _dk=dk_):
+                m_ = re.search(r'\(화면 (\d+)\)', _T._relabel_sldid(_dk, site_))
+                return '화면 %s' % m_.group(1) if m_ else site_
+        with open(a.o, 'w', encoding='utf8') as f_:
+            f_.write(focus_md(fg_, ids=a.ids_flag, screen=scr_))
+        print('저장: %s (선택 %d · 받침 %d · 한계·반박 %d · 영향 %d)' % (a.o, *[sum(1 for v in fg_['kind'].values() if v in ks) for ks in (('focus',), ('base',), ('limit', 'rebut'), ('impact',))]))
+        if not a.png:
+            sys.exit(0)
+        try:
+            js_, how_ = find_mermaid_js(a.mermaid_js)
+        except ValueError as e:
+            print('[중단] %s' % e); sys.exit(2)
+        hp_ = os.path.splitext(a.png)[0] + '.html'
+        with open(hp_, 'w', encoding='utf8') as f_:
+            f_.write(focus_html(fg_, js_, ids=a.ids_flag, screen=scr_))
+        br_ = find_browser()
+        if not br_:
+            print('[!] 브라우저(Chrome·Chromium)를 찾지 못해 PNG 를 만들지 못했다 — %s 를 브라우저로 열어 저장하거나 CLAIM_GRAPH_BROWSER 로 경로를 준다' % hp_)
+            sys.exit(1)
+        w_, h_ = (int(x) for x in a.size.lower().split('x'))
+        ok_, note_ = render_png(hp_, a.png, br_, size=(w_, h_))
+        print('mermaid: %s (%s) · 브라우저: %s' % (js_ if how_ != 'CDN' else FOCUS_CDN, how_, br_))
+        if not ok_:
+            print('[!] ' + note_); sys.exit(1)
+        if note_:
+            print(note_)
+        print('PNG: %s' % a.png)
+        sys.exit(0)
     if a.cmd == 'oral':
         if a.what == 'init':
             if not a.o:

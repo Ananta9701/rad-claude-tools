@@ -4,7 +4,7 @@
     python test_claim_graph.py      # 실패 0 이어야 함
 test_toolkit.py(발표 프로젝트)는 이 파일을 import 해 같은 테스트를 함께 돌린다.
 """
-import copy, io, os, subprocess, sys, traceback
+import copy, io, os, re, subprocess, sys, traceback
 sys.dont_write_bytecode = True   # /mnt/project 는 대화창 안에서 쓰기 가능 — __pycache__ 를 남기지 않는다 (v2.3.1)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import claim_graph as CGm
@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.14'
+EXPECT_VERSION = '16.15'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -1058,6 +1058,103 @@ def t_v1613_oral_sync_success():
     new, lines, hard = CGm.oral_sync(ov, *CGm.load_claims_full(A), CGm._file_sha(A), 'author.json')
     assert new is None and not hard and any('같은 판' in l for l in lines), lines
     assert (open(A, 'rb').read(), open(A2, 'rb').read()) == before                                  # 저자 파일은 읽기만
+
+
+# ---------------------------------------------------------------- 초점 그림 (v16.15, 사용자 09-30)
+FOCUS_G = [
+    {'id': 'e3', 'role': 'evidence', 'statement': 'Third-level evidence far upstream', 'depends_on': []},
+    {'id': 'e2', 'role': 'evidence', 'statement': 'Second-level evidence', 'depends_on': [{'id': 'e3', 'type': 'support'}, {'id': 'cv2', 'type': 'caveat'}]},
+    {'id': 'e1', 'role': 'evidence', 'statement': 'First-level evidence with a fairly long statement that is cut', 'depends_on': [{'id': 'e2', 'type': 'premise'}, {'id': 'cv1', 'type': 'caveat'}]},
+    {'id': 'cv0', 'role': 'caveat', 'statement': 'Limit on the focus itself', 'depends_on': []},
+    {'id': 'cv1', 'role': 'caveat', 'statement': 'Limit on first-level evidence', 'depends_on': []},
+    {'id': 'cv2', 'role': 'caveat', 'statement': 'Limit on second-level evidence', 'depends_on': []},
+    {'id': 'rb', 'role': 'rebuttal', 'statement': 'Counter finding', 'depends_on': []},
+    {'id': 'f', 'role': 'claim', 'statement': 'The focused claim sentence that is long enough to be wrapped over more than one line in the box',
+     'depends_on': [{'id': 'e1', 'type': 'premise'}, {'id': 'cv0', 'type': 'caveat'}, {'id': 'rb', 'type': 'rebuttal'}]},
+    {'id': 'd1', 'role': 'main', 'statement': 'Downstream conclusion', 'depends_on': [{'id': 'f', 'type': 'premise'}]},
+    {'id': 'far', 'role': 'claim', 'statement': 'Unrelated', 'depends_on': []}]
+
+
+def t_v1615_focus_graph_up_down_and_labels():
+    import copy as _c
+    fg = CGm.focus_graph(_c.deepcopy(FOCUS_G), ['f'])
+    k = fg['kind']
+    assert set(k) == {'f', 'e1', 'e2', 'cv0', 'cv1', 'rb', 'd1'}, k                # 받침 2단계 · 한계 직접+1단계 · 반박 · 영향
+    assert k['f'] == 'focus' and k['e1'] == k['e2'] == 'base' and k['cv0'] == k['cv1'] == 'limit' and k['rb'] == 'rebut' and k['d1'] == 'impact'
+    assert 'e3' not in k and 'cv2' not in k and 'far' not in k                      # 3단계·2단계의 한계·무관은 빠짐
+    md = CGm.focus_mermaid(fg)
+    assert 'subgraph' in md and '받침' in md and '영향' in md and 'classDef focus' in md, md
+    full = FOCUS_G[7]['statement']
+    lab_f = re.search(r'\bn\d+\["([^"]*)"\]', [l for l in md.splitlines() if 'The focused' in l][0]).group(1)
+    assert lab_f.replace('<br/>', ' ') == full and '<br/>' in lab_f, lab_f         # 선택한 주장은 전문(줄바꿈)
+    lab_e1 = [l for l in md.splitlines() if 'First-level' in l][0]
+    assert 'First-level evidence with a fairly long…' in lab_e1 and 'is cut' not in lab_e1, lab_e1   # 나머지는 앞 40자
+    ids = CGm.focus_mermaid(fg, ids=True)
+    assert '"f"' in ids and 'The focused' not in ids, ids
+    leg = CGm.focus_legend(fg)
+    assert [x for x, _ in leg] == ['선택한 주장', '핵심 근거', '한계', '반박', '영향받는 결론'], leg
+    fg2 = CGm.focus_graph(_c.deepcopy([c for c in FOCUS_G if c['id'] != 'rb']), ['f'])
+    assert '반박' not in [x for x, _ in CGm.focus_legend(fg2)]                        # 반박 선이 없으면 범례에서도 뺀다
+    try:
+        CGm.focus_graph(_c.deepcopy(FOCUS_G), ['nope']); assert False
+    except ValueError as e:
+        assert 'nope' in str(e)
+
+
+def t_v1615_focus_oral_screens_and_offstage():
+    import json, tempfile
+    d = tempfile.mkdtemp(prefix='cgfo_')
+    A = os.path.join(d, 'a.json'); json.dump({'doc': 'x', 'claims': FOCUS_G}, open(A, 'w'), ensure_ascii=False)
+    ov = CGm.oral_init(A, deck='d'); ov['use'] = {'f': {'sites': ['slide@260'], 'keys': ['k']}, 'd1': {'sites': ['slide@261'], 'keys': ['k']}}
+    O = os.path.join(d, 'o.json'); json.dump(ov, open(O, 'w'), ensure_ascii=False)
+    _, cl, _ = CGm.load_oral(O, A)
+    fg = CGm.focus_graph(cl, ['f'])
+    md = CGm.focus_mermaid(fg, screen=lambda s: {'slide@260': '화면 12', 'slide@261': '화면 13'}.get(s, s))
+    assert '화면 12' in md and '화면 13' in md and 'classDef offstage' in md and '화면에 없음' in md, md
+    assert '화면에 없음' in [x for x, _ in CGm.focus_legend(fg)]
+    md2 = CGm.focus_mermaid(fg)                                                         # 덱을 안 주면 slide@ID
+    assert 'slide@260' in md2
+
+
+def t_v1615_focus_mermaid_js_order_and_no_browser():
+    import tempfile
+    d = tempfile.mkdtemp(prefix='cgmj_')
+    given = os.path.join(d, 'given.js'); envf = os.path.join(d, 'env.js')
+    nm = os.path.join(d, 'node_modules', 'mermaid', 'dist'); os.makedirs(nm); npmf = os.path.join(nm, 'mermaid.min.js')
+    for p in (given, envf, npmf):
+        open(p, 'w').write('/* fake */')
+    old = os.environ.pop('CLAIM_GRAPH_MERMAID_JS', None)
+    try:
+        assert CGm.find_mermaid_js(given, cwd=d) == (given, '--mermaid-js')
+        os.environ['CLAIM_GRAPH_MERMAID_JS'] = envf
+        assert CGm.find_mermaid_js(None, cwd=d) == (envf, '환경변수')
+        del os.environ['CLAIM_GRAPH_MERMAID_JS']
+        assert CGm.find_mermaid_js(None, cwd=d) == (npmf, 'npm node_modules')
+        src, how = CGm.find_mermaid_js(None, cwd=tempfile.mkdtemp())
+        assert how == 'CDN' and src.startswith('https://') and '@11' in src, (src, how)
+        try:
+            CGm.find_mermaid_js(os.path.join(d, 'missing.js'), cwd=d); assert False
+        except ValueError as e:
+            assert 'missing.js' in str(e)
+    finally:
+        os.environ.pop('CLAIM_GRAPH_MERMAID_JS', None)
+        if old is not None:
+            os.environ['CLAIM_GRAPH_MERMAID_JS'] = old
+    html = CGm.focus_html(CGm.focus_graph([dict(c) for c in FOCUS_G], ['f']), npmf)
+    assert 'file://' + npmf in html and 'flowchart' in html and '선택한 주장' in html and '핵심 근거' in html, html[:400]
+    # 브라우저가 없으면 md·html 을 남기고 알린다(조용히 넘어가지 않음) — 종료 코드 1
+    import json
+    A = os.path.join(d, 'a.json'); json.dump({'claims': FOCUS_G}, open(A, 'w'), ensure_ascii=False)
+    cg = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'claim_graph.py')
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', CLAIM_GRAPH_BROWSER='none', CLAIM_GRAPH_MERMAID_JS=npmf)
+    r = subprocess.run([sys.executable, cg, 'focus', 'f', '--claims', A, '-o', os.path.join(d, 'f.md'), '--png', os.path.join(d, 'f.png')],
+                       capture_output=True, text=True, env=env)
+    assert r.returncode == 1 and '브라우저' in r.stdout and os.path.exists(os.path.join(d, 'f.md')) and os.path.exists(os.path.join(d, 'f.html')) \
+        and not os.path.exists(os.path.join(d, 'f.png')), (r.stdout, r.stderr)
+    r = subprocess.run([sys.executable, cg, 'focus', 'f', '--claims', A, '-o', os.path.join(d, 'g.md')], capture_output=True, text=True, env=env)
+    assert r.returncode == 0 and '```mermaid' in open(os.path.join(d, 'g.md'), encoding='utf8').read(), (r.stdout, r.stderr)
+    assert CGm.find_browser(env={'CLAIM_GRAPH_BROWSER': 'none'}) is None
+    assert CGm.find_browser(env={'CLAIM_GRAPH_BROWSER': npmf}) == npmf                 # 준 경로를 그대로
 
 
 def t_v1610_mapfreeze_sources_missing_doi_stops():
