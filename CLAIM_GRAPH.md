@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.19
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.20
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -319,7 +319,11 @@ cd /tmp && npm install mermaid@11 && python3 ~/rct/claim_graph.py focus <id> --c
 - **자리는 그 논문의 paper.md.** 쪽·절 표지(`[p.인쇄 · PDF N]`·`[§ …]`)가 있는 md 는 **literature `locate` 와 같은 규칙**으로 읽는다 — 표지로 쪽을 나누고,
   빈 줄이나 `.`·`:` 로 끝난 줄 뒤에서 문단을 끊는다(PDF 글자층은 한 줄이 물리적 줄). `doc:find:` 는 NFKC(합자 `ﬂ`)·띄어쓰기를 무시하고 찾는다 —
   줄바꿈에 걸린 구절도 찾는다. 한 문단에만 있어야 한다(모호하면 오류). `doc:sec:` 는 표지(`doc:sec:PDF 2` · `doc:sec:Methods`). 표지 없는 md 는 전처럼 한 줄 = 문단.
-  **한계**: 줄 끝 하이픈으로 끊긴 낱말(`veloc-` / `ity`)은 붙이지 않는다 — 그런 곳은 구절을 옮겨 잡는다.
+  **줄 끝 하이픈(v16.20)**: 줄 끝 `-`(앞에 빈칸 하나 있어도)·소프트 하이픈 뒤 다음 줄이 **소문자**로 시작하면 찾기 사본에서만 붙인다 —
+  `tri-` / `als` 는 `trials` 로도 `tri-als` 로도 찾고, 돌려주는 문단 글(지문)은 원문 그대로. 다음 줄이 대문자면(`ISF-` / `HFC` 같은 복합어) 붙이지 않는다.
+  **쪽 머리·꼬리(v16.20)**: 쪽 표지 `[p.…]` 가 3쪽 이상인 md 에서, 쪽 위·아래 세 줄 안에 **쪽 절반 이상(3쪽 이상)** 되풀이되는 줄 앞머리
+  (숫자는 같게 봄, 12자 이상, **쪽 번호가 들었거나** 그만큼의 쪽에서 줄 전체)는 문단에서 뺀다 — `저자 et al. DOI` 머리 줄, 본문 첫 줄에 붙어 나온
+  `학술지 이름 쪽번호 사이트` 꼬리. 흔한 문장 첫머리·절반이 안 되는 줄(`FIGURE 2`)·절 표지 md 는 그대로. 머리·꼬리를 걸친 구절은 이제 찾지 못한다(구절을 옮겨 잡는다).
 - 그래서 **`mapcheck paper.md --claims claims.json` 이 AI 가 적은 구절이 원문에 정말 있는지** 본다(지어낸 인용 → "문구를 가진 문단 없음").
   `mapfreeze`(doc 은 DOI 그대로 둔다)·`mapstale`(논문 변환이 바뀌면 [변경]) 도 그대로.
 - **`mapgraph --claims <보관소>/<DOI>/claims.json`**(kind 문헌): caveat 없는 evidence · supersedes 없는 forbidden [참고] 는 끈다(짝이 될 주장만 뽑으므로). 더하는 검사:
@@ -332,6 +336,8 @@ cd /tmp && npm install mermaid@11 && python3 ~/rct/claim_graph.py focus <id> --c
 - 절차(설계안 — 초안 역할·크기 등 사용자 결정 대기): 받기(LITERATURE) → `extract paper.md` 후보 + AI 초안(**짝이 될 주장과 그 받침만**, `status proposed`·`origin ai`,
   자리는 원문 구절) → `mapcheck paper.md` → 리뷰어가 paper.md 를 읽고 판정(accepted·고침·뺌) → `mapfreeze`.
 - 쪽 표지를 sources 의 `at` 으로 옮길 때: `DocSource(paper.md).mark_of('doc:find:…')` 가 그 문단의 표지를 돌려준다.
+  **옛 표지 `[p.N]`**(literature 0.6 까지 — N 은 PDF 쪽)은 `PDF N`, `[p.N · 인쇄]` 는 `[p.인쇄 · PDF N]` 으로 풀어 돌려준다(v16.20 — 인쇄 쪽으로 읽히지 않게).
+  `doc:sec:PDF N`·`doc:sec:p.인쇄` 는 쪽 번호로 맞춘다(옛 표지도 · `PDF 1` 이 `PDF 10` 을 집지 않는다).
 
 ## 3-3. 관계도 그림 `mapdraw` (v16, 전체 그림 v16.1)
 

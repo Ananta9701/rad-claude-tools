@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.19'
+EXPECT_VERSION = '16.20'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -1933,6 +1933,93 @@ def t_v1619_lit_graph_cli_mapcheck_freeze_stale():
     assert '[변경] m1' in r.stdout, r.stdout[-600:]
     g = json.load(open(p)); g.pop('doi'); json.dump(g, open(p, 'w'), ensure_ascii=False)
     assert run('mapgraph', '--claims', p).returncode == 1                                        # [필수] 면 종료 1
+
+
+# ---- v16.20: ④ 2판 전 작은 고침 — 옛 쪽 표지 풀어 적기 · 쪽 머리·꼬리 줄 빼기 · 줄 끝 하이픈 낱말 ----
+
+def _md_src(d, txt, name='paper.md'):
+    p = os.path.join(d, name)
+    open(p, 'w', encoding='utf8').write(txt)
+    return CGm.DocSource(p)
+
+
+def t_v1620_mark_of_old_marks_spelled_as_pdf():
+    """④ 1판 실물(09-30): 보관소의 옛 변환은 쪽 표지가 `[p.N]`(N = PDF 쪽) — mark_of 가 그대로 돌려주면 sources.at 에 인쇄 쪽처럼 적힌다.
+    옛 표지는 `PDF N`(인쇄 쪽이 붙은 `[p.N · 인쇄]` 는 `[p.인쇄 · PDF N]`)으로, 새 표지·절 표지는 그대로. doc:sec:PDF 1 이 PDF 10 을 집지 않는다."""
+    import tempfile
+    d = tempfile.mkdtemp(prefix='cgmk_')
+    pages = ''.join('[p.%d]\n\nPage %s body text sentence here.\n\n' % (n, w) for n, w in
+                    ((1, 'one'), (2, 'two'), (3, 'three'), (4, 'four'), (5, 'five'), (6, 'six'), (7, 'seven'), (8, 'eight'), (9, 'nine'), (10, 'ten')))
+    src = _md_src(d, '# T\n\n' + pages.replace('[p.10]', '[p.10 · 110]'))
+    assert src.mark_of('doc:find:Page three body') == 'PDF 3', src.mark_of('doc:find:Page three body')
+    assert src.mark_of('doc:find:Page ten body') == '[p.110 · PDF 10]'
+    assert 'Page one' in src.resolve('doc:sec:PDF 1') and 'Page ten' not in src.resolve('doc:sec:PDF 1')
+    assert 'Page ten' in src.resolve('doc:sec:PDF 10')                                          # 옛 표지도 PDF 쪽으로
+    try:
+        src.resolve('doc:sec:PDF 11'); assert False                                             # 실패 길: 없는 쪽
+    except KeyError as e:
+        assert '표지 없음' in str(e), e
+    new = _md_src(d, _PAPER_MD, 'new.md')                                                       # 새 표지는 그대로
+    assert new.mark_of('doc:find:measured the fake index') == '[p.102 · PDF 2]'
+    sec = _md_src(d, '# T\n\n[§ Methods]\n\nWe measured things.\n', 'sec.md')
+    assert sec.mark_of('doc:find:We measured') == '[§ Methods]'
+
+
+def _running_md(n_pages=5, head_from=2):
+    """가짜 논문 — 2쪽부터 쪽 머리 한 줄, 모든 쪽 첫 줄 앞에 쪽 꼬리가 붙어 나온다(실물 PDF 글자층 모양: 줄바꿈 없이 본문에 붙음)."""
+    out = ['# Fake running', '']
+    first = ('alpha', 'beta', 'the', 'gamma', 'that', 'delta', 'this')                         # 쪽마다 다른 본문 첫 낱말(실물처럼)
+    for n in range(1, n_pages + 1):
+        out += ['[p.%d · PDF %d]' % (n + 40, n), '']
+        if n >= head_from:
+            out.append('Doe et al. 10.9999/fake-b')
+        out.append('Fake Journal of Tests %02d fakejournal.org%s page %d starts with this sentence that' % (n, first[n - 1], n))
+        out.append('continues onto the %s line of page %d.' % (('next', 'second', 'following', 'lower', 'last')[(n - 1) % 5], n))
+        if n in (2, 4):
+            out.append('FIGURE %d' % n)
+        out.append('%s closes page %d here.' % (('Omega', 'Sigma', 'Kappa', 'Theta', 'Lambda', 'Zeta', 'Eta')[n - 1], n))
+        out.append('')
+    return '\n'.join(out)
+
+
+def t_v1620_running_head_and_foot_removed():
+    """④ 1판 실물(09-30): 15쪽 중 14쪽 맨 위에 '저자 et al. DOI' 쪽 머리 한 줄, 쪽 꼬리 '학술지 이름 쪽번호 사이트' 는 줄바꿈 없이 본문 첫 줄에 붙어 나왔다
+    → 그 쪽 첫 문단이 쪽 머리·꼬리를 달고 있어 사람 이름 꼴·구절 찾기가 흐려진다. 쪽 절반 이상(3쪽 이상)에서 쪽 위·아래 세 줄 안에 되풀이되는
+    줄 앞머리(숫자는 같게 본다)를 뺀다. 절반이 안 되는 줄(FIGURE)·쪽이 적은 md 는 그대로."""
+    import tempfile
+    d = tempfile.mkdtemp(prefix='cgrh_')
+    src = _md_src(d, _running_md())
+    allp = '\n'.join(src.paras)
+    assert 'Doe et al' not in allp and 'fakejournal' not in allp and 'Fake Journal' not in allp, src.paras
+    t = src.resolve('doc:find:page 3 starts with this sentence that continues onto')                 # 붙어 있던 본문은 남는다
+    assert t.startswith('the page 3 starts'), t
+    assert src.mark_of('doc:find:page 3 starts') == '[p.43 · PDF 3]'
+    assert 'FIGURE 2' in allp and 'FIGURE 4' in allp                                            # 실패 길: 2/5 쪽뿐인 줄은 본문
+    few = _md_src(d, _running_md(n_pages=3), 'few.md')                                          # 3쪽 — 절반 이상이어도 3쪽이면 뺀다
+    assert 'Doe et al' in '\n'.join(few.paras) and 'fakejournal' not in '\n'.join(few.paras), few.paras   # 머리는 2쪽뿐 → 남음
+    two = _md_src(d, _running_md(n_pages=2), 'two.md')                                          # 2쪽 — 되풀이를 판단하지 않는다
+    assert 'fakejournal' in '\n'.join(two.paras)
+    sec = _md_src(d, _running_md().replace('[p.', '[§ S').replace(' · PDF ', ' '), 'sec.md')     # 절 표지 md 는 쪽이 아니다 — 그대로
+    assert 'fakejournal' in '\n'.join(sec.paras)
+
+
+def t_v1620_line_end_hyphen_found_joined():
+    """④ 1판 실물(09-30): 줄 끝 하이픈이 18곳('tri-'·'per -' 줄 끝). 찾기 사본에서만 붙인 꼴로도 찾는다 — 돌려주는 문단은 원문 그대로.
+    다음 줄이 대문자로 시작하면(ISF-HFC 같은 복합어) 붙이지 않는다."""
+    import tempfile
+    d = tempfile.mkdtemp(prefix='cghy_')
+    md = ('# T\n\n[p.1 · PDF 1]\n\nThe fake tri-\nals used a voxel-\nwise approach and the analysis was per -\nformed twice.\n'
+          'Maps of ISF-\nHFC coupling were drawn­\nlater.\n')
+    src = _md_src(d, md)
+    for q, w in (('fake trials used', 'voxel'), ('voxelwise approach', 'voxel'), ('voxel-wise approach', 'voxel'),
+                 ('analysis was performed twice', 'voxel'), ('drawnlater', 'Maps'), ('drawn later', 'Maps'), ('ISF-HFC coupling', 'Maps')):
+        assert w in src.resolve('doc:find:' + q), q
+    assert 'tri- als' in src.resolve('doc:find:fake trials used')                               # 원문 그대로 돌려준다
+    for bad in ('ISFHFC coupling', 'fake trails used'):
+        try:
+            src.resolve('doc:find:' + bad); assert False, bad                                   # 실패 길: 대문자 뒤는 붙이지 않음·없는 낱말
+        except KeyError as e:
+            assert '없음' in str(e), e
 
 
 if __name__ == '__main__':

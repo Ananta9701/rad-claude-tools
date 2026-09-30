@@ -48,7 +48,7 @@ import sys
 import unicodedata
 import zipfile
 
-__version__ = '16.19'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.20'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -147,17 +147,81 @@ def _fold_re(term):
     return re.compile(r'\s*'.join(map(re.escape, core)), re.I)
 
 
+_HYPH_BREAK = re.compile(r'(?<=[A-Za-z]) ?[-­‐][ \t]*\n\s*(?=[a-z])')   # v16.20: 줄 끝 하이픈 + 소문자로 시작하는 다음 줄
+
+
+def _norm_line(s):
+    return re.sub(r'\s+', ' ', _fold(s)).strip()
+
+
+def _running_res(pages):
+    """v16.20 (④ 1판 실물 09-30): 쪽 머리·꼬리 — 쪽 표지 `[p.…]` 쪽이 3쪽 이상일 때, 쪽 위·아래 세 줄 안에서 쪽 절반 이상(3쪽 이상)에
+    되풀이되는 줄 앞머리(숫자는 같게 본다, 12자 이상, 쪽 번호가 들었거나 그만큼의 쪽에서 줄 전체). 쪽 꼬리가 줄바꿈 없이 본문에 붙어 나오므로
+    줄 전체가 아니라 앞머리로 본다.
+    같은 쪽 수를 가진 앞머리 중 가장 긴 것 — 그보다 긴데 쪽 수가 줄면 본문으로 본다(쪽 첫 낱말이 우연히 같은 경우)."""
+    pages = [t for mk, t in pages if mk.startswith('[p.')]
+    if len(pages) < 3:
+        return []
+    need = max(3, (len(pages) + 1) // 2)
+    cands = []
+    for pi, t in enumerate(pages):
+        ls = [l for l in t.split('\n') if l.strip()]
+        for l in set(ls[:3] + ls[-3:]):
+            cands.append((re.sub(r'\d+', '#', _norm_line(l)), pi))
+    cands.sort()
+    pre = {a[:next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))]
+           for (a, pa), (b, pb) in zip(cands, cands[1:]) if pa != pb}
+    count = {p: len({pi for c, pi in cands if c.startswith(p)}) for p in pre if len(p.strip()) >= 12}
+    whole = {p: len({pi for c, pi in cands if c == p}) for p in count}
+    ok = {p: n for p, n in count.items() if n >= need and ('#' in p or whole[p] >= need)}   # 쪽 번호가 들었거나 쪽 절반 이상에서 줄 전체 — 흔한 문장 첫머리('In addition, the')는 아니다
+    keep = [p for p in ok if not any(q != p and q.startswith(p) and ok[q] == ok[p] for q in ok)          # 더 긴 같은 쪽 수가 있으면 짧은 것은 뺀다
+            and not any(q != p and p.startswith(q) and ok[q] > ok[p] for q in ok)]                       # 짧은 쪽이 더 많이 나오면 긴 것은 본문
+    return [re.compile(r'\d+'.join(r'\s*'.join(map(re.escape, piece.split(' '))) for piece in p.strip().split('#')))
+            for p in sorted(keep, key=len, reverse=True)]
+
+
+def _strip_running(t, res):
+    """쪽 글 t 의 위·아래 세 줄에서 쪽 머리·꼬리 앞머리를 뺀다(남는 글이 없으면 그 줄을 지운다)."""
+    if not res:
+        return t
+    ls = t.split('\n')
+    nz = [i for i, l in enumerate(ls) if l.strip()]
+    for i in set(nz[:3] + nz[-3:]):
+        s = _norm_line(ls[i])
+        for r in res:
+            m = r.match(s)
+            if m:
+                s = s[m.end():].strip()
+        ls[i] = s if s else None
+    return '\n'.join(l for l in ls if l is not None)
+
+
 def _paper_paras(txt):
-    """v16.19 (④ 1판): 쪽·절 표지가 있는 md → (표지 목록, 문단 목록). literature locate 와 같은 나눔 — 표지 줄로 쪽을 나누고,
-    그 안에서 빈 줄이나 . : 로 끝난 줄 뒤에서 문단을 끊는다(PDF 글자층은 한 줄이 물리적 줄). 문단은 NFKC·띄어쓰기 하나로."""
-    marks, paras = [], []
+    """v16.19 (④ 1판): 쪽·절 표지가 있는 md → (표지 목록, 문단 목록, 찾기 사본 목록). literature locate 와 같은 나눔 — 표지 줄로 쪽을 나누고,
+    그 안에서 빈 줄이나 . : 로 끝난 줄 뒤에서 문단을 끊는다(PDF 글자층은 한 줄이 물리적 줄). 문단은 NFKC·띄어쓰기 하나로.
+    v16.20: 쪽 머리·꼬리를 뺀다 · 찾기 사본은 줄 끝 하이픈 낱말을 붙인 꼴(문단 글 자체는 원문 그대로)."""
+    marks, paras, joined = [], [], []
     parts = _PAPER_MARK.split(txt)
-    for k in range(1, len(parts) - 1, 2):
-        for para in re.split(r'\n\s*\n|(?<=[.:])\n', parts[k + 1]):
+    pages = [(parts[k].strip(), parts[k + 1]) for k in range(1, len(parts) - 1, 2)]
+    res = _running_res(pages)
+    for mk, t in pages:
+        if mk.startswith('[p.'):
+            t = _strip_running(t, res)
+        for para in re.split(r'\n\s*\n|(?<=[.:])\n', t):
             flat = re.sub(r'\s+', ' ', _fold(para)).strip()
             if flat:
-                marks.append(parts[k].strip()); paras.append(flat)
-    return marks, paras
+                marks.append(mk); paras.append(flat)
+                joined.append(re.sub(r'\s+', ' ', _fold(_HYPH_BREAK.sub('', para))).strip())
+    return marks, paras, joined
+
+
+def _mark_at(mark):
+    """v16.20: 옛 쪽 표지 `[p.N]`(N = PDF 쪽 — literature 0.6 까지)는 `PDF N`, `[p.N · 인쇄]` 는 `[p.인쇄 · PDF N]` 으로 풀어 적는다.
+    새 표지 `[p.인쇄 · PDF N]`·절 표지는 그대로(literature `_mark_label` 과 같은 판단 — 인쇄 쪽으로 읽히지 않게)."""
+    m = re.match(r'^\[p\.\s*(\d+)(?:\s*·\s*([^\]]*?))?\s*\]$', mark.strip())
+    if not m or 'PDF' in mark:
+        return mark
+    return ('[p.%s · PDF %s]' % (m.group(2).strip(), m.group(1))) if (m.group(2) or '').strip() else 'PDF %s' % m.group(1)
 
 
 class DocSource:
@@ -169,7 +233,7 @@ class DocSource:
         if not path.lower().endswith('.docx'):
             txt = open(path, encoding='utf8', errors='ignore').read()
             if _PAPER_MARK.search(txt):
-                self.marks, self.paras = _paper_paras(txt)
+                self.marks, self.paras, self.joined = _paper_paras(txt)
                 self.headings, self.tables = set(), []
                 return
         self.paras, self.headings, self.tables = self._read(path)
@@ -235,7 +299,7 @@ class DocSource:
         if self.marks is None:
             return None
         t = self.resolve(site)
-        return self.marks[self.paras.index(t)]
+        return _mark_at(self.marks[self.paras.index(t)])     # v16.20: 옛 표지 [p.N] 은 PDF N 으로
 
     def units(self):
         """extract 용 (site, text) 목록. doc:find 는 문단 앞 6단어로 만든다."""
@@ -257,14 +321,19 @@ class DocSource:
             return seq[n - 1] if sub == 'p' else ' '.join(seq[n - 1])
         if sub == 'find' and self.marks is not None:   # v16.19: literature locate 와 같게 — NFKC(합자)·띄어쓰기 무시
             pat = _fold_re(arg)
-            hits = [p for p in self.paras if pat.search(p)]
+            hits = [p for p, j in zip(self.paras, self.joined) if pat.search(p) or pat.search(j)]   # v16.20: 줄 끝 하이픈 낱말을 붙인 사본으로도
             if not hits:
                 raise KeyError('문구를 가진 문단 없음: %s' % arg)
             if len(hits) > 1:
                 raise KeyError('문구가 %d개 문단에 있어 모호함: %s' % (len(hits), arg))
             return hits[0]
         if sub == 'sec' and self.marks is not None:    # v16.19: 절 = 표지(쪽 `PDF 2` · 절 `Methods`) — 처음 맞는 표지의 문단 전부
-            m = next((mk for mk in self.marks if arg.lower() in mk.lower()), None)
+            want = _page_of(arg)                          # v16.20: 쪽이면 쪽 번호로(옛 표지 [p.N] 도 · PDF 1 이 PDF 10 을 집지 않게), 아니면 글자로
+            if want != (None, None):
+                m = next((mk for mk in self.marks if mk.startswith('[p.') and
+                          (_page_of(_mark_at(mk))[1] == want[1] if want[1] is not None else _page_of(_mark_at(mk))[0] == want[0])), None)
+            else:
+                m = next((mk for mk in self.marks if arg.lower() in mk.lower()), None)
             if m is None:
                 raise KeyError('표지 없음: %s' % arg)
             return ' '.join(p for p, mk in zip(self.paras, self.marks) if mk == m)
