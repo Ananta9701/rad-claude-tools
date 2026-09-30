@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.12'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.13'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -1980,6 +1980,9 @@ def oral_merge(author_meta, author, overlay, author_sha=None):
                 nokeys.append(c['id'])
         else:
             d['sites'], d['keys'], d['offstage'] = [], [], True
+            ov_ = (overlay.get('offstage_verified') or {}).get(c['id'])
+            if ov_:                                   # v16.13: 무대 밖 상류의 글 지문 — 저자가 받침을 고치면 mapstale 이 잡는다
+                d['verified'] = ov_
             off += 1
         out.append(d)
     for c in pcl:
@@ -1995,6 +1998,131 @@ def oral_merge(author_meta, author, overlay, author_sha=None):
     if author_meta.get('kind'):
         meta['kind'] = author_meta['kind']
     return meta, out, probs
+
+
+def oral_store_verified(overlay, merged):
+    """v16.13: mapfreeze 가 합친 그래프에 적은 확인 기록을 덧붙임으로 — 쓴 주장은 use[id].verified, 발표 주장은 그 칸,
+    무대 밖 상류는 offstage_verified[id](글 지문 — 받침이 바뀌면 mapstale 이 하류 화면까지). 저자 파일에는 쓰지 않는다."""
+    use = overlay.setdefault('use', {})
+    own = {c.get('id'): c for c in overlay.get('claims') or []}
+    offv = {}
+    for c in merged:
+        v = c.get('verified')
+        if not v:
+            continue
+        if c.get('offstage'):
+            offv[c['id']] = v
+        elif c['id'] in own:
+            own[c['id']]['verified'] = v
+        elif c['id'] in use:
+            use[c['id']]['verified'] = v
+    overlay['offstage_verified'] = offv
+    return overlay
+
+
+def oral_sync(overlay, new_meta, new_claims, new_sha, new_file, pairs=None, drop=()):
+    """v16.13 (사용자 09-30 결정 4): 저자 새 판을 따라간다. 반환 (새 덧붙임 또는 None, 알림 줄, [필수] 목록).
+    [필수] 가 하나라도 있으면 None — 아무것도 쓰지 않는다. 쓴 id 가 새 판에 없으면 스냅숏 해시로 후보를 찾아 보여 주고
+    --pairs 옛=새(1:N 은 리스트)·--drop 옛 전까지 멈춘다. 옮긴 주장은 확인 기록 없이(새 주장이다) — 글이 바뀐 같은 id 는 기록을 두어
+    mapstale 이 [변경] 으로 잡게 한다."""
+    import copy as _copy, datetime
+    ov = _copy.deepcopy(overlay)
+    src = ov.get('source') or {}
+    if src.get('sha') == new_sha:
+        return None, ['같은 판(sha %s) — 할 일 없음' % new_sha], []
+    old_snap = src.get('snap') or {}
+    new_snap = oral_snapshot(new_claims)
+    by_new = {c['id']: c for c in new_claims}
+    pairs = dict(pairs or {}); drop = set(drop or ())
+    use = ov.setdefault('use', {})
+    own = ov.get('claims') or []
+    refs = list(use) + [up for c in own for up, _, _ in _edges([c]).get(c.get('id'), []) if not str(up).startswith('p-')]
+    hard, lines, moved, dropped = [], [], {}, []
+
+    def where(cid):
+        return ', '.join((use.get(cid) or {}).get('sites', [])) or ('발표 주장 ' + ', '.join(c['id'] for c in own if any(u == cid for u, _, _ in _edges([c]).get(c['id'], []))))
+
+    def cands(cid):
+        o = old_snap.get(cid) or {}
+        s1, k1, g1 = set(o.get('sites', [])), set(o.get('keys', [])), _ROLE_GROUP.get(o.get('role'))
+        out = []
+        for nid, n in new_snap.items():
+            if nid in old_snap and nid != cid:
+                continue                          # 옛 판에도 있던 id 는 후보가 아니다(제 자리가 있다)
+            g2 = _ROLE_GROUP.get(n.get('role'))
+            if g1 and g2 and g1 != g2:
+                continue
+            sc = 2 * len(s1 & set(n['sites'])) + len(k1 & set(n['keys']))
+            if sc:
+                out.append((sc, nid))
+        return sorted(out, reverse=True)[:3]
+    for cid in dict.fromkeys(refs):
+        if cid in drop:
+            continue
+        if cid in pairs:
+            tg = pairs[cid] if isinstance(pairs[cid], list) else [pairs[cid]]
+            bad = [t for t in tg if t not in by_new]
+            if bad:
+                hard.append('--pairs %s=%s — 새 판에 %s 이 없다' % (cid, ','.join(tg), ', '.join(bad)))
+            elif any(by_new[t].get('status') == 'superseded' for t in tg):
+                hard.append('--pairs %s=%s — 새 판에서 철회된 주장으로는 옮기지 않는다' % (cid, ','.join(tg)))
+            else:
+                moved[cid] = tg
+            continue
+        if cid not in by_new:
+            cs = cands(cid)
+            hint = ('후보: %s → --pairs %s=%s' % (', '.join('%s(점수 %d)' % (n, sc) for sc, n in cs), cid, cs[0][1])) if cs \
+                else '원고 자리·keys 로 찾은 후보 없음 → --pairs %s=<새 id>' % cid
+            hard.append('쓴 주장 %s 이 새 판에 없다(%s) — %s 또는 --drop %s' % (cid, where(cid), hint, cid))
+            continue
+        if by_new[cid].get('status') == 'superseded' and cid in use:
+            hard.append('저자가 새 판에서 철회한 주장 %s 이 화면 %s 에 걸려 있다 → --pairs %s=<새 id> 또는 --drop %s' % (cid, where(cid), cid, cid))
+            continue
+        if (old_snap.get(cid) or {}).get('text') and old_snap[cid]['text'] != new_snap[cid]['text']:
+            lines.append('[변경] 쓴 주장 %s 의 글이 바뀜 — 화면 %s 를 다시 본다(mapstale 이 [변경] 으로 잡는다)' % (cid, where(cid)))
+    if hard:
+        return None, lines, hard
+    for cid, tg in moved.items():
+        u = use.pop(cid, None)
+        for t in tg:
+            if u is not None:
+                if t in use:
+                    use[t]['sites'] = list(dict.fromkeys(use[t].get('sites', []) + u.get('sites', [])))
+                    use[t]['keys'] = list(dict.fromkeys(use[t].get('keys', []) + u.get('keys', [])))
+                    use[t].pop('verified', None)
+                else:
+                    use[t] = {'sites': list(u.get('sites', [])), 'keys': list(u.get('keys', []))}
+        lines.append('[옮김] %s → %s%s' % (cid, ', '.join(tg), (' (화면 %s)' % ', '.join(u.get('sites', []))) if u else ''))
+    for cid in sorted(drop):
+        u = use.pop(cid, None)
+        dropped.append(cid)
+        lines.append('[뺌] %s%s' % (cid, (' (화면 %s — 그 화면의 글은 사람이 고친다)' % ', '.join(u.get('sites', []))) if u else ''))
+    for c in own:                                 # 발표 주장의 기댐도 따라간다
+        deps = []
+        for e in c.get('depends_on', []):
+            e = {'id': e} if isinstance(e, str) else dict(e)
+            if e['id'] in moved:
+                deps += [dict(e, id=t) for t in moved[e['id']]]
+            elif e['id'] in drop:
+                lines.append('[참고] 발표 주장 %s 이 기대던 %s 을 뺐다 — 새로 기댈 주장을 적는다' % (c['id'], e['id']))
+            else:
+                deps.append(e)
+        c['depends_on'] = deps
+    newids = [i for i in new_snap if i not in old_snap and not any(i in tg for tg in moved.values())]
+    gone = [i for i in old_snap if i not in new_snap and i not in use and i not in moved and i not in drop]
+    offch = [i for i in (ov.get('offstage_verified') or {}) if i in old_snap and i in new_snap and old_snap[i]['text'] != new_snap[i]['text']]
+    if offch:
+        lines.append('[참고] 무대 밖 상류 %d개(%s)의 글이 바뀜 — 기대는 화면은 mapstale 이 흔들림으로 잡는다' % (len(offch), ', '.join(offch[:10])))
+    if newids:
+        lines.append('[참고] 새 저자 주장 %d개(%s) — 구연에 쓸지' % (len(newids), ', '.join(newids[:10]) + (' …' if len(newids) > 10 else '')))
+    if gone:
+        lines.append('[참고] 저자가 뺀 주장 %d개(%s) — 구연에서 쓰지 않던 것' % (len(gone), ', '.join(gone[:10])))
+    ov['offstage_verified'] = {k: v for k, v in (ov.get('offstage_verified') or {}).items() if k in new_snap}
+    ov.setdefault('synced', []).append({'from': src.get('sha'), 'to': new_sha, 'date': datetime.date.today().isoformat(),
+                                        'moved': moved, 'dropped': dropped})
+    ov['source'] = {'file': new_file, 'doc': new_meta.get('doc') or new_meta.get('deck') or src.get('doc', ''),
+                    'sha': new_sha, 'n': len(new_claims), 'snap': new_snap}
+    return ov, lines, []
 
 
 def load_oral(overlay_path, author_path):
@@ -2046,9 +2174,11 @@ def main():
     for p_ in (g, i, dr):                 # v16.12: 구연 — 저자 파일(읽기 전용) + 덧붙임을 읽는 순간 합쳐서
         p_.add_argument('--oral', default=None, metavar='덧붙임.json'); p_.add_argument('--author', default=None, metavar='저자claims.json')
     orl = sub.add_parser('oral', help='구연 덧붙임 — 저자 claims 는 읽기만, 화면 자리·keys 는 덧붙임에 (v16.12)')
-    orl.add_argument('what', choices=('init', 'check')); orl.add_argument('--author', required=True, metavar='저자claims.json')
+    orl.add_argument('what', choices=('init', 'check', 'sync')); orl.add_argument('--author', required=True, metavar='저자claims.json')
     orl.add_argument('--oral', default=None, metavar='덧붙임.json', help='check 에서 읽을 덧붙임'); orl.add_argument('-o', default=None, help='init 이 쓸 덧붙임')
     orl.add_argument('--deck', default=None, help='init: 덧붙임의 덱 이름')
+    orl.add_argument('--pairs', default=None, help='sync: 사라진 쓴 id 의 새 id — 옛=새, 1:N 은 같은 옛을 반복(mapdiff 와 같은 문법) (v16.13)')
+    orl.add_argument('--drop', default=None, help='sync: 구연에서 뺄 옛 id, 쉼표로 (v16.13)')
     for name in ('mapcheck', 'mapfreeze', 'mapstale'):
         p = sub.add_parser(name); p.add_argument('doc'); p.add_argument('--claims', required=True)
         if name in ('mapfreeze', 'mapstale'):
@@ -2128,7 +2258,28 @@ def main():
             print('덧붙임 저장: %s (저자 %s · 주장 %d · sha %s) — use 에 화면 자리·keys 를 적는다' % (a.o, ov['source']['file'], ov['source']['n'], ov['source']['sha']))
             sys.exit(0)
         if not a.oral:
-            print('[중단] oral check 는 --oral 덧붙임.json'); sys.exit(2)
+            print('[중단] oral %s 는 --oral 덧붙임.json' % a.what); sys.exit(2)
+        if a.what == 'sync':
+            import json as _json
+            if not a.o:
+                print('[중단] oral sync 는 -o 새 덧붙임.json(같은 이름이면 덮는다)'); sys.exit(2)
+            ov_ = _json.load(open(a.oral, encoding='utf8'))
+            nm_, nc_ = load_claims_full(a.author)
+            new_, lines_, hard_ = oral_sync(ov_, nm_, nc_, _file_sha(a.author), os.path.basename(a.author),
+                                            pairs=parse_pairs(a.pairs) if a.pairs else None,
+                                            drop=[x.strip() for x in (a.drop or '').split(',') if x.strip()])
+            for l_ in lines_:
+                print(l_)
+            for h_ in hard_:
+                print('[필수] ' + h_)
+            if hard_:
+                print('[멈춤] 덧붙임을 쓰지 않았다 — 위 [필수] 를 --pairs·--drop 으로 정한 뒤 다시'); sys.exit(1)
+            if new_ is None:
+                sys.exit(0)
+            with open(a.o, 'w', encoding='utf8') as f_:
+                _json.dump(new_, f_, ensure_ascii=False, indent=2)
+            print('덧붙임 저장: %s (저자 %s · sha %s) — 이어서 oral check 와 mapstale' % (a.o, new_['source']['file'], new_['source']['sha']))
+            sys.exit(0)
         meta_, cl_, probs = load_oral(a.oral, a.author)
         for p_ in probs:
             print(p_ if p_.startswith('[참고]') else '[필수] ' + p_)

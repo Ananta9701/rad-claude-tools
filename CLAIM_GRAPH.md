@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.12
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.13
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -224,7 +224,15 @@ mapgraph: `kind: 증례` 라 논문용 [참고]는 나오지 않고, 배제된 �
 - [필수](멈춤): 저자 파일 sha 가 덧붙임을 만든 판과 다름 · 쓴 id 가 저자 파일에 없음 · 저자가 철회(`superseded`)한 주장이 화면에 있음 · `use` 자리가 화면 자리가
   아님 · 발표 주장 id 가 `p-` 로 시작하지 않음/저자 id 와 겹침/저자 id 가 아닌 것에 기댐.
 - 명령: `claim_graph oral check --author 저자.json --oral 덧붙임.json`(합친 뒤 mapgraph) · `claim_graph mapgraph|impact|mapdraw --oral 덧붙임.json --author 저자.json`
-  · `deck_toolkit mapcheck 덱.pptx --oral 덧붙임.json --author 저자.json`(화면 자리에 keys·forbidden). 저자 판 따라가기(`oral sync`)와 화면 확인 기록(mapfreeze·mapstale)은 v2.71.
+  · `deck_toolkit mapcheck 덱.pptx --oral 덧붙임.json --author 저자.json`(화면 자리에 keys·forbidden).
+- **저자 판 따라가기(v16.13)** — `oral sync --author 새판.json --oral 덧붙임.json -o 새덧붙임.json [--pairs 옛=새] [--drop 옛,…]`:
+  같은 판(sha)이면 할 일 없음. 쓴 주장의 글이 바뀌면 [변경](자리·확인 기록은 두어 mapstale 이 잡게), 새 주장 [참고], 저자가 뺀(쓰지 않던) 주장 [참고],
+  무대 밖 상류의 글이 바뀌면 [참고]. **쓴 id 가 새 판에 없으면 [필수] — 스냅숏 해시(원고 자리·keys)로 후보를 점수와 함께 보이고 `--pairs 옛=새`(1:N 은
+  같은 옛을 반복)·`--drop 옛` 전까지 덧붙임을 쓰지 않는다.** 새 판에서 철회된 쓴 주장도 [필수]. 옮긴 주장은 확인 기록 없이(새 주장이다), 발표 주장
+  `p-` 의 기댐도 따라간다. `synced` 에 판 이력(옛·새 sha·날짜·옮김·뺌)을 쌓는다.
+- **화면 확인 기록(v16.13)** — `deck_toolkit mapfreeze 덱.pptx --oral 덧붙임.json --author 저자.json -o 덧붙임.json` 은 확인 기록을 **덧붙임에** 쓴다
+  (쓴 주장 `use[id].verified`, 발표 주장은 그 칸, 무대 밖 상류는 `offstage_verified[id]` — 글 지문). `mapstale … --oral … --author …` 은 그것과 비교한다:
+  화면 글이 바뀜 · 쓴 주장의 저자 글이 바뀜 · **무대 밖 받침의 글이 바뀜(기대는 화면까지 흔들림)** 을 잡는다. 저자 판이 덧붙임과 다르면 먼저 `oral sync`.
 - 전달(사용자 09-30): 저자 판이 바뀌면 사용자가 저자 대화창에서 파일을 받아 Drive 에 올린다. 저자 대화창은 `to발표` 에 전달 통보 md(판·주장 수·sha 앞 16자)를 올린다.
 
 ## 3-3. 관계도 그림 `mapdraw` (v16, 전체 그림 v16.1)
@@ -284,7 +292,7 @@ pptx 는 `deck_toolkit.py <명령> deck.pptx --claims ...`, docx/md 는 `claim_g
 | `mapstale doc --claims [--sources 폴더]` | 그 뒤 어떤 편집이든 한 뒤 | v16: `--sources` 면 근거 원문 `[같음]`·`[변환]`·`[변경]`(§3-2). [변경] 주장, [필수]/[참고] 하류, 기록 없는 새 주장. v15.5: freeze 가 `verified.keys` 해시를 함께 적어 **keys 만 바꾼 그래프도 [변경]**(구판 freeze 는 그 해시가 없어 검사 안 함). 출력 끝에 "실제로 바뀐 주장의 자리(직접)"를 하류 전파와 구분해 낸다 |
 | `gaps --claims -o 작업표.md` · `gaps --to-instr 작업표.md -o 검증지시.md` | 근거 채우기 전 | 근거 공백 작업표 · 채운 표 → literature 검증지시 (§3-4, v16.5) |
 | `mapdraw --claims -o 관계도.md [--impact ID …] [--text] [--all-edges]` | 설명·검토용 그림 | Mermaid 글(§3-3, v16 · 전체 그림 v16.1) |
-| `oral init --author 저자.json -o 덧붙임.json` · `oral check --author … --oral …` | 구연 덱 시작 · 덧붙임을 고친 뒤 | §3-5. 저자 claims 는 읽기만. mapgraph·impact·mapdraw 도 `--oral … --author …` 로 합친 그래프를 읽는다 (v16.12) |
+| `oral init --author 저자.json -o 덧붙임.json` · `oral check --author … --oral …` · `oral sync --author 새판 --oral … -o … [--pairs] [--drop]` | 구연 덱 시작 · 덧붙임을 고친 뒤 · 저자 판이 바뀐 뒤 | §3-5. 저자 claims 는 읽기만. mapgraph·impact·mapdraw 도 `--oral … --author …` 로 합친 그래프를 읽는다 (v16.12). sync 는 v16.13 |
 | `mapdiff a.json b.json --labels 저자 리뷰어 [--pairs a1=b1,…] [--save-pairs]` | 독립으로 쓴 두 그래프 대조 | v16: `--save-pairs` 는 짝을 a 의 `pairs_with` 에 적고, 다음부터 `--pairs` 없이 쓴다. sites·keys 겹침으로 짝지어 (a) 양쪽 (b) 한쪽만 (c) 다른 쪽만, 간선 type·weight 차이, caveat 부착 차이. 간선·caveat 차이 줄의 **`?` 접두는 상대 그래프에 짝이 없는 노드 id** 를 뜻한다(v15.4.3 문서화) — 예 `?within-participant-design` 은 그 노드가 (b)/(c) 목록에 있다는 신호이므로 먼저 `--pairs` 로 짝을 확인한다. v15.4: role 계열(claim/evidence/caveat/…)이 다르면 짝짓지 않음. **명명만 다른 주장은 자동으로 못 잡는다** — (b)(c)가 크면 사람이 짝을 만들어 `--pairs`로 넘긴다. **반대 방향 오류도 있다**(v15.4.4): 의미상 대응하는 두 주장의 role 을 서로 다르게 쓰면(한쪽 main, 다른 쪽 claim) 같은 계열이라 짝지어져 (a) 에 들어가고, 그 상대의 진짜 짝은 (c) 에 남는다 — (a) 목록도 id 쌍을 눈으로 보고 어긋난 쌍은 `--pairs` 로 고정한다(실물: 저자 `group-a-b-distinct`(main) ↔ 리뷰어 `claim-mechanism-x`(claim)) — 문자열 `a1=b1,a2=b2`, json 파일 `{"a_id": "b_id"}`, 또는 한 줄에 `a_id=b_id` 인 텍스트 파일(v15.4.1). **1:N 짝**은 같은 a_id 를 반복(`s10=nested,s10=delta-r2`) 또는 json 값을 리스트로 — 한쪽이 한 노드로 묶은 것을 다른 쪽이 둘로 나눈 경우(v15.5), 출력에 `nested+delta-r2` 로 표시 |
 | `remap-refs --claims X.json --map refmap.json -o Y.json [--force]` | 참고문헌 재번호 뒤 | `verify_toolkit renumber` 가 낸 매핑으로 statement·evidence 의 `[n-m]`·keys 의 `refs n-m` 치환. `mapcheck` 는 `refs n-m` key 를 리터럴이 아니라 인용번호로 보고 자리의 대괄호 인용(`[26-28]`·`[26–28]`·`[24,26-28]`)을 펼쳐 대조한다(v15.4.2) — **그래프의 `doc` 이 가리키는 판의 번호 체계에 맞는 매핑만** 적용할 것. keys 의 순수 숫자("42", "29-31")는 **어떤 옵션으로도 건드리지 않는다**(v15.4.1 — 실물에서 참여자 수 42 가 바뀔 뻔함) — 인용번호 key 는 `refs 29-31` 로 쓸 것. 적용한 매핑을 상위 `refs_maps_applied` 에 기록하고 같은 매핑을 두 번 적용하려 하면 중단(`--force` 로 강행). **손으로 재번호한 그래프에는 표지가 없으므로 돌리지 말 것** — 돌리면 한 단계 더 밀린다. verified 있는 주장이 바뀌면 mapfreeze 재실행 경고. **v16.9 `--suppl S매핑.json`**(저자 09-29): 보충 표·그림 번호 `Suppl S{n}`(`Supplementary Table S4 and S2` 처럼 이어진 것도)을 같은 형식의 매핑으로 바꾼다. `--map`·`--suppl` 은 따로도 함께도 — 본문 `[n]` 과 보충 `S{n}` 은 서로 건드리지 않는다. 매핑에 없거나 삭제(null)된 보충 번호는 그대로 두고 [경고](글에서 지우는 것은 사람). 적용 기록은 `refs_maps_applied` 에 `kind: suppl` 로 |
 | `add --claims X.json --id ID --statement … [--role R] [--evidence …] [--site S]… [--key K]… [--dep ID[:type]]… -o Y.json` | 주장을 더할 때 | v16.9 (저자 09-29): 간선 **weight 는 type 기본값**(premise 1.0·support 0.7·context 0.3·caveat 0.5·rebuttal 0.5)으로 넣는다. `--dep` 의 type 을 안 적으면 premise. 같은 id·없는 주장이면 멈춤(종료 코드 2). 맨 위 칸(doc·note 등)은 그대로 |

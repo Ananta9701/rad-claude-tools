@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.12'
+EXPECT_VERSION = '16.13'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -977,6 +977,87 @@ def t_v1612_oral_merge_failures():
     assert r.returncode == 2 and '--author' in r.stdout, (r.stdout, r.stderr)
     r = run('oral', 'init', '--author', A, '-o', O)
     assert r.returncode != 0 and '이미 있다' in (r.stdout + r.stderr), (r.stdout, r.stderr)
+
+
+def _author_v2(**kw):
+    """가짜 저자 새 판: mn 글 바뀜 · ev-b → ev-b2 이름 바뀜(원고 자리 같음) · down 지움 · new-1 새 주장."""
+    import copy as _c
+    a = _c.deepcopy(ORAL_AUTHOR)
+    by = {c['id']: c for c in a['claims']}
+    by['mn']['statement'] = 'Epsilon main sentence, revised'
+    by['ev-b']['id'] = 'ev-b2'
+    for c in a['claims']:
+        for e in c.get('depends_on', []):
+            if isinstance(e, dict) and e['id'] == 'ev-b':
+                e['id'] = 'ev-b2'
+    a['claims'] = [c for c in a['claims'] if c['id'] != 'down']
+    a['claims'].append({'id': 'new-1', 'role': 'claim', 'statement': 'Theta new', 'sites': ['doc:find:Theta'], 'keys': ['theta'], 'depends_on': []})
+    for k, v in kw.items():
+        v(a)
+    return a
+
+
+def _oral_v2_files(d, overlay_edit=None, **kw):
+    import json
+    A, O = _oral_files(d, overlay_edit)
+    A2 = os.path.join(d, 'author_v2.json'); json.dump(_author_v2(**kw), open(A2, 'w'), ensure_ascii=False)
+    return A, O, A2
+
+
+def _use_mn_evb(ov):
+    ov['use'] = {'mn': {'sites': ['slide@260'], 'keys': ['e']}, 'ev-b': {'sites': ['notes@260'], 'keys': ['b'], 'verified': {'at': 'x'}}}
+    ov['claims'] = [{'id': 'p-intro', 'role': 'claim', 'statement': '도입', 'sites': ['slide@256'], 'keys': ['도입'],
+                     'depends_on': [{'id': 'ev-b', 'type': 'support'}]}]
+
+
+def t_v1613_oral_sync_stops_on_vanished_id_with_candidate():
+    # v2.71 (사용자 09-30 결정 4): 쓴 id 가 새 판에 없으면 --pairs·--drop 전까지 멈춘다 — 스냅숏 해시로 후보를 찾는다
+    import json, tempfile
+    d = tempfile.mkdtemp(prefix='cgsy_')
+    A, O, A2 = _oral_v2_files(d, _use_mn_evb)
+    ov = json.load(open(O)); am, ac = CGm.load_claims_full(A2)
+    new, lines, hard = CGm.oral_sync(ov, am, ac, CGm._file_sha(A2), 'author_v2.json')
+    assert new is None and len(hard) == 1 and 'ev-b' in hard[0] and 'ev-b2' in hard[0] and '--pairs ev-b=' in hard[0] and 'notes@260' in hard[0], hard
+    cg = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'claim_graph.py')
+    run = lambda *a: subprocess.run([sys.executable, cg] + list(a), capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
+    O2 = os.path.join(d, 'oral_v2.json')
+    r = run('oral', 'sync', '--author', A2, '--oral', O, '-o', O2)
+    assert r.returncode == 1 and '[필수]' in r.stdout and not os.path.exists(O2), (r.stdout, r.stderr)
+    # 실패 길 둘: 없는 새 id 로 짝 · 철회된 주장이 화면에
+    new, _, hard = CGm.oral_sync(ov, am, ac, 'x' * 16, 'v2', pairs={'ev-b': 'nope'})
+    assert new is None and any('nope' in h for h in hard), hard
+    am3, ac3 = am, [dict(c, status='superseded') if c['id'] == 'mn' else c for c in ac]
+    new, _, hard = CGm.oral_sync(ov, am3, ac3, 'x' * 16, 'v2', pairs={'ev-b': 'ev-b2'})
+    assert new is None and any('철회' in h and 'mn' in h for h in hard), hard
+
+
+def t_v1613_oral_sync_success():
+    import json, tempfile
+    d = tempfile.mkdtemp(prefix='cgsy_')
+    A, O, A2 = _oral_v2_files(d, _use_mn_evb)
+    before = (open(A, 'rb').read(), open(A2, 'rb').read())
+    ov = json.load(open(O)); am, ac = CGm.load_claims_full(A2)
+    new, lines, hard = CGm.oral_sync(ov, am, ac, CGm._file_sha(A2), 'author_v2.json', pairs={'ev-b': 'ev-b2'})
+    assert not hard and new, (lines, hard)
+    txt = '\n'.join(lines)
+    assert '[옮김] ev-b → ev-b2' in txt and '[변경] 쓴 주장 mn' in txt and '[참고] 새 저자 주장 1개(new-1)' in txt and '[참고] 저자가 뺀 주장 1개(down)' in txt, txt
+    assert set(new['use']) == {'mn', 'ev-b2'} and new['use']['ev-b2'] == {'sites': ['notes@260'], 'keys': ['b']}, new['use']   # 옮긴 주장은 확인 기록 없이
+    assert new['claims'][0]['depends_on'] == [{'id': 'ev-b2', 'type': 'support'}], new['claims']            # 발표 주장의 기댐도 따라간다
+    assert new['source']['sha'] == CGm._file_sha(A2) and new['source']['file'] == 'author_v2.json' and 'ev-b2' in new['source']['snap']
+    assert new['synced'][-1]['from'] == ov['source']['sha'] and new['synced'][-1]['moved'] == {'ev-b': ['ev-b2']}, new['synced']
+    json.dump(new, open(O, 'w'), ensure_ascii=False)
+    _, cl, probs = CGm.load_oral(O, A2)
+    assert not [p for p in probs if not p.startswith('[참고]')], probs                               # 새 판과 맞는다
+    # --drop · 1:N 쪼갬 · 같은 판이면 할 일 없음
+    ov = json.load(open(_oral_files(d, _use_mn_evb)[1]))
+    new, lines, hard = CGm.oral_sync(ov, am, ac, 'y' * 16, 'v2', drop=['ev-b'])
+    assert not hard and 'ev-b' not in new['use'] and new['claims'][0]['depends_on'] == [] and any('[뺌] ev-b' in l for l in lines), lines
+    ac4 = ac + [{'id': 'ev-b3', 'role': 'evidence', 'statement': 'split', 'sites': [], 'depends_on': []}]
+    new, lines, hard = CGm.oral_sync(ov, am, ac4, 'z' * 16, 'v2', pairs={'ev-b': ['ev-b2', 'ev-b3']})
+    assert not hard and set(new['use']) >= {'ev-b2', 'ev-b3'} and len(new['claims'][0]['depends_on']) == 2, (new['use'], new['claims'])
+    new, lines, hard = CGm.oral_sync(ov, *CGm.load_claims_full(A), CGm._file_sha(A), 'author.json')
+    assert new is None and not hard and any('같은 판' in l for l in lines), lines
+    assert (open(A, 'rb').read(), open(A2, 'rb').read()) == before                                  # 저자 파일은 읽기만
 
 
 def t_v1610_mapfreeze_sources_missing_doi_stops():

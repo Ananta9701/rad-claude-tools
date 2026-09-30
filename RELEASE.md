@@ -1,22 +1,21 @@
-# RELEASE v2.70 — manifest v90 — 2026-09-30
+# RELEASE v2.71 — manifest v91 — 2026-09-30
 
-> **v2.70** — 구연 덧붙임 1판(사용자 09-30 큰 방향 ①): 저자 claims 는 판째로 **읽기만** 하고, 발표는 따로 둔 덧붙임 파일에 화면 자리·화면 keys 만 적는다. 두 파일은 읽는 순간 합쳐 mapgraph·impact·mapdraw·덱 mapcheck 에 쓴다. 저자 판 따라가기(`oral sync`)와 화면 확인 기록(mapfreeze·mapstale)은 다음 판 v2.71. LITERATURE 에 "Docling 보조" 절.
+> **v2.71** — 구연 덧붙임 2판(사용자 09-30): 저자 판 따라가기 `oral sync` 와 화면 확인 기록(mapfreeze·mapstale)을 덧붙임에. 쓴 id 가 새 판에서 사라지면 스냅숏 해시로 후보를 보이고 `--pairs`·`--drop` 전까지 멈춘다. 저자 파일은 여전히 읽기만.
 
 ## 1. 바뀐 것
 
 | 도구 | 판 | 내용 |
 |---|---|---|
-| `claim_graph.py` | 16.12 | 구연 덧붙임(`kind: 구연`): `oral init --author 저자.json -o 덧붙임.json`(빈 덧붙임 — `source` 에 저자 파일 이름·sha·주장 수·**스냅숏은 해시뿐**: 글 지문·원고 자리·keys 해시·role, 원고 문장 없음, 이미 있으면 멈춤) · `oral check --author … --oral …` · mapgraph·impact·mapdraw 에 `--oral … --author …`. 합친 그래프 = 쓴 저자 주장(글·간선·forbidden·status 는 저자, 자리·keys 는 덧붙임) + 그 상류 전부 **무대 밖**(`offstage` — 자리 없음, mapdraw 흐린 점선) + 발표 주장 `p-…`(저자 id 에만 기댐). 저자 파일의 원고 확인 기록(verified)은 뺀다. [필수]: 저자 sha 다름 · 쓴 id 없음 · 철회된 주장이 화면에 · 화면 자리가 아님 · p- 규칙. [참고]: 화면 keys 없는 주장 N개 |
-| `deck_toolkit.py` | 16.48 | `mapcheck 덱.pptx --oral 덧붙임.json --author 저자.json` — 합친 그래프로 화면 자리에 keys·forbidden 대조, [필수] 면 대조 전에 멈춤(종료 코드 1) |
-| `CLAIM_GRAPH.md` · `DECK_SPEC.md` · `LITERATURE.md` | 16.12 · 16.48 · 0.8.5 | §3-5 구연 덧붙임·명령표 · 머리 한 줄 · §3-1 Docling 보조(명령, 쪽 표지 없음·`−` 바뀜 주의, 09-29 측정 수) |
-| 테스트 | — | test_claim_graph 3(스냅숏에 원고 문장·자리·keys 글자가 없음, 해시가 짝짓기 정규화와 같음, init 덮어쓰기 거부 · 합치기 성공: 쓴 것+상류, 하류·철회 빠짐, 무대 밖 자리 없음, 저자 verified 빠짐, keys 없는 주장 [참고] 한 줄, mapgraph 통과, mapdraw offstage, 저자 파일 바이트 그대로 · 실패 6가지와 CLI 종료 코드). test_toolkit 1(덱 mapcheck: 화면 keys 있음 통과 · 없는 표현 [반영 안 됨] · [필수] 멈춤 · --author 없이 2 · 저자 파일 그대로) |
+| `claim_graph.py` | 16.13 | `oral sync --author 새판 --oral 덧붙임 -o 새덧붙임 [--pairs 옛=새] [--drop 옛,…]` — 같은 판이면 할 일 없음 · 쓴 주장 글 바뀜 [변경] · 새 주장·저자가 뺀 주장·무대 밖 상류 글 바뀜 [참고] · **쓴 id 가 없으면 [필수]**(원고 자리·keys 해시로 후보와 점수, `--pairs` 안내) · 새 판에서 철회된 쓴 주장 [필수] · 없는 새 id·철회된 주장으로 옮기기 [필수] — [필수] 면 덧붙임을 쓰지 않는다. 옮긴 주장은 확인 기록 없이, 1:N 은 같은 화면을 둘에, 발표 주장 `p-` 의 기댐도 따라간다. `synced` 이력. 합칠 때 무대 밖 상류는 덧붙임의 `offstage_verified` 로 확인 기록을 가진다 |
+| `deck_toolkit.py` | 16.49 | `mapfreeze 덱 --oral … --author … -o 덧붙임` — 확인 기록을 덧붙임에(`use[id].verified` · 발표 주장 · `offstage_verified`). `mapstale 덱 --oral … --author …` — 화면·저자 글·무대 밖 받침 바뀜을 잡는다(받침이 바뀌면 기대는 화면까지) |
+| `CLAIM_GRAPH.md` · `DECK_SPEC.md` | 16.13 · 16.49 | §3-5 저자 판 따라가기·화면 확인 기록, 명령표 · 머리 한 줄 |
+| 테스트 | — | test_claim_graph 2(사라진 id 멈춤·후보 안내·CLI 종료 1·파일 안 씀 · 없는 새 id·철회 [필수] / 옮김·[변경]·새 주장·뺀 주장·발표 주장 기댐·sha·synced·새 판과 맞음 · --drop · 1:N · 같은 판 · 저자 파일 그대로). test_toolkit 1(mapfreeze 가 덧붙임에 · 저자 파일 그대로 · mapstale 조용 · 받침 글 바뀜 → sync → [변경] 받침 + 기대는 화면 · 쓴 주장 글 바뀜 [변경] · sync 없이 새 판 [필수]) |
 
 ## 2. 회신 항목별 답
 
 | 항목 | 반영 |
 |---|---|
-| 사용자 09-30: 구연용 저자 claims 가져오기 — 설계 결정 8가지(별도 파일 · 상류 무대 밖 · p- · id 사라지면 멈춤 · 화면 keys 따로+없으면 [참고] · 사용자가 전달 · Drive 폴더 · 2판) + 스냅숏은 해시로 | 위 claim_graph 16.12 · deck 16.48 (id 사라짐·sync 는 v2.71) |
-| 사용자 09-30: Docling 은 기본 채택 안 함, 보조 명령·주의를 LITERATURE 한 절로(①의 첫 판에 묶음) | 위 LITERATURE §3-1 |
+| 사용자 09-30: 구연 2판 — 저자 판 따라가기(결정 4: 사라진 id 는 --pairs·--drop 전까지 멈춤)·화면 확인 기록 | 위 claim_graph 16.13 · deck 16.49 |
 
 ## 3. 받을 파일
 
@@ -26,38 +25,38 @@
 ### 저자 (7)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.12 | `664fb2536568` | ○ |
-| `test_claim_graph.py` | v16.12 | `0140baedb1eb` | ○ |
-| `CLAIM_GRAPH.md` | v16.12 | `447f992dfda3` | ○ |
+| `claim_graph.py` | v16.13 | `59fa4f2978ed` | ○ |
+| `test_claim_graph.py` | v16.13 | `4adcf2f536fb` | ○ |
+| `CLAIM_GRAPH.md` | v16.13 | `5b710df3eab8` | ○ |
 | `verify_toolkit.py` | v1.3.7 | `0833539073f1` | — |
 | `test_verify_toolkit.py` | v1.3.7 | `ac6e42ed2103` | — |
-| `TOOLS_MANIFEST.md` | v90 | `4f30f845721e` | ○ |
-| `RELEASE.md` | v2.70 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v91 | `29620e1aaf47` | ○ |
+| `RELEASE.md` | v2.71 | — | 이 문서 |
 
 ### 발표 (11)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.12 | `664fb2536568` | ○ |
-| `test_claim_graph.py` | v16.12 | `0140baedb1eb` | ○ |
-| `CLAIM_GRAPH.md` | v16.12 | `447f992dfda3` | ○ |
-| `deck_toolkit.py` | v16.48 | `7dbd370500a7` | ○ |
-| `test_toolkit.py` | v16.48 | `0aacabd67376` | ○ |
-| `DECK_SPEC.md` | v16.48 | `aff997648daa` | ○ |
+| `claim_graph.py` | v16.13 | `59fa4f2978ed` | ○ |
+| `test_claim_graph.py` | v16.13 | `4adcf2f536fb` | ○ |
+| `CLAIM_GRAPH.md` | v16.13 | `5b710df3eab8` | ○ |
+| `deck_toolkit.py` | v16.49 | `4c126e7e5b0e` | ○ |
+| `test_toolkit.py` | v16.49 | `eab1a891a0b7` | ○ |
+| `DECK_SPEC.md` | v16.49 | `94cfde33b6e1` | ○ |
 | `handoff.py` | v2.2 | `d8b5305111f4` | — |
 | `test_handoff.py` | v2.2 | `7b2a11d55b3a` | — |
 | `HANDOFF_FORMAT.md` | v2.2 | `92fb4a11e9bb` | — |
-| `TOOLS_MANIFEST.md` | v90 | `4f30f845721e` | ○ |
-| `RELEASE.md` | v2.70 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v91 | `29620e1aaf47` | ○ |
+| `RELEASE.md` | v2.71 | — | 이 문서 |
 
 ### 리뷰어 (6)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.12 | `664fb2536568` | ○ |
-| `test_claim_graph.py` | v16.12 | `0140baedb1eb` | ○ |
-| `CLAIM_GRAPH.md` | v16.12 | `447f992dfda3` | ○ |
+| `claim_graph.py` | v16.13 | `59fa4f2978ed` | ○ |
+| `test_claim_graph.py` | v16.13 | `4adcf2f536fb` | ○ |
+| `CLAIM_GRAPH.md` | v16.13 | `5b710df3eab8` | ○ |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v90 | `4f30f845721e` | ○ |
-| `RELEASE.md` | v2.70 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v91 | `29620e1aaf47` | ○ |
+| `RELEASE.md` | v2.71 | — | 이 문서 |
 
 ### 교과서 (5)
 | 파일 | 판 | 해시 | 변경 |
@@ -65,27 +64,27 @@
 | `textbook.py` | v0.7.2 | `446049895c66` | — |
 | `test_textbook.py` | v0.7.2 | `93d75911d86c` | — |
 | `TEXTBOOK.md` | v0.7.2 | `4bfff4aa0771` | — |
-| `TOOLS_MANIFEST.md` | v90 | `4f30f845721e` | ○ |
-| `RELEASE.md` | v2.70 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v91 | `29620e1aaf47` | ○ |
+| `RELEASE.md` | v2.71 | — | 이 문서 |
 
 ### 문헌 (5)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
 | `literature.py` | v0.8.5 | `2d1bddcb98e6` | — |
 | `test_literature.py` | v0.8.5 | `c0c1ad7ce476` | — |
-| `LITERATURE.md` | v0.8.5 | `25e2f224c92f` | ○ |
-| `TOOLS_MANIFEST.md` | v90 | `4f30f845721e` | ○ |
-| `RELEASE.md` | v2.70 | — | 이 문서 |
+| `LITERATURE.md` | v0.8.5 | `25e2f224c92f` | — |
+| `TOOLS_MANIFEST.md` | v91 | `29620e1aaf47` | ○ |
+| `RELEASE.md` | v2.71 | — | 이 문서 |
 
 ### 코드 (25)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.12 | `664fb2536568` | ○ |
-| `test_claim_graph.py` | v16.12 | `0140baedb1eb` | ○ |
-| `CLAIM_GRAPH.md` | v16.12 | `447f992dfda3` | ○ |
-| `deck_toolkit.py` | v16.48 | `7dbd370500a7` | ○ |
-| `test_toolkit.py` | v16.48 | `0aacabd67376` | ○ |
-| `DECK_SPEC.md` | v16.48 | `aff997648daa` | ○ |
+| `claim_graph.py` | v16.13 | `59fa4f2978ed` | ○ |
+| `test_claim_graph.py` | v16.13 | `4adcf2f536fb` | ○ |
+| `CLAIM_GRAPH.md` | v16.13 | `5b710df3eab8` | ○ |
+| `deck_toolkit.py` | v16.49 | `4c126e7e5b0e` | ○ |
+| `test_toolkit.py` | v16.49 | `eab1a891a0b7` | ○ |
+| `DECK_SPEC.md` | v16.49 | `94cfde33b6e1` | ○ |
 | `verify_toolkit.py` | v1.3.7 | `0833539073f1` | — |
 | `test_verify_toolkit.py` | v1.3.7 | `ac6e42ed2103` | — |
 | `handoff.py` | v2.2 | `d8b5305111f4` | — |
@@ -96,25 +95,24 @@
 | `TEXTBOOK.md` | v0.7.2 | `4bfff4aa0771` | — |
 | `literature.py` | v0.8.5 | `2d1bddcb98e6` | — |
 | `test_literature.py` | v0.8.5 | `c0c1ad7ce476` | — |
-| `LITERATURE.md` | v0.8.5 | `25e2f224c92f` | ○ |
+| `LITERATURE.md` | v0.8.5 | `25e2f224c92f` | — |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v90 | `4f30f845721e` | ○ |
+| `TOOLS_MANIFEST.md` | v91 | `29620e1aaf47` | ○ |
 | `CODE_PROJECT_README.md` | v5 | `f4c839b0b750` | — |
-| `HISTORY.md` | — | `7dcda332c57e` | ○ |
+| `HISTORY.md` | — | `ec1c1847aee0` | ○ |
 | `release.py` | — | `d0fe4b4d184a` | — |
 | `GITHUB_README.md` | — | `c81d29504e46` | — |
 | `PRIVATE_TERMS.txt` | — | `6e8c2862cf5e` | — |
-| `RELEASE.md` | v2.70 | — | 이 문서 |
+| `RELEASE.md` | v2.71 | — | 이 문서 |
 <!-- sets:end -->
 
 ## 4. 각 프로젝트 대화창이 첫 세션에서 할 일
 
-1. 모든 역할: selfcheck 로 manifest v90 이상.
-2. 발표: 구연 덱은 저자 claims 를 **고치지 않는다**. `claim_graph.py oral init --author <저자 claims> -o <덧붙임>` 으로 시작해 `use` 에 화면 자리(`slide@ID`)·화면 keys 를 적고, `oral check` · `deck_toolkit mapcheck 덱 --oral … --author …` 로 본다. 저자 판이 바뀌었을 때(sync)·mapfreeze 는 v2.71 까지 기다린다.
-3. 저자: claims 판을 올리면 `to발표` 에 전달 통보 md(판·주장 수·sha256 앞 16자)를 올린다. 파일은 사용자가 Drive 에 옮긴다.
-4. 리뷰어·문헌: 수식·표가 판정을 가르는 논문만 LITERATURE §3-1 Docling 보조(환경은 도구 세트에 없다 — 필요하면 코드에 알린다).
+1. 모든 역할: selfcheck 로 manifest v91 이상.
+2. 발표: 구연 덱 확인을 마치면 `deck_toolkit mapfreeze 덱 --oral 덧붙임 --author 저자 -o 덧붙임`(저자 파일은 고치지 않는다). 저자 새 판이 오면 `claim_graph oral sync --author 새판 --oral 덧붙임 -o 새덧붙임` → [필수] 가 있으면 알려 준 `--pairs`·`--drop` 을 정해 다시 → `oral check` → `mapstale`. 덧붙임은 Drive `Claude 작업/발표` 에 둔다.
+3. 저자: claims 판을 올릴 때 id 를 바꾸거나 합쳤으면 전달 통보 md 에 "옛 id → 새 id" 를 적는다(발표의 `--pairs` 가 된다).
 
 ## 5. 검증하지 않은 것
 
-- 실물 저자 claims(v9·v10)와 실제 구연 덱으로는 돌리지 않았다 — 가짜 저자 그래프(7주장)와 시험 덱으로만. 무대 밖 상류가 큰 그래프에서 그림이 읽히는지 모른다.
-- 덧붙임 크기: 스냅숏은 주장당 약 150 바이트(해시) — 50주장이면 약 8 KB 로 추정, 실물로 재지 않았다.
+- 실물 저자 claims(v9·v10)·실제 구연 덱으로는 돌리지 않았다 — 가짜 그래프와 시험 덱으로만. 실물에서 id 가 바뀐 주장의 후보(원고 자리·keys 해시)가 얼마나 잡히는지 모른다(원고 자리까지 함께 바뀌면 후보 없음 — 그때는 --pairs 를 사람이 적는다).
+- 덧붙임 파일 크기를 실물로 재지 않았다(추정 50주장 약 8 KB + 확인 기록).

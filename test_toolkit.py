@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.48'
+EXPECT_VERSION = '16.49'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -961,6 +961,43 @@ def t_v1648_mapcheck_oral_overlay():
     r = cli('mapcheck', SRC, '--oral', O)
     assert r.returncode == 2 and '--author' in r.stdout, r.stdout
     assert open(A, 'rb').read() == before                                  # 저자 파일은 읽기만
+
+def t_v1649_oral_freeze_stale_and_sync():
+    # v2.71 (사용자 09-30): 화면 확인 기록은 덧붙임에(저자 파일은 읽기만) — 무대 밖 상류의 글이 바뀌면 기대는 화면까지 흔들림
+    import json, copy as _c
+    d = T.Deck.open(SRC, wd('oralfz'))
+    o = [s for s, _, _ in d.order()]; sid = d.sld_id(o[3])
+    word = next(w for w in re.findall(r'[A-Za-z]{5,}', ' '.join(d.texts(o[3]))))
+    base = {'doc': 'Fake_ms', 'claims': [
+        {'id': 'ev', 'role': 'evidence', 'statement': 'S1', 'sites': ['doc:find:S1'], 'keys': ['s1'], 'depends_on': []},
+        {'id': 'mn', 'role': 'main', 'statement': 'S2', 'sites': ['doc:find:S2'], 'keys': ['s2'], 'depends_on': [{'id': 'ev', 'type': 'premise'}]}]}
+    A, O, O2 = out('ofz_a.json'), out('ofz_o.json'), out('ofz_o2.json')
+    json.dump(base, open(A, 'w'), ensure_ascii=False); before = open(A, 'rb').read()
+    ov = T.CG.oral_init(A, deck='d'); ov['use'] = {'mn': {'sites': ['slide@%d' % sid], 'keys': [word.lower()]}}
+    json.dump(ov, open(O, 'w'), ensure_ascii=False)
+    r = cli('mapfreeze', SRC, '--oral', O, '--author', A, '-o', O2)
+    assert r.returncode == 0, (r.stdout[-500:], r.stderr[-500:])
+    f = json.load(open(O2))
+    assert f['use']['mn']['verified']['sites'] and 'ev' in f['offstage_verified'] and open(A, 'rb').read() == before, f
+    r = cli('mapstale', SRC, '--oral', O2, '--author', A)                    # 성공 길: 그대로면 조용
+    assert r.returncode == 0 and '바뀐 것 없음' in r.stdout, (r.stdout[-500:], r.stderr[-300:])
+    # 실패 길 ①: 저자가 무대 밖 받침 ev 를 고친 새 판 → sync → mapstale 이 ev [변경] + 기대는 mn 화면
+    v2 = _c.deepcopy(base); v2['claims'][0]['statement'] = 'S1 revised'
+    A2, O3 = out('ofz_a2.json'), out('ofz_o3.json'); json.dump(v2, open(A2, 'w'), ensure_ascii=False)
+    r = subprocess.run([sys.executable, os.path.join(HERE, 'claim_graph.py'), 'oral', 'sync', '--author', A2, '--oral', O2, '-o', O3],
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and '무대 밖 상류 1개(ev)' in r.stdout, (r.stdout, r.stderr)
+    r = cli('mapstale', SRC, '--oral', O3, '--author', A2)
+    assert r.returncode == 1 and '[변경] ev' in r.stdout and 'mn' in r.stdout.split('[변경] ev')[1], r.stdout[-700:]
+    # 실패 길 ②: 쓴 주장 mn 의 글이 바뀜 → [변경] mn
+    v3 = _c.deepcopy(base); v3['claims'][1]['statement'] = 'S2 revised'
+    A3, O4 = out('ofz_a3.json'), out('ofz_o4.json'); json.dump(v3, open(A3, 'w'), ensure_ascii=False)
+    subprocess.run([sys.executable, os.path.join(HERE, 'claim_graph.py'), 'oral', 'sync', '--author', A3, '--oral', O2, '-o', O4], capture_output=True)
+    r = cli('mapstale', SRC, '--oral', O4, '--author', A3)
+    assert r.returncode == 1 and '[변경] mn' in r.stdout, r.stdout[-700:]
+    # sync 없이 새 판을 주면 [필수] 로 멈춘다(판이 다르다)
+    r = cli('mapstale', SRC, '--oral', O2, '--author', A3)
+    assert r.returncode == 1 and '판이 다르다' in r.stdout, r.stdout[-500:]
 
 def _memo_notes(d, sn):
     """원작자 메모 흉내: 여러 run(굵게·색·하이퍼링크) 문단 + & < > + sldNum 자리."""

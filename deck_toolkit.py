@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.48'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.49'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -6251,10 +6251,12 @@ def main():
     im = sub.add_parser('impact'); im.add_argument('--claims', required=True)
     im.add_argument('ids', nargs='+')
     mf = sub.add_parser('mapfreeze'); mf.add_argument('pptx')
-    mf.add_argument('--claims', required=True); mf.add_argument('-o', required=True)
+    mf.add_argument('--claims', default=None); mf.add_argument('-o', required=True, help='쓸 claims — 구연이면 쓸 덧붙임')
     ms = sub.add_parser('mapstale'); ms.add_argument('pptx')
-    ms.add_argument('--claims', required=True)
+    ms.add_argument('--claims', default=None)
     for _p in (mf, ms):
+        _p.add_argument('--oral', default=None, metavar='덧붙임.json', help='구연(v16.49): 확인 기록은 덧붙임에 — 저자 claims(--author)는 읽기만')
+        _p.add_argument('--author', default=None, metavar='저자claims.json')
         _p.add_argument('--sources', default=None, help='근거 원문 폴더(교과서 분할·문헌 보관소) — claims 의 sources 칸 원문 바뀜도 본다 (v16.41)')
     ex2 = sub.add_parser('extract'); ex2.add_argument('pptx'); ex2.add_argument('-o', required=True)
     ex2.add_argument('--min-score', type=int, default=2)
@@ -6578,6 +6580,20 @@ def main():
         sys.exit(1 if any(not p.startswith('[참고]') for p in probs) else 0)
     elif args.cmd == 'impact':
         impact(load_claims(args.claims), args.ids)
+    elif args.cmd == 'mapfreeze' and (args.oral or args.author):
+        import json as _json
+        _, cl, _ = CG._claims_arg(args)                   # [필수] 면 여기서 멈춘다
+        mapfreeze(Deck.open(args.pptx), cl, sources=args.sources, stream=sys.stdout)
+        ov = CG.oral_store_verified(_json.load(open(args.oral, encoding='utf8')), cl)
+        with open(args.o, 'w', encoding='utf8') as f:
+            _json.dump(ov, f, ensure_ascii=False, indent=2)
+        print('기록 완료(덧붙임): %s — 저자 claims 는 그대로' % args.o)
+    elif args.cmd == 'mapstale' and (args.oral or args.author):
+        _, cl, _ = CG._claims_arg(args)
+        r = mapstale(Deck.open(args.pptx), cl, sources=args.sources)
+        sys.exit(1 if (r['changed'] or r['unverified']) else 0)
+    elif args.cmd in ('mapfreeze', 'mapstale') and not args.claims:
+        print('[중단] --claims 또는 --oral·--author 가 필요하다'); sys.exit(2)
     elif args.cmd == 'mapfreeze':
         meta, cl = CG.load_claims_full(args.claims)          # v16.40 (코드 리뷰 ⑧): 맨 위 칸(refs_maps_applied 등)을 그대로 — 전에는 deck·note 만 남겼다
         mapfreeze(Deck.open(args.pptx), cl, sources=args.sources, stream=sys.stdout)
