@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.18
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.19
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -229,7 +229,9 @@ mapgraph: `kind: 증례` 라 논문용 [참고]는 나오지 않고, 배제된 �
 - **저자 판 따라가기(v16.13)** — `oral sync --author 새판.json --oral 덧붙임.json -o 새덧붙임.json [--pairs 옛=새] [--drop 옛,…]`:
   같은 판(sha)이면 할 일 없음. 쓴 주장의 글이 바뀌면 [변경](자리·확인 기록은 두어 mapstale 이 잡게), 새 주장 [참고], 저자가 뺀(쓰지 않던) 주장 [참고],
   무대 밖 상류의 글이 바뀌면 [참고]. **쓴 id 가 새 판에 없으면 [필수] — 스냅숏 해시(원고 자리·keys)로 후보를 점수와 함께 보이고 `--pairs 옛=새`(1:N 은
-  같은 옛을 반복)·`--drop 옛` 전까지 덧붙임을 쓰지 않는다.** 새 판에서 철회된 쓴 주장도 [필수]. 옮긴 주장은 확인 기록 없이(새 주장이다), 발표 주장
+  같은 옛을 반복)·`--drop 옛` 전까지 덧붙임을 쓰지 않는다.** 새 판에서 철회된 쓴 주장도 [필수].
+  **v16.19 (발표 S1)**: 스냅숏에 간선(대상 id:종류)도 적어, 쓴 주장·그 무대 밖 상류의 간선이 늘거나 줄면 [참고] 한 줄 —
+  `쓴 주장 X 에 caveat Y 가 새로 걸림 — 화면에 없음`(또는 `화면 slide@…`) · `… 에서 support Y 가 빠짐`. 16.19 전 스냅숏이면 "옛 스냅숏이라 간선 변화는 보지 않았다" 한 줄(그 sync 부터 적는다). 옮긴 주장은 확인 기록 없이(새 주장이다), 발표 주장
   `p-` 의 기댐도 따라간다. `synced` 에 판 이력(옛·새 sha·날짜·옮김·뺌)을 쌓는다.
 - **화면 확인 기록(v16.13)** — `deck_toolkit mapfreeze 덱.pptx --oral 덧붙임.json --author 저자.json -o 덧붙임.json` 은 확인 기록을 **덧붙임에** 쓴다
   (쓴 주장 `use[id].verified`, 발표 주장은 그 칸, 무대 밖 상류는 `offstage_verified[id]` — 글 지문). `mapstale … --oral … --author …` 은 그것과 비교한다:
@@ -302,6 +304,34 @@ cd /tmp && npm install mermaid@11 && python3 ~/rct/claim_graph.py focus <id> --c
 
 기준(2·3)은 저자 실물 그래프(51주장·간선 89)로 잰 뒤 정했다: 규칙 1 0줄 · 규칙 2 0개 · 규칙 3 8개(기준 4 → 7, 5 → 3).
 출력에 주장 id 가 나오므로 **내용 회신**으로만 다룬다(§5-2 블라인드 규칙). 후보를 주장으로 적으면 `add --exploratory` → `mapgraph`.
+
+## 3-8. 문헌 그래프 — 논문 한 편의 주장 (v16.19 1판, 사용자 09-30 큰 방향 ④)
+
+선행 논문의 주장도 같은 claims.json 규약으로 적는다. **자료는 Drive 에만**(`문헌 보관소/<DOI 폴더>/claims.json` — 그 논문의 `paper.md`·`meta.md` 옆),
+**사람 이름 없이 DOI 로만**. 공개 저장소에는 도구와 가짜 시험 파일(가짜 DOI `10.9999/fake-…`)만. 우리 주장과의 짝(`lit_links`)은 다음 판.
+
+```json
+{"kind": "문헌", "doc": "10.9999/fake-a", "doi": "10.9999/fake-a", "paper_sha": "<meta.md 의 sha>",
+ "claims": [{"id": "r1", "role": "evidence", "statement": "…(요약, 우리말)", "status": "proposed", "origin": "ai",
+             "sites": ["doc:find:<paper.md 의 짧은 원문 구절>"], "keys": ["…"], "depends_on": []}]}
+```
+
+- **자리는 그 논문의 paper.md.** 쪽·절 표지(`[p.인쇄 · PDF N]`·`[§ …]`)가 있는 md 는 **literature `locate` 와 같은 규칙**으로 읽는다 — 표지로 쪽을 나누고,
+  빈 줄이나 `.`·`:` 로 끝난 줄 뒤에서 문단을 끊는다(PDF 글자층은 한 줄이 물리적 줄). `doc:find:` 는 NFKC(합자 `ﬂ`)·띄어쓰기를 무시하고 찾는다 —
+  줄바꿈에 걸린 구절도 찾는다. 한 문단에만 있어야 한다(모호하면 오류). `doc:sec:` 는 표지(`doc:sec:PDF 2` · `doc:sec:Methods`). 표지 없는 md 는 전처럼 한 줄 = 문단.
+  **한계**: 줄 끝 하이픈으로 끊긴 낱말(`veloc-` / `ity`)은 붙이지 않는다 — 그런 곳은 구절을 옮겨 잡는다.
+- 그래서 **`mapcheck paper.md --claims claims.json` 이 AI 가 적은 구절이 원문에 정말 있는지** 본다(지어낸 인용 → "문구를 가진 문단 없음").
+  `mapfreeze`(doc 은 DOI 그대로 둔다)·`mapstale`(논문 변환이 바뀌면 [변경]) 도 그대로.
+- **`mapgraph --claims <보관소>/<DOI>/claims.json`**(kind 문헌): caveat 없는 evidence · supersedes 없는 forbidden [참고] 는 끈다(짝이 될 주장만 뽑으므로). 더하는 검사:
+
+| 판정 | 내용 |
+|---|---|
+| 필수 | `doi` 없음 · DOI 모양 아님 · 같은 폴더 `meta.md` 의 doi 와 다름(다른 논문 폴더) · 주장 id 에 `:` `#` 빈칸(우리 그래프에서 `lit:<DOI>#<id>` 로 부른다) |
+| 참고 | `doc` 이 doi 와 다름 · `paper_sha` 없음 / meta.md sha 와 다름(논문 판이 바뀜 — mapstale 로) · 자리가 `doc:` 가 아님 · **사람 이름 꼴**(`et al` · `(이름, 연도)` · `이름 연도` · `이름 and 이름` — 다 잡지 못한다, 사람이 본다) · 판정 대기(proposed) N개 |
+
+- 절차(설계안 — 초안 역할·크기 등 사용자 결정 대기): 받기(LITERATURE) → `extract paper.md` 후보 + AI 초안(**짝이 될 주장과 그 받침만**, `status proposed`·`origin ai`,
+  자리는 원문 구절) → `mapcheck paper.md` → 리뷰어가 paper.md 를 읽고 판정(accepted·고침·뺌) → `mapfreeze`.
+- 쪽 표지를 sources 의 `at` 으로 옮길 때: `DocSource(paper.md).mark_of('doc:find:…')` 가 그 문단의 표지를 돌려준다.
 
 ## 3-3. 관계도 그림 `mapdraw` (v16, 전체 그림 v16.1)
 

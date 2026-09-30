@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.18'
+EXPECT_VERSION = '16.19'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -1763,6 +1763,176 @@ def t_v1618_rule3_already_on_main_and_statement():
     buf = io.StringIO(); CGm.suggest(_hg(3, 3), stream=buf)
     hl = [l for l in buf.getvalue().splitlines() if '전제 사슬' in l]
     assert hl and '"단면 연구라' in hl[0], buf.getvalue()
+
+
+
+# ---- v16.19: 발표 S1(oral sync 간선 변화) · ④ 1판 문헌 그래프(paper.md 자리·kind 문헌) ----
+
+def _s1_files(d, v2_deps, old_snap=False):
+    import json
+    A, O, A2 = [os.path.join(d, x) for x in ('a1.json', 'o.json', 'a2.json')]
+    base = [{'id': 'cav-a', 'role': 'caveat', 'statement': 'CA', 'depends_on': []},
+            {'id': 'cav-b', 'role': 'caveat', 'statement': 'CB', 'depends_on': []},
+            {'id': 'ev1', 'role': 'evidence', 'statement': 'E1', 'depends_on': []},
+            {'id': 'ev2', 'role': 'evidence', 'statement': 'E2', 'depends_on': []},
+            {'id': 'mn', 'role': 'main', 'statement': 'M', 'depends_on': [{'id': 'ev1', 'type': 'premise'}, {'id': 'cav-a', 'type': 'caveat'},
+                                                                            {'id': 'ev2', 'type': 'support'}]}]
+    json.dump({'doc': 'Fake', 'claims': base}, open(A, 'w'), ensure_ascii=False)
+    ov = CGm.oral_init(A, deck='d')
+    ov['use'] = {'mn': {'sites': ['slide@300'], 'keys': ['m']}, 'cav-a': {'sites': ['slide@301'], 'keys': ['ca']}}
+    if old_snap:
+        for v in ov['source']['snap'].values():
+            v.pop('deps', None)
+    json.dump(ov, open(O, 'w'), ensure_ascii=False)
+    new = copy.deepcopy(base)
+    for c in new:
+        if c['id'] in v2_deps:
+            c['depends_on'] = v2_deps[c['id']]
+    json.dump({'doc': 'Fake', 'claims': new}, open(A2, 'w'), ensure_ascii=False)
+    return A, O, A2
+
+
+def t_v1619_oral_sync_reports_edge_changes():
+    """발표 S1(09-30): v10→v11 처럼 간선만 바뀐 판에서 oral sync 가 아무 줄도 내지 않았다 — 결론 화면에 새 한계가 걸렸는데(화면에 없음) 모름.
+    쓴 주장·무대 밖 상류의 간선이 늘거나 줄면 [참고] 한 줄, 새로 걸린 쪽이 화면에 있는지도."""
+    import json, tempfile
+    d = tempfile.mkdtemp(prefix='cgs1_')
+    v2 = {'mn': [{'id': 'ev1', 'type': 'premise'}, {'id': 'cav-a', 'type': 'caveat'}, {'id': 'cav-b', 'type': 'caveat'}],
+          'ev1': [{'id': 'cav-a', 'type': 'caveat'}]}
+    A, O, A2 = _s1_files(d, v2)
+    am, ac = CGm.load_claims_full(A2)
+    new, lines, hard = CGm.oral_sync(json.load(open(O)), am, ac, CGm._file_sha(A2), 'a2.json')
+    t = '\n'.join(lines)
+    assert not hard and new, (lines, hard)
+    assert '[참고] 쓴 주장 mn 에 caveat cav-b 가 새로 걸림 — 화면에 없음' in t, t
+    assert '[참고] 쓴 주장 mn 에서 support ev2 가 빠짐' in t, t
+    assert '[참고] 무대 밖 상류 ev1 에 caveat cav-a 가 새로 걸림 — 화면 slide@301' in t, t
+    assert all('deps' in v for v in new['source']['snap'].values())                              # 새 스냅숏에 간선
+    A, O, A2 = _s1_files(tempfile.mkdtemp(prefix='cgs1_'), {})                                   # 성공 길: 간선 그대로면 조용
+    am, ac = CGm.load_claims_full(A2)
+    new, lines, hard = CGm.oral_sync(json.load(open(O)), am, ac, 'f' * 16, 'a2.json')
+    assert not hard and new and not [l for l in lines if '간선' in l or '새로 걸림' in l or '빠짐' in l], lines
+    A, O, A2 = _s1_files(tempfile.mkdtemp(prefix='cgs1_'), v2, old_snap=True)                   # 옛 스냅숏: 모른다고 한 줄
+    am, ac = CGm.load_claims_full(A2)
+    new, lines, hard = CGm.oral_sync(json.load(open(O)), am, ac, CGm._file_sha(A2), 'a2.json')
+    assert not hard and any('옛 스냅숏' in l and '간선' in l for l in lines) and not any('새로 걸림' in l for l in lines), lines
+
+
+_PAPER_MD = """# Fake paper title
+
+> 원문 PDF 의 글자층(literature.py v0.8.5). 쪽 표지 `[p.인쇄쪽 · PDF 쪽]`.
+
+[p.101 · PDF 1]
+
+Abstract. Mean ﬂow
+velocity in the fake lesion group was higher than in controls (0.81 vs 0.62).
+This effect remained after adjustment.
+Smith et al. reported a similar pattern.
+
+[p.102 · PDF 2]
+
+Methods: we measured the fake index
+in two groups of volunteers.
+The fake index was repeated twice.
+The fake index was repeated twice.
+"""
+
+
+def _paper_dir(d, doi='10.9999/fake-a', sha='abc123def4567890'):
+    pd = os.path.join(d, doi.replace('/', '_'))
+    os.makedirs(pd, exist_ok=True)
+    open(os.path.join(pd, 'paper.md'), 'w', encoding='utf8').write(_PAPER_MD)
+    open(os.path.join(pd, 'meta.md'), 'w', encoding='utf8').write('<!-- lit: doi=%s pages=2 blank=0 sha=%s -->\n# Fake paper title\n' % (doi, sha))
+    return pd
+
+
+def t_v1619_paper_md_find_across_lines_and_ligature():
+    """④ 1판: paper.md(PDF 글자층)는 한 줄이 물리적 줄이라 줄바꿈에 걸린 구절·합자(ﬂ)를 doc:find 가 못 찾았다.
+    쪽 표지가 있는 md 는 locate 와 같은 규칙(쪽 표지로 나눔 · 빈 줄이나 . : 로 끝난 줄에서 문단 · NFKC · 띄어쓰기 무시)으로 읽는다."""
+    import tempfile
+    pd = _paper_dir(tempfile.mkdtemp(prefix='cgpp_'))
+    src = CGm.DocSource(os.path.join(pd, 'paper.md'))
+    t = src.resolve('doc:find:mean flow velocity in the fake lesion')                           # 줄바꿈·합자를 넘는 구절
+    assert 'higher than in controls' in t and 'Abstract' in t, t
+    assert 'Methods' not in t                                                                   # 다른 쪽 문단은 섞이지 않는다
+    assert src.mark_of('doc:find:mean flow velocity') == '[p.101 · PDF 1]'
+    for bad, why in (('doc:find:the fake lesion group was lower', '없음'), ('doc:find:the fake index was repeated', '모호')):
+        try:
+            src.resolve(bad); assert False, bad                                                 # 실패 길: 원문에 없는 구절(지어낸 인용)·모호
+        except KeyError as e:
+            assert why in str(e), e
+    assert 'measured the fake index in two groups' in src.resolve('doc:sec:PDF 2')             # 쪽 표지로 절
+    md = os.path.join(pd, 'plain.md')                                                           # 쪽 표지 없는 md 는 전처럼(한 줄 = 문단)
+    open(md, 'w', encoding='utf8').write('# H\nline one\nline two\n')
+    assert CGm.DocSource(md).resolve('doc:find:line two') == 'line two'
+
+
+def _lit_claims(pd, **top):
+    import json
+    g = dict({'kind': '문헌', 'doc': '10.9999/fake-a', 'doi': '10.9999/fake-a', 'paper_sha': 'abc123def4567890', 'claims': [
+        {'id': 'r1', 'role': 'evidence', 'statement': '가짜 병변 군의 흐름 속도가 높다(0.81 vs 0.62)', 'status': 'proposed', 'origin': 'ai',
+         'sites': ['doc:find:velocity in the fake lesion group was higher'], 'keys': ['higher than in controls'], 'depends_on': []},
+        {'id': 'm1', 'role': 'main', 'statement': '가짜 지표가 병변을 가른다', 'status': 'proposed', 'origin': 'ai',
+         'sites': ['doc:find:This effect remained after adjustment'], 'keys': ['remained'], 'depends_on': [{'id': 'r1', 'type': 'premise'}]}]}, **top)
+    p = os.path.join(pd, 'claims.json'); json.dump(g, open(p, 'w'), ensure_ascii=False)
+    return p
+
+
+def t_v1619_lit_graph_checks():
+    """④ 1판: kind 문헌 그래프 — doi·meta.md 대조, id 에 : # 금지(나중 lit:<DOI>#<id>), 사람 이름 꼴 [참고], 판정 대기 수, 논문용 [참고] 일부 끔."""
+    import json, tempfile
+    pd = _paper_dir(tempfile.mkdtemp(prefix='cglg_'))
+    p = _lit_claims(pd)
+    meta, cl = CGm.load_claims_full(p)
+    probs = CGm.lit_graph_problems(meta, cl, p)
+    assert not [x for x in probs if not x.startswith('[참고]')], probs                          # 성공 길
+    assert any('판정 대기' in x and '2' in x for x in probs), probs
+    gp, _ = CGm.mapgraph(cl, io.StringIO(), kind='문헌')
+    assert not [x for x in gp if 'caveat 이 없음' in x], gp                                       # 짝이 될 주장만 뽑으므로 끈다
+    bad = [('doi 없음', dict(doi=None), 'doi'), ('meta 와 다름', dict(doi='10.9999/other', doc='10.9999/other'), 'meta.md'),
+           ('id #', None, '#')]
+    for name, top, word in bad:
+        g = json.load(open(p))
+        if top:
+            g.update({k: v for k, v in top.items()})
+            if top.get('doi') is None:
+                g.pop('doi')
+        else:
+            g['claims'][0]['id'] = 'r#1'; g['claims'][1]['depends_on'] = [{'id': 'r#1', 'type': 'premise'}]
+        q = os.path.join(pd, 'claims.json'); json.dump(g, open(q, 'w'), ensure_ascii=False)
+        m2, c2 = CGm.load_claims_full(q)
+        pr = CGm.lit_graph_problems(m2, c2, q)
+        assert [x for x in pr if not x.startswith('[참고]') and word in x], (name, pr)           # 실패 길
+    p = _lit_claims(pd, paper_sha='0000000000000000')
+    pr = CGm.lit_graph_problems(*CGm.load_claims_full(p), p)
+    assert any(x.startswith('[참고]') and 'paper_sha' in x for x in pr), pr                        # 논문 판이 바뀜
+    g = json.load(open(p)); g['claims'][0]['statement'] = 'Kim et al. 이 보고한 결과(Lee, 2021)'
+    g['claims'][1]['sites'] = ['doc:find:Smith et al. reported']
+    json.dump(g, open(p, 'w'), ensure_ascii=False)
+    pr = CGm.lit_graph_problems(*CGm.load_claims_full(p), p)
+    nm = [x for x in pr if '사람 이름' in x]
+    assert len(nm) == 2 and all(x.startswith('[참고]') for x in nm), pr                          # r1·m1 각각 한 줄
+
+
+def t_v1619_lit_graph_cli_mapcheck_freeze_stale():
+    """④ 1판: paper.md 에 mapgraph·mapcheck·mapfreeze·mapstale 이 그대로 — 원문 문단이 바뀌면 [변경]."""
+    import json, tempfile
+    pd = _paper_dir(tempfile.mkdtemp(prefix='cglc_'))
+    p = _lit_claims(pd); md = os.path.join(pd, 'paper.md'); fz = os.path.join(pd, 'claims_f.json')
+    run = lambda *a: subprocess.run([sys.executable, CGm.__file__] + list(a), capture_output=True, text=True)
+    r = run('mapgraph', '--claims', p)
+    assert r.returncode == 0 and '판정 대기' in r.stdout, r.stdout[-600:]
+    r = run('mapcheck', md, '--claims', p)
+    assert r.returncode == 0 and '모든 주장의 자리에 찾는 표현이 있음' in r.stdout, r.stdout[-600:]
+    r = run('mapfreeze', md, '--claims', p, '-o', fz)
+    assert r.returncode == 0 and json.load(open(fz))['kind'] == '문헌', r.stdout[-400:]           # 맨 위 칸 보존
+    r = run('mapstale', md, '--claims', fz)
+    assert r.returncode == 0 and '[변경]' not in r.stdout and '[경고]' not in r.stdout, r.stdout[-400:]   # doc(DOI) 와 paper.md 이름이 달라도 경고 없음
+    open(md, 'w', encoding='utf8').write(_PAPER_MD.replace('This effect remained after adjustment.', 'This effect vanished after adjustment.'))
+    r = run('mapstale', md, '--claims', fz)
+    assert '[변경] m1' in r.stdout, r.stdout[-600:]
+    g = json.load(open(p)); g.pop('doi'); json.dump(g, open(p, 'w'), ensure_ascii=False)
+    assert run('mapgraph', '--claims', p).returncode == 1                                        # [필수] 면 종료 1
 
 
 if __name__ == '__main__':

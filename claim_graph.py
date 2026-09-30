@@ -45,9 +45,10 @@ import io
 import os
 import re
 import sys
+import unicodedata
 import zipfile
 
-__version__ = '16.18'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.19'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -58,7 +59,8 @@ SOURCE_KINDS = ('문헌', '교과서', '덱', '원고', '기타')
 VERDICTS = ('부합', '부분', '근거 없음', '반대 방향')
 IMPACT_CUTOFF = 0.25
 CLAIM_STATUS = ('accepted', 'proposed', 'superseded', 'excluded')   # v16.6 (발표 K23): excluded = 배제된 감별 — 자리에 계속 실린다(superseded 와 다름)
-CASE_KINDS = ('증례', 'case')   # v16.6: 그래프 맨 위 kind — 논문용 [참고] 일부를 끈다
+CASE_KINDS = ('증례', 'case')
+LIT_KINDS = ('문헌',)   # v16.19 (④ 1판): 논문 그래프 — 문헌 보관소/<DOI>/claims.json, 자리는 그 논문의 paper.md   # v16.6: 그래프 맨 위 kind — 논문용 [참고] 일부를 끈다
 CLAIM_ROLES = ('main', 'claim', 'evidence', 'background', 'method', 'caveat', 'rebuttal', 'premise')
 CONFIDENCE = ('high', 'mid', 'low')   # high=이 자료로 재현됨 / mid=자료가 방향은 지지 / low=미검정·외부 근거·미해결
 
@@ -132,11 +134,44 @@ def save_claims(path, claims, deck_name=None, note=None, meta=None, doc=None):
 # docx 자리 해석
 # ----------------------------------------------------------------------------
 
+_PAPER_MARK = re.compile(r'^(\[p\.[^\]]*\]|\[§ [^\]]*\])\s*$', re.M)
+
+
+def _fold(s):
+    """v16.19: 찾기·해시용 — 글자마다 NFKC(합자 ﬂ→fl, 위첨자 ²→2, 전각→반각), literature._fold 와 같은 규칙."""
+    return ''.join(unicodedata.normalize('NFKC', ch) if ord(ch) > 127 else ch for ch in unicodedata.normalize('NFC', s))
+
+
+def _fold_re(term):
+    core = re.sub(r'\s+', '', _fold(term))
+    return re.compile(r'\s*'.join(map(re.escape, core)), re.I)
+
+
+def _paper_paras(txt):
+    """v16.19 (④ 1판): 쪽·절 표지가 있는 md → (표지 목록, 문단 목록). literature locate 와 같은 나눔 — 표지 줄로 쪽을 나누고,
+    그 안에서 빈 줄이나 . : 로 끝난 줄 뒤에서 문단을 끊는다(PDF 글자층은 한 줄이 물리적 줄). 문단은 NFKC·띄어쓰기 하나로."""
+    marks, paras = [], []
+    parts = _PAPER_MARK.split(txt)
+    for k in range(1, len(parts) - 1, 2):
+        for para in re.split(r'\n\s*\n|(?<=[.:])\n', parts[k + 1]):
+            flat = re.sub(r'\s+', ' ', _fold(para)).strip()
+            if flat:
+                marks.append(parts[k].strip()); paras.append(flat)
+    return marks, paras
+
+
 class DocSource:
     """docx 를 문단 목록으로 읽고 doc:* 자리를 해석한다."""
 
     def __init__(self, path):
         self.path = path
+        self.marks = None                 # v16.19: 쪽·절 표지가 있는 md(literature paper.md·교과서 분할)면 문단마다 표지
+        if not path.lower().endswith('.docx'):
+            txt = open(path, encoding='utf8', errors='ignore').read()
+            if _PAPER_MARK.search(txt):
+                self.marks, self.paras = _paper_paras(txt)
+                self.headings, self.tables = set(), []
+                return
         self.paras, self.headings, self.tables = self._read(path)
 
     @staticmethod
@@ -195,6 +230,13 @@ class DocSource:
                 paras.append(ln.strip())
         return paras, heads, tables
 
+    def mark_of(self, site):
+        """v16.19: 자리가 든 문단의 쪽·절 표지(표지 있는 md 만 — 아니면 None). sources 의 at 을 적을 때."""
+        if self.marks is None:
+            return None
+        t = self.resolve(site)
+        return self.marks[self.paras.index(t)]
+
     def units(self):
         """extract 용 (site, text) 목록. doc:find 는 문단 앞 6단어로 만든다."""
         out = []
@@ -213,6 +255,19 @@ class DocSource:
             if not 1 <= n <= len(seq):
                 raise KeyError('doc:%s:%d — 번호는 1부터 %d 까지(%s %d개)' % (sub, n, len(seq), '문단' if sub == 'p' else '표', len(seq)))
             return seq[n - 1] if sub == 'p' else ' '.join(seq[n - 1])
+        if sub == 'find' and self.marks is not None:   # v16.19: literature locate 와 같게 — NFKC(합자)·띄어쓰기 무시
+            pat = _fold_re(arg)
+            hits = [p for p in self.paras if pat.search(p)]
+            if not hits:
+                raise KeyError('문구를 가진 문단 없음: %s' % arg)
+            if len(hits) > 1:
+                raise KeyError('문구가 %d개 문단에 있어 모호함: %s' % (len(hits), arg))
+            return hits[0]
+        if sub == 'sec' and self.marks is not None:    # v16.19: 절 = 표지(쪽 `PDF 2` · 절 `Methods`) — 처음 맞는 표지의 문단 전부
+            m = next((mk for mk in self.marks if arg.lower() in mk.lower()), None)
+            if m is None:
+                raise KeyError('표지 없음: %s' % arg)
+            return ' '.join(p for p, mk in zip(self.paras, self.marks) if mk == m)
         if sub == 'find':
             hits = [p for p in self.paras if arg.lower() in p.lower()]
             if not hits:
@@ -330,6 +385,53 @@ def _sccs(claims):
     return out
 
 
+_DOI_SHAPE = re.compile(r'^10\.\d{4,9}/\S+$')
+# v16.19: 사람 이름 꼴 — 논문 그래프는 DOI 로만(사용자 09-29). 다 잡지 못한다: et al · (이름, 연도) · 이름 연도 · 이름 and/& 이름
+_NAME_LIKE = re.compile(r'\bet\s+al\b|\(\s*[A-Z][a-z]+,?\s+(?:19|20)\d\d[a-z]?\s*\)|\b[A-Z][a-z]{2,}\s+(?:19|20)\d\d\b|\b[A-Z][a-z]+\s+(?:and|&)\s+[A-Z][a-z]+\b')
+
+
+def lit_graph_problems(meta, claims, path=None):
+    """v16.19 (④ 1판): kind 문헌 그래프(문헌 보관소/<DOI>/claims.json)의 맨 위·이름 검사. [참고] 가 아니면 [필수].
+    같은 폴더에 meta.md 가 있으면 doi(= [필수])·원 파일 sha(paper_sha — 다르면 [참고] 논문 판이 바뀜)를 대조한다."""
+    out = []
+    doi = str(meta.get('doi') or '').strip().lower().replace('https://doi.org/', '')
+    if not doi:
+        out.append('문헌 그래프에 doi 가 없다 — 맨 위 "doi": "10.xxxx/…"')
+    elif not _DOI_SHAPE.match(doi):
+        out.append('doi "%s" 가 DOI 모양(10.xxxx/…)이 아니다' % doi)
+    if doi and str(meta.get('doc') or '').strip().lower() != doi:
+        out.append('[참고] doc(%s) 이 doi 와 다르다 — 문헌 그래프는 doc 도 DOI 로' % meta.get('doc'))
+    mp = os.path.join(os.path.dirname(os.path.abspath(path)), 'meta.md') if path else None
+    if mp and os.path.exists(mp):
+        head = open(mp, encoding='utf8').readline()
+        m = re.search(r'doi=(\S+)', head); sha = re.search(r'sha=([0-9a-f]+)', head)
+        if doi and m and m.group(1).lower() != doi:
+            out.append('doi %s 가 같은 폴더 meta.md 의 doi %s 와 다르다 — 다른 논문 폴더에 둔 그래프' % (doi, m.group(1)))
+        if sha and not meta.get('paper_sha'):
+            out.append('[참고] paper_sha 가 없다 — meta.md 의 sha(%s) 를 적어 두면 논문 판이 바뀐 것을 알린다' % sha.group(1))
+        elif sha and meta.get('paper_sha') != sha.group(1):
+            out.append('[참고] paper_sha(%s) 가 meta.md 의 sha(%s) 와 다르다 — 논문 판이 바뀌었다(선공개 → 게재·정정). mapstale 로 자리를 다시 본다'
+                       % (meta.get('paper_sha'), sha.group(1)))
+    for c in claims:
+        cid = str(c.get('id', ''))
+        if re.search(r'[:#\s]', cid):
+            out.append('%s: 문헌 그래프 id 에 : # 빈칸을 쓰지 않는다(우리 그래프에서 lit:<DOI>#<id> 로 부른다)' % cid)
+        bad = [x for x in c.get('sites', []) if not str(x).startswith('doc:')]
+        if bad:
+            out.append('[참고] %s: 자리 %s — 문헌 그래프의 자리는 그 논문 paper.md 의 doc:find·doc:sec' % (cid, ', '.join(map(str, bad))))
+        txt = ' '.join([c.get('statement', '') or '', c.get('evidence', '') or ''] + list(c.get('keys', [])) + list(map(str, c.get('sites', []))))
+        hit = sorted({m.group(0) for m in _NAME_LIKE.finditer(txt)})
+        if hit:
+            out.append('[참고] %s: 사람 이름 꼴 %s — 문헌 그래프는 사람 이름 없이(DOI 로만). 인용 구절이면 이름 없는 구절로 바꾼다'
+                       % (cid, ', '.join('"%s"' % h for h in hit)))
+    pend = [c['id'] for c in claims if c.get('status') == 'proposed']
+    if pend:
+        out.append('[참고] 판정 대기(proposed) %d개%s — 리뷰어가 paper.md 를 읽고 accepted/고침/뺌'
+                   % (len(pend), ' (AI 초안 %d)' % sum(1 for c in claims if c.get('status') == 'proposed' and c.get('origin') == 'ai')
+                      if any(c.get('origin') == 'ai' for c in claims) else ''))
+    return out
+
+
 def _exploratory_paths(claims):
     """v16.17 (사용자 09-30 ③): 탐색적 주장(exploratory true, 철회·배제 아님)마다 (단계, [main]).
     단계 chain = main 에서 premise 만 따라 닿음(main 자신 포함) · mixed = premise·support 로만 닿음 · off = 그 밖."""
@@ -366,6 +468,7 @@ def mapgraph(claims, stream=sys.stdout, sources=None, kind=None):
     """구조 검사 + 위상 순서. 반환 (문제목록, 순서). sources(v16.5) = 문헌 보관소 — 주면 문헌 근거가 보관소에 있는지·판정이 있는지도.
     kind(v16.6) = 그래프 맨 위 kind. '증례' 면 논문용 [참고](forbidden 인데 supersedes 없음 · evidence 인데 caveat 없음 · main 개수)를 끈다."""
     case = kind in CASE_KINDS
+    lit = kind in LIT_KINDS           # v16.19: 논문 그래프는 짝이 될 주장만 뽑는다 — caveat 없는 evidence · forbidden 만 [참고] 는 끈다
     ids = {c['id'] for c in claims}
     problems = []
     edges = _edges(claims)
@@ -406,7 +509,7 @@ def mapgraph(claims, stream=sys.stdout, sources=None, kind=None):
         both = [k for k in c.get('keys', []) if k in c.get('forbidden', [])]
         if both:   # v15.5.2 (발표 T2): 찾을 표현과 금지 표현이 같으면 mapcheck 가 자리 통과·금지 실패를 동시에 낸다 — 주장 문장이 낡았다는 신호
             problems.append('%s: keys 와 forbidden 에 같은 표현 %s — statement 가 슬라이드/원고보다 낡았는지 확인' % (c['id'], both))
-        if c.get('forbidden') and not c.get('supersedes') and not case:
+        if c.get('forbidden') and not c.get('supersedes') and not case and not lit:
             problems.append('[참고] %s: forbidden 이 있는데 supersedes(철회한 옛 주장) 기록이 없음'
                             % c['id'])
         if c.get('supersedes') and not c.get('forbidden'):
@@ -434,7 +537,7 @@ def mapgraph(claims, stream=sys.stdout, sources=None, kind=None):
                 problems.append('[참고] %s -> %s: caveat 간선이 role=rebuttal 주장을 가리킴 — 한계가 아니라 반대 증거면 type rebuttal' % (c['id'], up))
 
     for c in claims:
-        if c.get('role') == 'evidence' and case:
+        if c.get('role') == 'evidence' and (case or lit):
             pass
         elif c.get('role') == 'evidence' and noedge:
             folded['caveat'] += 1
@@ -2085,7 +2188,9 @@ def oral_snapshot(claims):
     짝짓기는 정확히 같은 것만 세므로 해시로도 점수가 같다."""
     return {c['id']: {'role': c.get('role'), 'text': _fingerprint(c.get('evidence', '') + '|' + c.get('statement', '')),
                       'sites': sorted({_oral_h(_norm_site(x)) for x in c.get('sites', [])}),
-                      'keys': sorted({_oral_h(k.lower()) for k in c.get('keys', [])})} for c in claims}
+                      'keys': sorted({_oral_h(k.lower()) for k in c.get('keys', [])}),
+                      # v16.19 (발표 S1): 간선(대상 id:종류) — 저자 판이 간선만 바꿔도 oral sync 가 알린다. id 는 이미 덧붙임에 있는 이름이라 해시하지 않는다
+                      'deps': sorted('%s:%s' % (u, t) for u, t, _ in _edges([c])[c['id']])} for c in claims}
 
 
 def oral_init(author_path, deck=None, out=None):
@@ -2325,6 +2430,26 @@ def oral_sync(overlay, new_meta, new_claims, new_sha, new_file, pairs=None, drop
             else:
                 deps.append(e)
         c['depends_on'] = deps
+    # v16.19 (발표 S1): 쓴 주장·그 무대 밖 상류의 간선이 늘거나 줄면 [참고] — 새로 걸린 쪽이 화면에 있는지도(결론 화면의 한계가 Limitation 화면에 다 있나)
+    ne = _edges(new_claims)
+    keep, todo = set(), [x for x in list(use) + [up for c in own for up, _, _ in _edges([c]).get(c.get('id'), [])] if x in by_new]
+    while todo:
+        v = todo.pop()
+        if v not in keep:
+            keep.add(v); todo += [u for u, _, _ in ne.get(v, []) if u in by_new]
+    olds = [i for i in keep if i in old_snap]
+    if olds and not any('deps' in old_snap[i] for i in olds):
+        lines.append('[참고] 옛 스냅숏(claim_graph 16.19 전)이라 간선 변화는 보지 않았다 — 이번 sync 부터 적는다')
+    for cid in [i for i in new_snap if i in keep and i in old_snap and 'deps' in old_snap[i]]:
+        was, now = set(old_snap[cid]['deps']), set(new_snap[cid]['deps'])
+        who = ('쓴 주장 %s' if cid in use else '무대 밖 상류 %s') % cid
+        for d_ in sorted(now - was):
+            up, typ = d_.rsplit(':', 1)
+            scr = ', '.join((use.get(up) or {}).get('sites', []))
+            lines.append('[참고] %s 에 %s %s 가 새로 걸림 — %s' % (who, typ, up, ('화면 ' + scr) if scr else '화면에 없음'))
+        for d_ in sorted(was - now):
+            up, typ = d_.rsplit(':', 1)
+            lines.append('[참고] %s 에서 %s %s 가 빠짐' % (who, typ, up))
     newids = [i for i in new_snap if i not in old_snap and not any(i in tg for tg in moved.values())]
     gone = [i for i in old_snap if i not in new_snap and i not in use and i not in moved and i not in drop]
     offch = [i for i in (ov.get('offstage_verified') or {}) if i in old_snap and i in new_snap and old_snap[i]['text'] != new_snap[i]['text']]
@@ -2839,6 +2964,11 @@ def main():
     if a.cmd == 'mapgraph':
         meta_, cl_, _ = _claims_arg(a)
         probs, _ = mapgraph(cl_, sources=a.sources, kind=meta_.get('kind'))
+        if meta_.get('kind') in LIT_KINDS:          # v16.19 (④ 1판): 문헌 그래프 — doi·meta.md·id·사람 이름 꼴·판정 대기
+            lp = lit_graph_problems(meta_, cl_, a.claims)
+            for p_ in lp:
+                print('  [!] %s' % p_)
+            probs = probs + lp
         sys.exit(1 if any(not p.startswith('[참고]') for p in probs) else 0)
     elif a.cmd == 'impact':
         cl = _claims_arg(a)[1]
@@ -2924,11 +3054,12 @@ def main():
         elif a.cmd == 'mapfreeze':
             meta, cl = load_claims_full(a.claims)
             mapfreeze(src.resolve, cl, sources=a.sources, stream=sys.stdout)
-            print('기록 완료: %s' % save_claims(a.o, cl, meta=meta, doc=a.doc))
+            lit_ = meta.get('kind') in LIT_KINDS           # v16.19: 문헌 그래프의 doc 은 DOI — paper.md 이름으로 바꾸지 않는다
+            print('기록 완료: %s' % save_claims(a.o, cl, meta=meta, doc=None if lit_ else a.doc))
         elif a.cmd == 'mapstale':
             meta, cl = load_claims_full(a.claims)
             stale_doc = meta.get('doc') or meta.get('deck')
-            if stale_doc and doc_name(stale_doc) != doc_name(a.doc):
+            if stale_doc and doc_name(stale_doc) != doc_name(a.doc) and meta.get('kind') not in LIT_KINDS:
                 print('[경고] 그래프의 doc=%s 와 대상 %s 가 다름 — 다른 판에 대한 freeze 일 수 있음' % (doc_name(stale_doc), doc_name(a.doc)))
             r = mapstale(src.resolve, cl, sources=a.sources)
             sys.exit(1 if (r['changed'] or r['unverified']) else 0)
