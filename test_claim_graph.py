@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.15'
+EXPECT_VERSION = '16.16'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -1110,7 +1110,7 @@ def t_v1615_focus_oral_screens_and_offstage():
     _, cl, _ = CGm.load_oral(O, A)
     fg = CGm.focus_graph(cl, ['f'])
     md = CGm.focus_mermaid(fg, screen=lambda s: {'slide@260': '화면 12', 'slide@261': '화면 13'}.get(s, s))
-    assert '화면 12' in md and '화면 13' in md and 'classDef offstage' in md and '화면에 없음' in md, md
+    assert '화면 12' in md and '화면 13' in md and '_off fill' in md and '화면에 없음' in md, md     # v16.16: 무대 밖은 종류 색을 흐리게
     assert '화면에 없음' in [x for x, _ in CGm.focus_legend(fg)]
     md2 = CGm.focus_mermaid(fg)                                                         # 덱을 안 주면 slide@ID
     assert 'slide@260' in md2
@@ -1155,6 +1155,81 @@ def t_v1615_focus_mermaid_js_order_and_no_browser():
     assert r.returncode == 0 and '```mermaid' in open(os.path.join(d, 'g.md'), encoding='utf8').read(), (r.stdout, r.stderr)
     assert CGm.find_browser(env={'CLAIM_GRAPH_BROWSER': 'none'}) is None
     assert CGm.find_browser(env={'CLAIM_GRAPH_BROWSER': npmf}) == npmf                 # 준 경로를 그대로
+
+
+def _fake_browser(d, title, svg):
+    """가짜 브라우저(v2.74 시험): --dump-dom 이면 그 제목·svg 로 DOM, --screenshot= 이면 작은 PNG. 실제 Chrome 처럼 끝나지 않고 기다린다."""
+    p = os.path.join(d, 'fakebrowser_%s' % re.sub(r'\W', '', title)[:12])
+    open(p, 'w').write('''#!%s
+import sys, time
+a = sys.argv[1:]
+if '--dump-dom' in a:
+    sys.stdout.write('<html><head><title>%s</title></head><body><pre class="mermaid">%s</pre></body></html>\\n'); sys.stdout.flush()
+for x in a:
+    if x.startswith('--screenshot='):
+        from PIL import Image, ImageDraw
+        im = Image.new('RGB', (400, 300), 'white'); ImageDraw.Draw(im).rectangle((50, 50, 200, 150), fill='black'); im.save(x.split('=', 1)[1])
+time.sleep(30)
+''' % (sys.executable, title, '<svg></svg>' if svg else 'flowchart LR'))
+    os.chmod(p, 0o755)
+    return p
+
+
+def t_v1616_focus_mermaid_failure_no_png():
+    # 부관리자 09-30 [결함]: jsdelivr 403 으로 mermaid 가 안 돌았는데 mermaid 글자가 찍힌 PNG 를 저장하고 종료 코드 0 — 찍기 전에 SVG 를 확인한다
+    import json, tempfile, time
+    assert CGm._mermaid_status('<title>done</title><pre class="mermaid"><svg></svg></pre>') == (True, '')
+    ok, why = CGm._mermaid_status('<title>mermaid-load-failed</title><pre class="mermaid">flowchart</pre>')
+    assert not ok and '받지 못함' in why, why
+    ok, why = CGm._mermaid_status('<title>mermaid-error: Parse error</title>')
+    assert not ok and 'Parse error' in why, why
+    ok, why = CGm._mermaid_status('<title>f</title><pre class="mermaid">flowchart</pre>')
+    assert not ok and '그리지 못함' in why, why
+    ok, why = CGm._mermaid_status('<title>done</title><pre class="mermaid">flowchart</pre>')          # 제목만 done 이고 svg 없음
+    assert not ok, why
+    d = tempfile.mkdtemp(prefix='cgmf_')
+    A = os.path.join(d, 'a.json'); json.dump({'claims': FOCUS_G}, open(A, 'w'), ensure_ascii=False)
+    js = os.path.join(d, 'mermaid.min.js'); open(js, 'w').write('/* fake */')
+    cg = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'claim_graph.py')
+    html = CGm.focus_html(CGm.focus_graph([dict(c) for c in FOCUS_G], ['f']), js)
+    assert 'onerror="document.title=' + "'mermaid-load-failed'" + '"' in html and 'mermaid-error' in html, html[-600:]
+    for title, svg, code, word in (('mermaid-load-failed', False, 1, '받지 못함'), ('f', False, 1, '그리지 못함'), ('done', True, 0, 'PNG:')):
+        png = os.path.join(d, 'f_%s_%s.png' % (code, re.sub(r'\W', '', title)[:4]))
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE='1', CLAIM_GRAPH_BROWSER=_fake_browser(d, title, svg), CLAIM_GRAPH_MERMAID_JS=js)
+        t0 = time.time()
+        r = subprocess.run([sys.executable, cg, 'focus', 'f', '--claims', A, '-o', os.path.join(d, 'f.md'), '--png', png], capture_output=True, text=True, env=env)
+        assert r.returncode == code and word in r.stdout and time.time() - t0 < 25, (title, r.returncode, r.stdout, r.stderr)   # 끝나지 않는 브라우저는 끈다
+        if code:
+            assert not os.path.exists(png) and '[!] mermaid 가 그리지 못했다' in r.stdout and 'npm install mermaid@11' in r.stdout, r.stdout
+        else:
+            assert os.path.exists(png)
+
+
+def t_v1616_focus_background_and_offstage_colors():
+    # 사용자 09-30: 배경은 핵심 근거와 다른 색·범례 "배경" / 무대 밖 받침은 종류 색을 흐리게(범례와 맞게)
+    import copy as _c, json, tempfile
+    g = _c.deepcopy(FOCUS_G)
+    g.append({'id': 'bg', 'role': 'background', 'statement': 'Background knowledge', 'depends_on': []})
+    g.append({'id': 'ctx', 'role': 'claim', 'statement': 'Context only', 'depends_on': []})
+    by = {c['id']: c for c in g}
+    by['f']['depends_on'] += [{'id': 'bg', 'type': 'premise'}, {'id': 'ctx', 'type': 'context'}]
+    fg = CGm.focus_graph(g, ['f'])
+    assert fg['kind']['bg'] == 'context' and fg['kind']['ctx'] == 'context' and fg['kind']['e1'] == 'base', fg['kind']
+    md = CGm.focus_mermaid(fg)
+    assert 'classDef context' in md and CGm._FOCUS_STYLE['context'] != CGm._FOCUS_STYLE['base'], md
+    assert [w for w, _ in CGm.focus_legend(fg)] == ['선택한 주장', '핵심 근거', '배경', '한계', '반박', '영향받는 결론']
+    assert '배경' not in [w for w, _ in CGm.focus_legend(CGm.focus_graph(_c.deepcopy(FOCUS_G), ['f']))]       # 없으면 범례에서도 뺀다
+    d = tempfile.mkdtemp(prefix='cgfc_')
+    A = os.path.join(d, 'a.json'); json.dump({'claims': FOCUS_G}, open(A, 'w'), ensure_ascii=False)
+    ov = CGm.oral_init(A, deck='d'); ov['use'] = {'f': {'sites': ['slide@1'], 'keys': ['k']}}
+    O = os.path.join(d, 'o.json'); json.dump(ov, open(O, 'w'), ensure_ascii=False)
+    fg = CGm.focus_graph(CGm.load_oral(O, A)[1], ['f'])
+    md = CGm.focus_mermaid(fg)
+    for k in ('base', 'limit', 'rebut'):                                              # 무대 밖이어도 종류 색(흐리게) — 회색 하나가 아니다
+        assert 'classDef %s_off' % k in md, md[-900:]
+    fills = set(re.findall(r'classDef \w+_off fill:(#\w+)', md))
+    assert len(fills) >= 3 and '#fafafa' not in fills, fills
+    assert CGm.focus_legend(fg)[-1][0] == '화면에 없음'
 
 
 def t_v1610_mapfreeze_sources_missing_doi_stops():

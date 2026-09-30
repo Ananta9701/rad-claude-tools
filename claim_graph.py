@@ -46,7 +46,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.15'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.16'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -2196,11 +2196,12 @@ FOCUS_UP = 2
 FOCUS_CDN = 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js'
 _FOCUS_STYLE = {'focus': 'fill:#ffd8a8,stroke:#c2410c,stroke-width:3px,color:#111',
                 'base': 'fill:#d0e7ff,stroke:#1d4ed8,color:#111',
+                'context': 'fill:#e5e7eb,stroke:#6b7280,color:#111',
                 'limit': 'fill:#fff3cd,stroke:#b58105,stroke-dasharray:4 3,color:#111',
                 'rebut': 'fill:#fde2e2,stroke:#b91c1c,color:#111',
                 'impact': 'fill:#e9d8fd,stroke:#6b46c1,color:#111',
                 'offstage': 'fill:#fafafa,stroke:#aaaaaa,stroke-dasharray:2 3,color:#777'}
-_FOCUS_WORD = [('focus', '선택한 주장'), ('base', '핵심 근거'), ('limit', '한계'), ('rebut', '반박'), ('impact', '영향받는 결론')]
+_FOCUS_WORD = [('focus', '선택한 주장'), ('base', '핵심 근거'), ('context', '배경'), ('limit', '한계'), ('rebut', '반박'), ('impact', '영향받는 결론')]
 
 
 def focus_graph(claims, ids, up=FOCUS_UP):
@@ -2219,8 +2220,14 @@ def focus_graph(claims, ids, up=FOCUS_UP):
         nxt = []
         for v in frontier:
             for u, typ, _ in edges.get(v, []):
-                if u in by and typ in ('premise', 'support', 'context') and u not in kind:
-                    kind[u] = 'base'; level[u] = depth; nxt.append(u)
+                if u not in by or typ not in ('premise', 'support', 'context'):
+                    continue
+                # v16.16 (사용자 09-30): 배경 — role background 이거나 context 로만 닿은 받침은 핵심 근거와 나눈다
+                k_ = 'context' if (typ == 'context' or by[u].get('role') == 'background') else 'base'
+                if u not in kind:
+                    kind[u] = k_; level[u] = depth; nxt.append(u)
+                elif kind[u] == 'context' and k_ == 'base':
+                    kind[u] = 'base'
         frontier = nxt
     for v in [x for x, lv in level.items() if lv <= 1]:
         for u, typ, _ in edges.get(v, []):
@@ -2262,7 +2269,7 @@ def focus_mermaid(fg, ids=False, screen=None):
     """mermaid 글 — 받침 | 선택한 주장 | 영향 세 칸(LR). screen(자리) → '화면 N' 을 주면 화면 번호로."""
     kind = fg['kind']; nid = {c['id']: 'n%d' % k for k, c in enumerate(fg['claims'], 1)}
     L = ['flowchart LR']
-    cols = [('s_up', '받침', ('base', 'limit', 'rebut')), ('s_focus', '선택한 주장', ('focus',)), ('s_down', '영향', ('impact',))]
+    cols = [('s_up', '받침', ('base', 'context', 'limit', 'rebut')), ('s_focus', '선택한 주장', ('focus',)), ('s_down', '영향', ('impact',))]
     for sid, title, ks in cols:
         mem = [c for c in fg['claims'] if kind[c['id']] in ks]
         if not mem:
@@ -2274,10 +2281,28 @@ def focus_mermaid(fg, ids=False, screen=None):
     for u, typ, v in fg['edges']:
         L.append('  %s %s %s' % (nid[u], _EDGE_ARROW.get(typ, '-->'), nid[v]))
     for k_, style in _FOCUS_STYLE.items():
-        mem = [nid[c['id']] for c in fg['claims'] if (k_ == 'offstage' and c.get('offstage')) or (k_ != 'offstage' and kind[c['id']] == k_ and not c.get('offstage'))]
+        if k_ == 'offstage':
+            continue
+        mem = [nid[c['id']] for c in fg['claims'] if kind[c['id']] == k_ and not c.get('offstage')]
         if mem:
             L += ['  classDef %s %s' % (k_, style), '  class %s %s' % (','.join(mem), k_)]
+        off = [nid[c['id']] for c in fg['claims'] if kind[c['id']] == k_ and c.get('offstage')]
+        if off:                                    # v16.16 (사용자 09-30): 무대 밖도 종류 색을 흐리게 — 범례와 맞게
+            L += ['  classDef %s_off %s' % (k_, _faded(style)), '  class %s %s_off' % (','.join(off), k_)]
     return '\n'.join(L) + '\n'
+
+
+def _faded(style):
+    """종류 색을 흰색 쪽으로 60% 섞고 테두리는 점선·글은 흐리게(무대 밖)."""
+    def mix(m):
+        h = m.group(1)
+        if len(h) == 3:
+            h = ''.join(ch * 2 for ch in h)
+        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+        return '#%02x%02x%02x' % tuple(int(v + (255 - v) * 0.6) for v in (r, g, b))
+    fill = re.sub(r'#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b', mix, re.search(r'fill:(#\w+)', style).group(0))
+    stroke = re.search(r'stroke:(#\w+)', style)
+    return '%s,stroke:%s,stroke-dasharray:3 3,color:#666' % (fill, stroke.group(1) if stroke else '#999')
 
 
 def focus_legend(fg):
@@ -2325,9 +2350,12 @@ def focus_html(fg, mermaid_src, ids=False, screen=None, title=''):
             'body{margin:24px;background:#fff;font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans CJK KR","Noto Sans KR",sans-serif;color:#111}'
             '.leg{margin-top:14px;font-size:15px}.k{margin-right:18px;white-space:nowrap}.k i{display:inline-block;width:14px;height:14px;border:1px solid #666;'
             'vertical-align:-2px;margin-right:6px}</style></head><body><pre class="mermaid">%s</pre><div class="leg">%s</div>'
-            '<script src="%s"></script><script>mermaid.initialize({startOnLoad:false,flowchart:{htmlLabels:true,wrappingWidth:520},'
+            '<script src="%s" onerror="document.title=\'mermaid-load-failed\'"></script><script>'
+            'if(!window.mermaid){document.title="mermaid-load-failed"}else{'
+            'mermaid.initialize({startOnLoad:false,flowchart:{htmlLabels:true,wrappingWidth:520},'
             'fontFamily:\'-apple-system,"Apple SD Gothic Neo","Noto Sans CJK KR",sans-serif\'});'
-            'mermaid.run().then(function(){document.title="done"});</script></body></html>'
+            'mermaid.run().then(function(){document.title=document.querySelector("pre.mermaid svg")?"done":"mermaid-error: svg 없음"})'
+            '.catch(function(e){document.title="mermaid-error: "+((e&&e.message)||e)})}</script></body></html>'
             % (_h.escape(title or ', '.join(fg['ids'])), _h.escape(focus_mermaid(fg, ids, screen)), leg, _h.escape(src)))
 
 
@@ -2352,41 +2380,75 @@ def find_browser(env=None):
     return None
 
 
-def render_png(html_path, png_path, browser, size=(1800, 1400), timeout=90):
-    """headless 로 찍고 여백을 자른다. 찍은 뒤 끝나지 않는 Chrome 이 있어(09-30 Mac 시험) — PNG 가 생겨 크기가 멈추면 그 임시 프로필의
-    프로세스만 끈다. 반환 (성공, 알림). 2배 해상도."""
+def _mermaid_status(dom):
+    """--dump-dom 결과로 mermaid 가 실제로 그렸는지. (됨, 까닭). v16.16 (부관리자 09-30 [결함]): 못 그렸는데 글자만 찍힌 PNG 를 저장했다."""
+    t = re.search(r'<title>([^<]*)</title>', dom or '')
+    t = t.group(1).strip() if t else ''
+    pre = re.search(r'<pre class="mermaid"[^>]*>(.*?)</pre>', dom or '', re.S)
+    svg = bool(pre and '<svg' in pre.group(1)) or (not pre and '<svg' in (dom or ''))
+    if t == 'done' and svg:
+        return True, ''
+    if t.startswith('mermaid-load-failed'):
+        return False, 'mermaid 파일을 받지 못함(파일·주소를 읽지 못했거나 mermaid 가 아님)'
+    if t.startswith('mermaid-error'):
+        return False, 'mermaid 오류: %s' % t.split(':', 1)[-1].strip()
+    return False, '제한 시간 안에 그리지 못함(mermaid 를 받지 못했을 수 있다)'
+
+
+def _browser_pass(browser, extra, html_path, done, timeout):
+    """브라우저를 한 번 돌린다 — done() 이 참이 되거나 끝나거나 제한 시간이면 그 임시 프로필의 브라우저만 끈다(찍은 뒤 끝나지 않는 Chrome, 09-30).
+    반환 표준출력 글."""
     import subprocess, tempfile, time, shutil, signal
     prof = tempfile.mkdtemp(prefix='cg_chrome_')
-    if os.path.exists(png_path):
-        os.remove(png_path)
+    outf = os.path.join(prof, '_stdout.txt')
     cmd = [browser, '--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--hide-scrollbars',
-           '--user-data-dir=%s' % prof, '--force-device-scale-factor=2', '--window-size=%d,%d' % size,
-           '--virtual-time-budget=15000', '--screenshot=%s' % png_path, 'file://' + os.path.abspath(html_path)]
+           '--user-data-dir=%s' % prof] + extra + ['file://' + os.path.abspath(html_path)]
     if hasattr(os, 'geteuid') and os.geteuid() == 0:
         cmd.insert(1, '--no-sandbox')              # 컨테이너(root)
-    p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-    t0, last = time.time(), -1
-    try:
-        while time.time() - t0 < timeout:
-            if os.path.exists(png_path):
-                sz = os.path.getsize(png_path)
-                if sz and sz == last:
+    with open(outf, 'w') as fo:
+        p = subprocess.Popen(cmd, stdout=fo, stderr=subprocess.DEVNULL, start_new_session=True)
+        t0 = time.time()
+        try:
+            while time.time() - t0 < timeout:
+                if done(outf) or p.poll() is not None:
                     break
-                last = sz
-            if p.poll() is not None and os.path.exists(png_path):
-                break
-            time.sleep(0.5)
-    finally:
-        if p.poll() is None:
-            try:
-                os.killpg(p.pid, signal.SIGTERM)
-            except Exception:
-                p.terminate()
-            try:
-                p.wait(5)
-            except Exception:
-                p.kill()
-        shutil.rmtree(prof, ignore_errors=True)
+                time.sleep(0.3)
+        finally:
+            if p.poll() is None:
+                try:
+                    os.killpg(p.pid, signal.SIGTERM)
+                except Exception:
+                    p.terminate()
+                try:
+                    p.wait(5)
+                except Exception:
+                    p.kill()
+    out = open(outf, encoding='utf8', errors='replace').read()
+    shutil.rmtree(prof, ignore_errors=True)
+    return out
+
+
+def render_png(html_path, png_path, browser, size=(1800, 1400), timeout=90):
+    """① --dump-dom 으로 mermaid SVG 가 실제로 생겼는지 본다 — 없으면 PNG 를 저장하지 않는다(v16.16) ② headless 로 찍고 여백을 자른다(2배).
+    반환 (성공, 알림)."""
+    if os.path.exists(png_path):
+        os.remove(png_path)
+    dom = _browser_pass(browser, ['--virtual-time-budget=15000', '--dump-dom'], html_path,
+                        lambda f: '</html>' in open(f, encoding='utf8', errors='replace').read(), timeout)
+    ok, why = _mermaid_status(dom)
+    if not ok:
+        return False, 'mermaid 가 그리지 못했다(%s) — npm install mermaid@11 또는 --mermaid-js 로 mermaid.min.js 를 준다. PNG 는 만들지 않았다' % why
+    last = [-1]
+
+    def shot_done(_f):
+        if os.path.exists(png_path):
+            sz = os.path.getsize(png_path)
+            if sz and sz == last[0]:
+                return True
+            last[0] = sz
+        return False
+    _browser_pass(browser, ['--force-device-scale-factor=2', '--window-size=%d,%d' % size, '--virtual-time-budget=15000',
+                            '--screenshot=%s' % png_path], html_path, shot_done, timeout)
     if not os.path.exists(png_path) or not os.path.getsize(png_path):
         return False, 'PNG 를 만들지 못했다(%d초) — %s 를 브라우저로 열어 저장한다' % (timeout, html_path)
     note = ''
@@ -2402,7 +2464,6 @@ def render_png(html_path, png_path, browser, size=(1800, 1400), timeout=90):
     except Exception as e:
         note = '[참고] 여백을 자르지 못했다(%s)' % type(e).__name__
     return True, note
-
 
 _CLAIMS_ONLY = ('mapgraph', 'gaps', 'impact', 'mapdraw', 'mapreport', 'scaffold', 'add', 'link')
 

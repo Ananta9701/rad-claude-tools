@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.15
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.16
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -247,7 +247,8 @@ mapgraph: `kind: 증례` 라 논문용 [참고]는 나오지 않고, 배제된 �
 - 받침 = premise·support·context 로 **2단계**(`--up N`). 한계(caveat)·반박(rebuttal) = **선택한 주장과 받침 1단계에 직접 달린 것**. 영향 = `impact` 하류(강도 0.25 이상).
 - 상자 글: **선택한 주장은 문장 전문**(줄바꿈), 나머지는 **앞 40자**. `--ids` 면 id 만. 구연(`--oral … --author …`)이면 화면 자리를 붙이고(`--pptx 덱` 을 주면 "화면 N"),
   무대 밖 받침은 흐린 점선 "(화면에 없음)".
-- 범례(쉬운 말): **선택한 주장 · 핵심 근거 · 한계 · 반박 · 영향받는 결론 · 화면에 없음** — 그림에 있는 것만(반박 선이 없으면 "반박" 도 뺀다).
+- 범례(쉬운 말): **선택한 주장 · 핵심 근거 · 배경 · 한계 · 반박 · 영향받는 결론 · 화면에 없음** — 그림에 있는 것만(반박 선이 없으면 "반박" 도 뺀다).
+  v16.16: **배경** = role `background` 이거나 context 간선으로만 닿은 받침(회색 — 핵심 근거와 나눔). 무대 밖 받침은 **종류 색을 흐리게**(점선) — 범례 색과 맞다.
 
 ```bash
 python3 claim_graph.py focus <주장 id> --claims <저자 claims> -o 초점.md --png 초점.png            # 원고 기준(이메일)
@@ -259,6 +260,9 @@ python3 claim_graph.py focus <주장 id> --oral <덧붙임> --author <저자 cla
   ④ 마지막에 CDN(jsdelivr — claude.ai 컨테이너에서는 막혀 있다).
 - **브라우저 찾는 순서**: 환경변수 `CLAIM_GRAPH_BROWSER`(`none` 이면 끔) → macOS Chrome·Chromium → `/opt/pw-browsers/chromium-*/chrome-linux/chrome`(claude.ai 컨테이너) →
   PATH 의 `chromium`·`google-chrome`. **없으면 md·html 은 남기고 "[!] 브라우저를 찾지 못해 PNG 를 만들지 못했다" — 종료 코드 1**(조용히 넘어가지 않는다).
+- **v16.16 (부관리자 09-30 [결함])**: 찍기 전에 같은 페이지를 `--dump-dom` 으로 읽어 **mermaid SVG 가 실제로 생겼는지** 본다. 없으면(파일·주소를 받지 못함 ·
+  mermaid 오류 · 제한 시간) **PNG 를 저장하지 않고** `[!] mermaid 가 그리지 못했다(…) — npm install mermaid@11 또는 --mermaid-js` · 종료 코드 1.
+  전에는 CDN 이 막힌 곳(claude.ai 컨테이너 jsdelivr 403)에서 mermaid 글자가 찍힌 PNG 를 저장하고 0 으로 끝났다.
 - 찍은 뒤 끝나지 않는 Chrome 이 있어(09-30 Mac) PNG 가 생기면 그 임시 프로필의 브라우저만 끈다. 그림이 창보다 크면 [참고] "잘렸을 수 있다 — --size".
 - PNG 에는 **원고 문장**이 들어간다 — 이메일에 붙이는 용도이며 저장소·공개 파일에 두지 않는다.
 
