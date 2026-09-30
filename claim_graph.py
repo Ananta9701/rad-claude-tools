@@ -33,6 +33,7 @@ claim_graph.py — 문서(발표·원고·심사 회신)의 주장 의존 그래
           kind 문헌|교과서|덱|원고|기타, what = DOI·책 폴더·파일, at = 쪽 표지 [p.인쇄 · PDF N]·절 표지 [§ …]·slide@sldId.
           verdict(요소별 판정) 부합|부분|근거 없음|반대 방향. mapfreeze/mapstale --sources 폴더 로 원문 바뀜을 본다
     supersedes: {statement, retracted} 또는 그 목록(v16 — 범위를 좁힌 이력, 마지막이 가장 최근)
+    exploratory: true|false, exploratory_reason: 문장   (v16.17, 선택 — 탐색적 주장. main 의 premise 사슬에 있으면 사유 없이는 [필수])
 
 원리는 소프트웨어에서 가져왔다: 빌드 시스템의 의존 DAG + 내용 해시(바뀐 것과 하류만
 다시), 요구사항 추적의 suspect link(상류가 바뀌면 사람이 풀 때까지 의심), 스프레드시트의
@@ -46,7 +47,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.16'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.17'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -329,6 +330,38 @@ def _sccs(claims):
     return out
 
 
+def _exploratory_paths(claims):
+    """v16.17 (사용자 09-30 ③): 탐색적 주장(exploratory true, 철회·배제 아님)마다 (단계, [main]).
+    단계 chain = main 에서 premise 만 따라 닿음(main 자신 포함) · mixed = premise·support 로만 닿음 · off = 그 밖."""
+    by = {c['id']: c for c in claims}
+    edges = _edges(claims)
+    live = lambda c: c.get('status') not in ('superseded', 'excluded')
+
+    def up_from(m, types):
+        seen, st = set(), [m]
+        while st:
+            v = st.pop()
+            if v in seen or v not in by:
+                continue
+            seen.add(v)
+            st += [u for u, t, _ in edges.get(v, []) if t in types]
+        return seen
+    mains = [c['id'] for c in claims if c.get('role') == 'main' and live(c)]
+    chain = {m: up_from(m, ('premise',)) for m in mains}
+    mixed = {m: up_from(m, ('premise', 'support')) for m in mains}
+    out = {}
+    for c in claims:
+        if c.get('exploratory') is not True or not live(c):
+            continue
+        ms = [m for m in mains if c['id'] in chain[m]]
+        if ms:
+            out[c['id']] = ('chain', ms)
+            continue
+        ms = [m for m in mains if c['id'] in mixed[m]]
+        out[c['id']] = ('mixed', ms) if ms else ('off', [])
+    return out
+
+
 def mapgraph(claims, stream=sys.stdout, sources=None, kind=None):
     """구조 검사 + 위상 순서. 반환 (문제목록, 순서). sources(v16.5) = 문헌 보관소 — 주면 문헌 근거가 보관소에 있는지·판정이 있는지도.
     kind(v16.6) = 그래프 맨 위 kind. '증례' 면 논문용 [참고](forbidden 인데 supersedes 없음 · evidence 인데 caveat 없음 · main 개수)를 끈다."""
@@ -357,6 +390,10 @@ def mapgraph(claims, stream=sys.stdout, sources=None, kind=None):
                 if abs(float(e['weight']) - EDGE_DEFAULT_WEIGHT.get(typ, 0.5)) > 1e-9:
                     problems.append('[참고] %s -> %s: weight %.2f 는 type 기본값(%.1f)이 아님 — 근거 강도는 confidence 로 적는다'
                                     % (c['id'], e.get('id'), float(e['weight']), EDGE_DEFAULT_WEIGHT.get(typ, 0.5)))
+        if 'exploratory' in c and not isinstance(c['exploratory'], bool):   # v16.17
+            problems.append('%s: exploratory 는 true/false 여야 함 (지금 %r)' % (c['id'], c['exploratory']))
+        if c.get('exploratory_reason') and c.get('exploratory') is not True:
+            problems.append('[참고] %s: exploratory_reason 이 있는데 exploratory 가 true 가 아님 — 표지를 빠뜨렸는지' % c['id'])
         if c.get('role') and c['role'] not in CLAIM_ROLES:
             problems.append('%s: role "%s" 는 %s 중 하나여야 함'
                             % (c['id'], c['role'], '/'.join(CLAIM_ROLES)))
@@ -414,6 +451,17 @@ def mapgraph(claims, stream=sys.stdout, sources=None, kind=None):
                 weak.append((w, c['id'], up, typ))
     for w, cid, up, typ in sorted(weak, reverse=True):
         problems.append('[참고] 약한 고리: %s 가 기대는 %s 는 confidence=low (%s %.1f)' % (cid, up, typ, w))
+    # v16.17 (사용자 09-30 ③): 탐색적 주장이 main 의 전제(premise) 사슬에 있으면 [필수] — exploratory_reason 을 적으면 [참고] 로 내리고 사유를 보인다
+    for cid, (lv, ms) in _exploratory_paths(claims).items():
+        why = by_id[cid].get('exploratory_reason')
+        if lv == 'chain' and not why:
+            problems.append('%s: 탐색적 주장(exploratory)이 main(%s) 의 전제(premise) 사슬에 있다 — 결론을 받치게 두려면 exploratory_reason 에 '
+                            '까닭을 적고, 아니면 사슬에서 뺀다(간선을 support 로 내리거나 끊는다)' % (cid, ', '.join(ms)))
+        elif lv == 'chain':
+            problems.append('[참고] %s: 탐색적 주장이 main(%s) 의 전제 사슬에 있음 — 사유: %s' % (cid, ', '.join(ms), why))
+        elif lv == 'mixed':
+            problems.append('[참고] %s: 탐색적 주장이 support 가 섞인 경로로 main(%s) 을 받친다%s'
+                            % (cid, ', '.join(ms), (' — 사유: %s' % why) if why else ''))
     alone = [c['id'] for c in claims if not edges[c['id']] and not rev_any.get(c['id'])]
     if len(claims) > 1 and not any(edges.values()):   # v16.2 (사용자 09-29): 간선이 하나도 없는 그래프(발표 09-20 판 등)는 목록 대신 한 줄
         fo = ['premise 없음 %d' % folded['premise']] * bool(folded['premise']) + ['caveat 없음 %d' % folded['caveat']] * bool(folded['caveat'])
@@ -647,6 +695,101 @@ _ROLE_SHAPE = {'main': ('{{', '}}'), 'evidence': ('[', ']'), 'claim': ('(', ')')
 _EDGE_ARROW = {'premise': '==>', 'support': '-->', 'context': '-.->', 'caveat': '-. 한계 .->', 'rebuttal': '-- 반박 --x'}
 
 
+SUGGEST_MIN_SHARED = 2
+SUGGEST_MIN_CAVEAT = 3
+SUGGEST_NO_MAIN_CAVEAT = 'main 에 직접 걸린 한계 0개 — 아래 공통 한계 중 main 에 걸 것을 고른다'
+
+
+def suggest(claims, stream=sys.stdout, kind=None, min_shared=SUGGEST_MIN_SHARED, min_caveat=SUGGEST_MIN_CAVEAT):
+    """v16.17 (사용자 09-30 ③): 새 주장 후보 — [참고]만, claims 는 바꾸지 않는다. 철회·배제한 주장은 뺀다.
+    규칙 1 같은 근거(premise·support 로 기대는 주장, 또는 같은 문헌 DOI — 따로 센다)를 min_shared 개 이상 함께 쓰는데 어느 방향으로도
+    이어지지 않은 주장(같은 근거 묶음이면 한 줄로). 증례 그래프(kind 증례)는 끈다 — 감별끼리 같은 소견을 나눠 쓰는 것이 정상.
+    규칙 2 어디에도 안 쓰인 근거(role evidence 인데 기대는 주장이 없음 — rebuttal 로 쓰인 소견도 쓰임).
+    규칙 3 min_caveat 개 이상 주장에 걸린 공통 한계. main 에 직접 걸린 한계가 0 이면 머리 한 줄을 먼저(사용자 09-30).
+    덧줄: main 전제 사슬(main 제외)의 절반 넘게 걸렸는데 main 에는 없는 한계.
+    반환 {'shared': [{ids, claims, dois}], 'unused': [{id, alone}], 'caveats': [{id, n, on}], 'half': [{id, main, on, of}], 'no_main_caveat': [main]}."""
+    live = [c for c in claims if c.get('status') not in ('superseded', 'excluded')]
+    lid = {c['id'] for c in live}
+    edges = _edges(claims)
+    rev = _dependents(claims)
+    order = {c['id']: k for k, c in enumerate(claims)}
+
+    def reach(a, b):
+        seen, st = set(), [a]
+        while st:
+            v = st.pop()
+            if v == b:
+                return True
+            if v in seen:
+                continue
+            seen.add(v)
+            st += [u for u, _, _ in edges.get(v, [])]
+        return False
+    ups = {c['id']: {u for u, t, _ in edges[c['id']] if t in ('premise', 'support') and u in lid} for c in live}
+    dois = {c['id']: {x['what'] for x in (c.get('sources') or []) if isinstance(x, dict) and x.get('kind') == '문헌' and x.get('what')} for c in live}
+    case = kind in CASE_KINDS
+    groups = {}
+    if not case:
+        for i, a in enumerate(live):
+            for b in live[i + 1:]:
+                sc = ups[a['id']] & ups[b['id']]; sd = dois[a['id']] & dois[b['id']]
+                sc = sc if len(sc) >= min_shared else set(); sd = sd if len(sd) >= min_shared else set()
+                if not (sc or sd) or reach(a['id'], b['id']) or reach(b['id'], a['id']):
+                    continue
+                groups.setdefault((frozenset(sc), frozenset(sd)), set()).update((a['id'], b['id']))
+    shared = [{'ids': sorted(m, key=order.get), 'claims': sorted(k[0], key=order.get), 'dois': sorted(k[1])} for k, m in groups.items()]
+    shared.sort(key=lambda x: order[x['ids'][0]])
+    unused = [{'id': c['id'], 'alone': not edges[c['id']]} for c in live if c.get('role') == 'evidence' and not rev.get(c['id'])]
+    cav = {}
+    for c in live:
+        for u, t, _ in edges[c['id']]:
+            if t == 'caveat' and u in lid:
+                cav.setdefault(u, []).append(c['id'])
+    caveats = [{'id': k, 'n': len(v), 'on': v} for k, v in sorted(cav.items(), key=lambda kv: (-len(kv[1]), order[kv[0]])) if len(v) >= min_caveat]
+    mains = [c['id'] for c in live if c.get('role') == 'main']
+    direct = {m: {u for u, t, _ in edges[m] if t == 'caveat'} for m in mains}
+    no_main = [m for m in mains if not direct[m]]
+    half = []
+    for m in mains:
+        seen, st = set(), [m]
+        while st:
+            v = st.pop()
+            if v in seen or v not in lid:
+                continue
+            seen.add(v)
+            st += [u for u, t, _ in edges.get(v, []) if t == 'premise']
+        chain = seen - {m}
+        for k, on in cav.items():
+            n = len(chain & set(on))
+            if chain and n * 2 > len(chain) and k not in direct[m]:
+                half.append({'id': k, 'main': m, 'on': n, 'of': len(chain)})
+    P = lambda t: print(t, file=stream)
+    P('=== 새 주장 후보 (suggest) — [참고]만, claims 는 바꾸지 않는다 ===')
+    if case:
+        P('규칙 1 — 증례 그래프라 끔(감별끼리 같은 소견을 나눠 쓰는 것이 정상)')
+    else:
+        P('규칙 1 — 같은 근거를 %d개 이상 함께 쓰는데 안 이어진 주장: %d줄' % (min_shared, len(shared)))
+    for x in shared:
+        what = []
+        if x['claims']:
+            what.append('함께 기대는 주장 %s' % ', '.join(x['claims']))
+        if x['dois']:
+            what.append('함께 쓰는 문헌 %s' % ', '.join(x['dois']))
+        P('  [참고] %s — %s → 같은 뜻이면 합침 · 한쪽이 다른 쪽에 기댐 · 둘을 묶는 상위 주장' % (', '.join(x['ids']), ' · '.join(what)))
+    P('규칙 2 — 어디에도 안 쓰인 근거(evidence): %d개' % len(unused))
+    for x in unused:
+        P('  [참고] %s — 기대는 주장 없음%s → 새 주장 후보 또는 빼기' % (x['id'], '(외톨이 — mapgraph 에도 나옴)' if x['alone'] else ''))
+    P('규칙 3 — %d개 이상 주장에 걸린 공통 한계: %d개' % (min_caveat, len(caveats)))
+    if caveats and no_main:
+        P('  [참고] ' + (SUGGEST_NO_MAIN_CAVEAT if len(mains) == 1 else '%s — %s' % (', '.join(no_main), SUGGEST_NO_MAIN_CAVEAT)))
+    for x in caveats:
+        P('  [참고] %s — 걸린 주장 %d개(%s) → main 에 직접 걸기(Limitations 첫 문단)'
+          % (x['id'], x['n'], ', '.join(x['on'][:6]) + (' …' if x['n'] > 6 else '')))
+    for x in half:
+        P('  [참고] %s — main(%s) 전제 사슬 %d개 중 %d개에 걸렸는데 main 에는 없음' % (x['id'], x['main'], x['of'], x['on']))
+    return {'shared': shared, 'unused': unused, 'caveats': caveats, 'half': half, 'no_main_caveat': no_main}
+
+
 def _mm(t):
     return (t or '').replace('"', '#quot;').replace('<', '#lt;').replace('>', '#gt;')
 
@@ -704,6 +847,8 @@ def _mapdraw_compact(claims, text=False):
             lab.append('(철회)')
         if c.get('status') == 'excluded':
             lab.append('배제')
+        if c.get('exploratory') is True:            # v16.17: 탐색적 주장 — 글자만(색은 더하지 않는다)
+            lab.append('탐색')
         node_lines[cid] = '%s%s"%s"%s' % (nid[cid], a, '<br/>'.join(_mm(x) for x in lab), b)
     for g, members in groups.items():
         L.append('  subgraph %s["%s"]' % (gid[g], _mm(g)))
@@ -732,6 +877,8 @@ def _mapdraw_compact(claims, text=False):
     L += ['```', '']
     if exc:
         L.append('흰 상자 + 점선 테두리 + "배제" = 배제된 감별(status excluded) — 배제 근거에서 "반박"(x) 선이 들어온다.')
+    if any(by_id[cid].get('exploratory') is True for cid in linked):
+        L.append('"탐색" = 탐색적 주장(exploratory) — main 의 전제(premise) 사슬에 있으면 사유 없이는 mapgraph [필수].')
     alone = [cid for cid in by_id if cid not in linked and cid not in folded]
     if folded:
         L.append('접은 caveat %d개(상자에 "한계 N" 으로): %s' % (len(folded), ', '.join(sorted(folded))))
@@ -739,8 +886,8 @@ def _mapdraw_compact(claims, text=False):
         L += ['', '그림에 없는 주장 — 그릴 간선이 없다 %d개:' % len(alone)]
         for cid in alone:
             c = by_id[cid]
-            L.append('- `%s` (%s%s)%s' % (cid, _ROLE_KO.get(c.get('role'), c.get('role') or '역할 없음'),
-                                          ', 한계 %d' % ncav[cid] if ncav.get(cid) else '',
+            L.append('- `%s` (%s%s%s)%s' % (cid, _ROLE_KO.get(c.get('role'), c.get('role') or '역할 없음'),
+                                          ', 한계 %d' % ncav[cid] if ncav.get(cid) else '', ', 탐색' if c.get('exploratory') is True else '',
                                           (' — ' + c['statement'][:60]) if text and c.get('statement') else ''))
     return '\n'.join(L) + '\n'
 
@@ -782,6 +929,8 @@ def mapdraw(claims, changed=None, text=False, stream=sys.stdout, all_edges=False
             lab.append('(철회)')
         if c.get('status') == 'excluded':
             lab.append('배제')
+        if c.get('exploratory') is True:            # v16.17: 탐색적 주장 — 글자만(색은 더하지 않는다)
+            lab.append('탐색')
         L.append('  %s%s"%s"%s' % (nid[cid], a, '<br/>'.join(_mm(x) for x in lab), b))   # 줄바꿈 <br/> 은 두고 글만 이스케이프
     for cid in by_id:
         if cid not in keep:
@@ -913,7 +1062,7 @@ def mapcheck(resolve, claims, stream=sys.stdout, nums=False, nums_sep=None):
     if problems:
         for p in problems:
             nt = notes.get(p.split(':', 1)[0])        # 구연 덧붙임의 note — 왜 [!] 인지 바로 보이게
-            print('  [!] %s%s' % (p, ('  — note: %s' % nt) if nt else ''), file=stream)
+            print('  [!] %s%s' % (p, (' — note: %s' % nt) if nt else ''), file=stream)
     else:
         print('  모든 주장의 자리에 찾는 표현이 있음 — 주장·evidence 가 최신인지는 보지 않는다(mapstale·판 올림 때 evidence 갱신)', file=stream)   # v16.9 (저자 4)
     return problems, matrix
@@ -948,6 +1097,15 @@ def mapreport(claims, stream=sys.stdout):
                 print('      원문: %s %s %s%s%s' % (x.get('kind', ''), x.get('what', ''), x.get('at', ''),
                                                  (' · ' + x['element']) if x.get('element') else '',
                                                  (' → ' + x['verdict']) if x.get('verdict') else ''), file=stream)
+    ex = _exploratory_paths(claims)
+    if ex:                                        # v16.17 (사용자 09-30 ③): 리뷰어 보고 — 탐색적 주장과 사유
+        by = {c['id']: c for c in claims}
+        print('\n탐색적 주장 (exploratory) %d개:' % len(ex), file=stream)
+        for cid, (lv, ms) in ex.items():
+            why = by[cid].get('exploratory_reason')
+            where = {'chain': 'main(%s) 의 전제 사슬(premise)' % ', '.join(ms), 'mixed': 'support 가 섞인 경로로 main(%s) 을 받침' % ', '.join(ms),
+                     'off': 'main 과 이어지지 않음'}[lv]
+            print('  [%s] %s · %s' % (cid, where, ('사유: ' + why) if why else ('사유 없음 — mapgraph [필수]' if lv == 'chain' else '사유 없음')), file=stream)
     return sites
 
 
@@ -1121,7 +1279,9 @@ def mapfreeze(resolve, claims, at=None, sources=None, stream=None):
                          'evidence': _fingerprint(c.get('evidence', '') + '|' + c.get('statement', '')),
                          # v15.5: keys 만 바꾼 그래프(mapstale 0 · mapcheck 실패)를 잡기 위한 별도 해시.
                          # 구판 freeze 에는 이 키가 없고, 없으면 mapstale 이 검사하지 않는다(기존 그래프 무영향)
-                         'keys': _fingerprint('|'.join(c.get('keys', [])))}
+                         'keys': _fingerprint('|'.join(c.get('keys', []))),
+                         # v16.17 (사용자 09-30): 탐색적 표지 — 지우면(true→false·칸 삭제) mapstale [변경]. 없는 옛 기록은 보지 않는다
+                         'exploratory': c.get('exploratory') is True}
         if src_rec.get(c['id']):
             c['verified']['sources'] = src_rec[c['id']]
     if src_skip and stream is not None:
@@ -1136,6 +1296,7 @@ def mapstale(resolve, claims, stream=sys.stdout, sources=None):
     (하류 전파 없음, '근거 없음'·'부분' 판정만 다시 볼 것), 원 파일이 다르거나 sha 가 없는데 본문이 다르면 [변경]."""
     changed, unverified, detail = [], [], []
     fmt_only, converted, conv_recheck = [], [], []
+    ex_added = []
     for c in claims:
         v = c.get('verified')
         if not v:
@@ -1144,6 +1305,12 @@ def mapstale(resolve, claims, stream=sys.stdout, sources=None):
             changed.append(c['id']); detail.append('%s: statement/evidence 가 바뀜' % c['id']); continue
         if 'keys' in v and v['keys'] != _fingerprint('|'.join(c.get('keys', []))):
             changed.append(c['id']); detail.append('%s: keys 가 바뀜 (freeze 뒤 편집)' % c['id']); continue
+        if 'exploratory' in v and v['exploratory'] and c.get('exploratory') is not True:
+            # v16.17 (사용자 09-30): 표지를 지우는 것은 전제 사슬 [필수] 를 사유 없이 넘는 가장 쉬운 길 — confidence 와 달리 [변경]
+            changed.append(c['id']); detail.append('%s: 탐색적 표지(exploratory)가 지워짐 (true → %s) — 까닭을 확인하고 다시 freeze'
+                                                   % (c['id'], '칸 삭제' if 'exploratory' not in c else repr(c['exploratory']).lower())); continue
+        if 'exploratory' in v and not v['exploratory'] and c.get('exploratory') is True:
+            ex_added.append(c['id'])
         for site in c.get('sites', []):
             try:
                 now = _fingerprint(resolve(site))
@@ -1186,13 +1353,15 @@ def mapstale(resolve, claims, stream=sys.stdout, sources=None):
         print('  [!] 아직 검증 기록 없음: %s' % ', '.join(unverified), file=stream)
     for d in detail:
         print('  [변경] %s' % d, file=stream)
+    for cid in ex_added:
+        print('  [참고] %s: 탐색적 표지가 새로 붙음(false → true) — 하류로 번지지 않는다, mapfreeze 로 다시 기록' % cid, file=stream)
     if fmt_only:
         print('  [같음] 근거 원문 %d곳은 파일은 바뀌었으나 그 자리 본문은 그대로(쪽 표지·머리말·다른 쪽) — 할 일 없음' % len(fmt_only), file=stream)
     if converted:
         print('  [변환] 근거 원문 %d곳은 원 파일(PDF·XML)이 같고 md 변환만 바뀜 — 하류로 번지지 않는다' % len(converted), file=stream)
         for r in conv_recheck:
             print('    다시 볼 것(전에 없던 글이 생겼을 수 있음): %s' % r, file=stream)
-    extra = {'format_only': fmt_only, 'converted': converted, 'recheck': conv_recheck}
+    extra = {'format_only': fmt_only, 'converted': converted, 'recheck': conv_recheck, 'exploratory_added': ex_added}
     if not changed and not unverified:
         print('  검증 이후 바뀐 것 없음', file=stream)
         return dict({'changed': [], 'suspect': [], 'unverified': []}, **extra)
@@ -1500,7 +1669,7 @@ def link_claims(claims, frm, to, typ='premise'):
     deps.append(_edge(to, typ))
 
 
-def add_claim(claims, cid, statement, role=None, evidence=None, sites=(), keys=(), deps=()):
+def add_claim(claims, cid, statement, role=None, evidence=None, sites=(), keys=(), deps=(), exploratory=False):
     """v16.9 (저자 3c): 주장 하나를 더한다. deps = [(id, type)] — weight 는 type 기본값."""
     if any(c['id'] == cid for c in claims):
         raise ValueError('주장 %s 가 이미 있다' % cid)
@@ -1514,6 +1683,8 @@ def add_claim(claims, cid, statement, role=None, evidence=None, sites=(), keys=(
     if evidence:
         c['evidence'] = evidence
     c.update({'sites': list(sites), 'keys': list(keys), 'depends_on': [_edge(d, typ) for d, typ in deps]})
+    if exploratory:                               # v16.17: suggest 후보를 주장으로 적을 때 — 사유(exploratory_reason)는 사람이 파일에
+        c['exploratory'] = True
     claims.append(c)
     return c
 
@@ -2256,6 +2427,8 @@ def _focus_text(c, full, ids, screen):
             t = '<br/>'.join(lines)
         else:
             t = st if len(st) <= 40 else st[:40].rstrip() + '…'
+    if c.get('exploratory') is True:              # v16.17: 탐색적 주장 — 글자만
+        t += '<br/>(탐색)'
     if c.get('offstage'):
         t += '<br/>(화면에 없음)'
     elif c.get('sites') and screen is not False:
@@ -2313,6 +2486,8 @@ def focus_legend(fg):
     out = [(w, _FOCUS_STYLE[k]) for k, w in _FOCUS_WORD if k in have]
     if any(c.get('offstage') for c in fg['claims']):
         out.append(('화면에 없음', _FOCUS_STYLE['offstage']))
+    if any(c.get('exploratory') is True for c in fg['claims']):
+        out.append(('(탐색) = 탐색적 주장', 'fill:#ffffff,stroke:#999999'))
     return out
 
 
@@ -2465,7 +2640,7 @@ def render_png(html_path, png_path, browser, size=(1800, 1400), timeout=90):
         note = '[참고] 여백을 자르지 못했다(%s)' % type(e).__name__
     return True, note
 
-_CLAIMS_ONLY = ('mapgraph', 'gaps', 'impact', 'mapdraw', 'mapreport', 'scaffold', 'add', 'link')
+_CLAIMS_ONLY = ('mapgraph', 'gaps', 'impact', 'mapdraw', 'mapreport', 'scaffold', 'add', 'link', 'suggest')
 
 
 def main():
@@ -2478,6 +2653,10 @@ def main():
     gp.add_argument('--claims', default=None); gp.add_argument('-o', required=True)
     gp.add_argument('--to-instr', default=None, metavar='작업표.md', help='채운 작업표를 literature 검증지시로')
     gp.add_argument('--name', default=None, help='원고 이름(검증지시의 "> 원고:" 줄) — 없으면 claims 의 doc')
+    sg = sub.add_parser('suggest', help='새 주장 후보 — [참고]만, claims 는 바꾸지 않는다 (v16.17)')
+    sg.add_argument('--claims', required=True); sg.add_argument('-o', default=None, help='같은 내용을 md 로도')
+    sg.add_argument('--min-shared', type=int, default=SUGGEST_MIN_SHARED, help='규칙 1 — 함께 쓰는 근거 수(기본 %d)' % SUGGEST_MIN_SHARED)
+    sg.add_argument('--min-caveat', type=int, default=SUGGEST_MIN_CAVEAT, help='규칙 3 — 한계가 걸린 주장 수(기본 %d)' % SUGGEST_MIN_CAVEAT)
     i = sub.add_parser('impact'); i.add_argument('--claims', default=None); i.add_argument('ids', nargs='+')
     i.add_argument('--sites', action='store_true', help='자리 목록만 한 줄에 하나씩 (v15.5, 저자 v48 목록 검증용)')
     dr = sub.add_parser('mapdraw', help='관계도 Mermaid 글(md) — 전체 또는 --impact 주장 경로 (v16)')
@@ -2527,6 +2706,7 @@ def main():
     ad.add_argument('--role', choices=CLAIM_ROLES, default=None); ad.add_argument('--evidence', default=None)
     ad.add_argument('--site', action='append', default=[]); ad.add_argument('--key', action='append', default=[])
     ad.add_argument('--dep', action='append', default=[], metavar='ID[:type]', help='이 주장이 기대는 주장(type 기본 premise). 여러 번')
+    ad.add_argument('--exploratory', action='store_true', help='탐색적 주장 표지 — 사유(exploratory_reason)는 파일에 (v16.17)')
     ad.add_argument('-o', required=True)
     lk = sub.add_parser('link', help='간선 하나 — FROM 이 TO 에 기댄다, weight 는 type 기본값 (v16.9)')
     lk.add_argument('--claims', required=True); lk.add_argument('frm', metavar='FROM'); lk.add_argument('to', metavar='TO')
@@ -2550,7 +2730,7 @@ def main():
                 bad = [t for _, t in deps if t not in EDGE_TYPES]
                 if bad:
                     raise ValueError('간선 종류 %s — %s 중 하나' % (', '.join(bad), '/'.join(EDGE_TYPES)))
-                add_claim(cl, a.id, a.statement, a.role, a.evidence, a.site, a.key, deps)
+                add_claim(cl, a.id, a.statement, a.role, a.evidence, a.site, a.key, deps, exploratory=a.exploratory)
             else:
                 link_claims(cl, a.frm, a.to, a.type)
         except ValueError as e:
@@ -2669,6 +2849,17 @@ def main():
         print('저장: %s' % a.o)
     elif a.cmd == 'mapreport':
         mapreport(load_claims(a.claims))
+    elif a.cmd == 'suggest':
+        meta_, cl_ = load_claims_full(a.claims)
+        buf = io.StringIO()
+        suggest(cl_, stream=buf, kind=meta_.get('kind'), min_shared=a.min_shared, min_caveat=a.min_caveat)
+        print(buf.getvalue(), end='')
+        if a.o:
+            with open(a.o, 'w', encoding='utf8') as f:
+                f.write('# 새 주장 후보 — %s\n\n> claim_graph.py v%s suggest. [참고]만 — 주장으로 적을 때는 `add --exploratory`(CLAIM_GRAPH §3-7). '
+                        '주장 문장이 든 내용 회신이다.\n\n```\n%s```\n' % (meta_.get('doc') or meta_.get('deck') or os.path.basename(a.claims), __version__, buf.getvalue()))
+            print('저장: %s' % a.o)
+        sys.exit(0)
     elif a.cmd == 'scaffold':
         scaffold(load_claims(a.claims))
     elif a.cmd == 'mapdiff':

@@ -1,4 +1,6 @@
-# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.50)
+# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.51)
+
+> v16.51 (발표 도구회신 09-30 keys_missing 확인): `mapfreeze --oral`·`mapstale --oral` 의 [!] 줄과 `mapcheck` 의 `— note:` 앞 빈칸을 한 칸으로(모양만). claim_graph 16.17 의 탐색적 표지(`exploratory`)는 덱 그래프의 `mapgraph`·`mapcheck` 에도 그대로 걸린다(CLAIM_GRAPH §3-7).
 
 > v16.50 (발표 도구회신 09-30 O1·O2): 구연 `mapfreeze --oral` 은 화면 keys 가 없는 자리도 기록하되 덧붙임 `use[id].keys_missing: true` 와 [!] 한 줄, `mapstale --oral` 은 그 표시를 [!] 로 다시 알린다. `mapcheck --oral` 의 [!] 줄에 `use[id].note` 를 붙인다(CLAIM_GRAPH §3-5).
 

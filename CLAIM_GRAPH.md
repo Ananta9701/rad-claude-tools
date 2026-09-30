@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.16
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.17
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -82,6 +82,7 @@
 | `depends_on` | **"내가 저 주장에 기댄다"** 방향. `type` premise 1.0 / support 0.7 / caveat 0.5 / rebuttal 0.5(v16) / context 0.3. **caveat 도 같은 방향**: 한정되는 주장(evidence·claim)이 caveat 주장을 자기 depends_on 에 적는다 — "이 한계 아래에서 성립". v13 의 덱 그래프는 반대로 적혀 있어 v14 에서 고쳤다 |
 | `confidence` | `high` 이 자료로 재현됨 / `mid` 자료가 방향은 지지 (기본값) / `low` 미검정·외부 근거·미해결. **주장 자체의 근거 강도.** 덱에서는 high=원전 절·문단 + 본 증례 영상 확인 / mid=원전 확인 / low=미확인·문헌 갈림 |
 | `anchor` | 순환에 속한 주장 중 하나. 검토의 시작점=끝점 |
+| `exploratory` · `exploratory_reason` | **v16.17** 탐색적 주장(가설을 만드는 주장 — 사후 분석, `suggest` 에서 나온 새 주장) `true`/`false` · 그래도 결론을 받치게 두는 까닭. §3-7 |
 | `verified` | `mapfreeze` 가 쓴다. 손으로 쓰지 않는다 |
 
 **v15: weight 는 type 기본값으로 고정한다.** premise 1.0 / support 0.7 / caveat 0.5 / context 0.3 — 손으로 0.9·0.6 을
@@ -274,6 +275,34 @@ cd /tmp && npm install mermaid@11 && python3 ~/rct/claim_graph.py focus <id> --c
 
 (`/tmp` 에서 돌리면 `/tmp/node_modules/mermaid/…` 를 찾는다. 다른 곳이면 `--mermaid-js /tmp/node_modules/mermaid/dist/mermaid.min.js`.) 출력의 `mermaid: … (npm node_modules) · 브라우저: …` 줄로 무엇을 썼는지 본다.
 
+## 3-7. 탐색적 표지 `exploratory` · 새 주장 후보 `suggest` (v16.17, 사용자 09-30)
+
+그래프에서 새 주장 후보를 **[참고]로만** 보이고(`suggest`), 사람이 그것을 주장으로 적을 때 `exploratory: true` 를 단다.
+탐색적 주장이 **결론(main)을 전제로 받치면 막는다** — 탐색 분석이 주 결론의 근거로 슬그머니 올라가는 것을 잡는다.
+
+```json
+{"id": "sub-x", "role": "evidence", "statement": "…", "exploratory": true, "exploratory_reason": "사전 계획 분석 — Methods 절"}
+```
+
+| 어디 | 무엇 |
+|---|---|
+| `mapgraph` | 탐색적 주장이 **main 의 전제 사슬**(main 에서 **premise 만** 따라 닿음, main 자신 포함 — 증례처럼 main 이 여럿이면 main 마다)에 있으면 **[필수]**. `exploratory_reason` 을 적으면 **[참고]** 로 내리고 사유를 보인다. support 가 섞인 경로로만 닿으면 [참고]. 이어지지 않으면 말하지 않는다. 철회·배제한 주장은 보지 않는다. `mapcheck`·`oral check`(구연 합친 그래프 — 저자 표지가 따라온다)도 같은 [필수] 로 종료 코드 1 |
+| `mapreport` | 맨 끝 **"탐색적 주장"** 절 — 주장마다 사슬 안(premise) · support 경로 · 이어지지 않음, 그리고 사유(리뷰어 보고) |
+| `mapfreeze`·`mapstale` | freeze 가 표지를 적는다. **표지를 지우면(true → false · 칸 삭제) [변경]**(하류까지) — 표지를 지우는 것이 [필수] 를 사유 없이 넘는 가장 쉬운 길이라서(confidence 와 다르다). false → true 는 [참고] 한 줄(하류로 번지지 않음). 표지 기록이 없는 옛 freeze 는 보지 않는다 |
+| `mapdraw`·`focus` | 상자에 **"탐색"**(focus 는 "(탐색)") — 색은 더하지 않는다. 있을 때만 그림 아래·범례에 설명 |
+| `add --exploratory` | 표지를 단 주장을 더한다. 사유는 사람이 파일에 쓴다 |
+
+**`suggest --claims X.json [-o 후보.md] [--min-shared 2] [--min-caveat 3]`** — [참고]만 내고 **claims 는 바꾸지 않는다**(종료 코드 0). 철회·배제한 주장은 뺀다.
+
+| 규칙 | 기준 | 제안 |
+|---|---|---|
+| 1. 안 이어진 이웃 | 같은 근거를 **2개 이상** 함께 쓴다 — premise·support 로 기대는 주장, 또는 sources 의 같은 문헌 DOI(따로 센다). 두 주장 사이에 **어느 방향으로도 경로가 없다**. 같은 근거 묶음을 쓰는 주장은 한 줄로. **증례 그래프(`kind: 증례`)는 끈다**(감별끼리 같은 소견을 나눠 쓰는 것이 정상) | 같은 뜻이면 합침 · 한쪽이 다른 쪽에 기댐 · 둘을 묶는 상위 주장 |
+| 2. 안 쓰인 근거 | role evidence 인데 기대는 주장이 없다(rebuttal 로 쓰인 소견도 "쓰임") | 새 주장 후보 또는 빼기 |
+| 3. 공통 한계 | caveat 하나가 **3개 이상** 주장에 걸림. **main 에 직접 걸린 한계가 0개면 머리 한 줄** "main 에 직접 걸린 한계 0개 — 아래 공통 한계 중 main 에 걸 것을 고른다" 을 먼저(줄은 그대로). 덧줄: main 전제 사슬(main 제외)의 절반 넘게 걸렸는데 main 에는 없는 한계 | main 에 직접 걸기(Limitations 첫 문단) |
+
+기준(2·3)은 저자 실물 그래프(51주장·간선 89)로 잰 뒤 정했다: 규칙 1 0줄 · 규칙 2 0개 · 규칙 3 8개(기준 4 → 7, 5 → 3).
+출력에 주장 id 가 나오므로 **내용 회신**으로만 다룬다(§5-2 블라인드 규칙). 후보를 주장으로 적으면 `add --exploratory` → `mapgraph`.
+
 ## 3-3. 관계도 그림 `mapdraw` (v16, 전체 그림 v16.1)
 
 `claim_graph.py mapdraw --claims X.json -o 관계도.md [--impact ID …] [--text] [--all-edges]` — Mermaid 글이 든 md 를 쓴다.
@@ -310,6 +339,8 @@ cd /tmp && npm install mermaid@11 && python3 ~/rct/claim_graph.py focus <id> --c
 | 필수 (v16.5, `--sources`) | 문헌 근거의 DOI 가 문헌 보관소에 없음. [참고]: 판정(verdict)이 없음 |
 | 필수 (v16) | `sources` 가 목록이 아님 / kind·verdict 값 오류 / 문헌·교과서·기타인데 what 이 비었음 |
 | 참고 (v16.1) | 간선이 하나도 없는 주장(외톨이) — 한 줄에 이름 목록. 주장이 하나뿐이면 알리지 않는다. **그래프 전체에 간선이 없으면 이름 대신 "간선이 하나도 없는 그래프(주장 N개)" 한 줄**(v16.2) — 이때 주장별 간선 [참고](role=main/claim 인데 premise 없음 · evidence 인데 caveat 없음)도 줄마다 내지 않고 이 줄에 개수로 합친다(v16.3) |
+| 필수 (v16.17) | **탐색적 주장(`exploratory: true`)이 main 의 전제 사슬**(main 에서 premise 만 따라 닿는 주장, main 자신 포함)에 있음 — `exploratory_reason` 을 적으면 [참고] + 사유. `exploratory` 가 true/false 가 아님 |
+| 참고 (v16.17) | 탐색적 주장이 support 가 섞인 경로로 main 을 받침 · `exploratory_reason` 만 있고 표지가 없음 |
 | 참고 (v16) | sources 에 at 이 없음 / 덱 근거가 `slide:N`(파일 번호) / `반대 방향` 판정인데 rebuttal 간선 없음 / caveat 간선이 role=rebuttal 을 가리킴 |
 | 참고 (`mapcheck --nums`) | evidence 의 수치 토큰이 sites 어디에도 없음. 소수·%·4자리 이상은 항상, 1~3자리 정수는 n=·±·vs·/ 문맥일 때만(참고문헌 번호 제외). 표기 차이(0.541 vs 0.54)는 잡고 반올림 판단은 사람. **`--nums` 는 "evidence 에 적은 수치가 원고 자리에 실제로 있는가"만 본다** — 리뷰어 그래프처럼 evidence 에 재현값·외부 수치를 함께 적는 용법에서는 참고 건수가 높게 나오는 것이 정상이며 결함이 아니다(v15.4.3; 리뷰어 56 주장 중 35건 실례). 원고 인용 수치만 검증하려면 그 수치만 evidence 에 두고 재현값은 note 등 다른 필드에 둔다. **v16.9 (저자 09-29)**: evidence 에 보충자료 표지 `Suppl S{n}`(`Supplementary Table S4` 도)이 있으면 그 evidence 의 **못 찾은** 수치는 주장마다 적지 않고 `[참고] 보충자료 표지(Suppl S…)가 든 evidence N개(id…)의 수치 M개가 sites 에 없음` 한 줄로 모은다 — sites 는 본문만 본다. 찾은 수치는 전처럼 조용하다 |
 
@@ -329,13 +360,14 @@ pptx 는 `deck_toolkit.py <명령> deck.pptx --claims ...`, docx/md 는 `claim_g
 | `mapcheck doc --claims [--nums] [--nums-sep "|"]` | 자리를 다 고친 뒤 | keys/forbidden 대조 + 그래프 검사. `--nums` 면 evidence 수치가 자리에 있는지도. `--nums-sep` 은 evidence 에서 그 구분자 **앞쪽만** 검사(v15.5) — "원고 값 | 재현 값" 용법용, 구분자는 사용자가 선언한다 (교정용, 심사 형식 지적의 대부분이 이 유형). 문제가 없을 때 문구는 **`모든 주장의 자리에 찾는 표현이 있음 — 주장·evidence 가 최신인지는 보지 않는다`**(v16.9, 저자 09-29 — 전에는 "반영됨") |
 | `mapfreeze doc --claims -o [--sources 폴더]` | 검증을 **실제로** 마친 뒤 | 해시 기록 = "확인했다" 선언. `--sources` 면 근거 원문도(§3-2) — 보관소에 없는 DOI 가 있으면 [필수]로 멈춤(v16.10). 폴더 없이 다시 freeze 하면 전 근거 기록은 그대로 |
 | `mapstale doc --claims [--sources 폴더]` | 그 뒤 어떤 편집이든 한 뒤 | v16: `--sources` 면 근거 원문 `[같음]`·`[변환]`·`[변경]`(§3-2). [변경] 주장, [필수]/[참고] 하류, 기록 없는 새 주장. v15.5: freeze 가 `verified.keys` 해시를 함께 적어 **keys 만 바꾼 그래프도 [변경]**(구판 freeze 는 그 해시가 없어 검사 안 함). 출력 끝에 "실제로 바뀐 주장의 자리(직접)"를 하류 전파와 구분해 낸다 |
+| `suggest --claims [-o 후보.md] [--min-shared 2] [--min-caveat 3]` | 관계도를 다 그린 뒤 | 새 주장 후보 [참고] — 안 이어진 이웃 · 안 쓰인 근거 · 공통 한계(§3-7, v16.17). claims 는 바꾸지 않는다 |
 | `gaps --claims -o 작업표.md` · `gaps --to-instr 작업표.md -o 검증지시.md` | 근거 채우기 전 | 근거 공백 작업표 · 채운 표 → literature 검증지시 (§3-4, v16.5) |
 | `mapdraw --claims -o 관계도.md [--impact ID …] [--text] [--all-edges]` | 설명·검토용 그림 | Mermaid 글(§3-3, v16 · 전체 그림 v16.1) |
 | `focus <id…> (--claims … \| --oral … --author …) -o 초점.md [--png 초점.png] [--pptx 덱] [--up 2] [--ids]` | 교신저자 설명·구연 준비 | §3-6 초점 그림 — 받침 2단계·한계·반박·영향, 쉬운 말 범례, 로컬 브라우저로 PNG (v16.15) |
 | `oral init --author 저자.json -o 덧붙임.json` · `oral check --author … --oral …` · `oral sync --author 새판 --oral … -o … [--pairs] [--drop]` | 구연 덱 시작 · 덧붙임을 고친 뒤 · 저자 판이 바뀐 뒤 | §3-5. 저자 claims 는 읽기만. mapgraph·impact·mapdraw 도 `--oral … --author …` 로 합친 그래프를 읽는다 (v16.12). sync 는 v16.13 |
 | `mapdiff a.json b.json --labels 저자 리뷰어 [--pairs a1=b1,…] [--save-pairs]` | 독립으로 쓴 두 그래프 대조 | v16: `--save-pairs` 는 짝을 a 의 `pairs_with` 에 적고, 다음부터 `--pairs` 없이 쓴다. sites·keys 겹침으로 짝지어 (a) 양쪽 (b) 한쪽만 (c) 다른 쪽만, 간선 type·weight 차이, caveat 부착 차이. 간선·caveat 차이 줄의 **`?` 접두는 상대 그래프에 짝이 없는 노드 id** 를 뜻한다(v15.4.3 문서화) — 예 `?within-participant-design` 은 그 노드가 (b)/(c) 목록에 있다는 신호이므로 먼저 `--pairs` 로 짝을 확인한다. v15.4: role 계열(claim/evidence/caveat/…)이 다르면 짝짓지 않음. **명명만 다른 주장은 자동으로 못 잡는다** — (b)(c)가 크면 사람이 짝을 만들어 `--pairs`로 넘긴다. **반대 방향 오류도 있다**(v15.4.4): 의미상 대응하는 두 주장의 role 을 서로 다르게 쓰면(한쪽 main, 다른 쪽 claim) 같은 계열이라 짝지어져 (a) 에 들어가고, 그 상대의 진짜 짝은 (c) 에 남는다 — (a) 목록도 id 쌍을 눈으로 보고 어긋난 쌍은 `--pairs` 로 고정한다(실물: 저자 `group-a-b-distinct`(main) ↔ 리뷰어 `claim-mechanism-x`(claim)) — 문자열 `a1=b1,a2=b2`, json 파일 `{"a_id": "b_id"}`, 또는 한 줄에 `a_id=b_id` 인 텍스트 파일(v15.4.1). **1:N 짝**은 같은 a_id 를 반복(`s10=nested,s10=delta-r2`) 또는 json 값을 리스트로 — 한쪽이 한 노드로 묶은 것을 다른 쪽이 둘로 나눈 경우(v15.5), 출력에 `nested+delta-r2` 로 표시 |
 | `remap-refs --claims X.json --map refmap.json -o Y.json [--force]` | 참고문헌 재번호 뒤 | `verify_toolkit renumber` 가 낸 매핑으로 statement·evidence 의 `[n-m]`·keys 의 `refs n-m` 치환. `mapcheck` 는 `refs n-m` key 를 리터럴이 아니라 인용번호로 보고 자리의 대괄호 인용(`[26-28]`·`[26–28]`·`[24,26-28]`)을 펼쳐 대조한다(v15.4.2) — **그래프의 `doc` 이 가리키는 판의 번호 체계에 맞는 매핑만** 적용할 것. keys 의 순수 숫자("42", "29-31")는 **어떤 옵션으로도 건드리지 않는다**(v15.4.1 — 실물에서 참여자 수 42 가 바뀔 뻔함) — 인용번호 key 는 `refs 29-31` 로 쓸 것. 적용한 매핑을 상위 `refs_maps_applied` 에 기록하고 같은 매핑을 두 번 적용하려 하면 중단(`--force` 로 강행). **손으로 재번호한 그래프에는 표지가 없으므로 돌리지 말 것** — 돌리면 한 단계 더 밀린다. verified 있는 주장이 바뀌면 mapfreeze 재실행 경고. **v16.9 `--suppl S매핑.json`**(저자 09-29): 보충 표·그림 번호 `Suppl S{n}`(`Supplementary Table S4 and S2` 처럼 이어진 것도)을 같은 형식의 매핑으로 바꾼다. `--map`·`--suppl` 은 따로도 함께도 — 본문 `[n]` 과 보충 `S{n}` 은 서로 건드리지 않는다. 매핑에 없거나 삭제(null)된 보충 번호는 그대로 두고 [경고](글에서 지우는 것은 사람). 적용 기록은 `refs_maps_applied` 에 `kind: suppl` 로 |
-| `add --claims X.json --id ID --statement … [--role R] [--evidence …] [--site S]… [--key K]… [--dep ID[:type]]… -o Y.json` | 주장을 더할 때 | v16.9 (저자 09-29): 간선 **weight 는 type 기본값**(premise 1.0·support 0.7·context 0.3·caveat 0.5·rebuttal 0.5)으로 넣는다. `--dep` 의 type 을 안 적으면 premise. 같은 id·없는 주장이면 멈춤(종료 코드 2). 맨 위 칸(doc·note 등)은 그대로 |
+| `add --claims X.json --id ID --statement … [--role R] [--evidence …] [--site S]… [--key K]… [--dep ID[:type]]… [--exploratory] -o Y.json` | 주장을 더할 때 | v16.17: `--exploratory` 면 탐색적 표지(§3-7). v16.9 (저자 09-29): 간선 **weight 는 type 기본값**(premise 1.0·support 0.7·context 0.3·caveat 0.5·rebuttal 0.5)으로 넣는다. `--dep` 의 type 을 안 적으면 premise. 같은 id·없는 주장이면 멈춤(종료 코드 2). 맨 위 칸(doc·note 등)은 그대로 |
 | `link --claims X.json FROM TO [--type premise] -o Y.json` | 간선 하나 | v16.9: FROM 이 TO 에 기댄다(FROM 의 depends_on 에 TO). weight 는 type 기본값. 없는 id·이미 있는 간선·**순환**이면 멈춤(종료 코드 2) — 종류를 바꾸려면 파일에서 고친다 |
 
 ## 5. 작업 순서

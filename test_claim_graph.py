@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.16'
+EXPECT_VERSION = '16.17'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -1504,6 +1504,227 @@ def t_v169_selfcheck_env_row():
     for lib in ('pypdf', 'Pillow', 'python-pptx'):
         assert lib + ' ' in row[0], row
     assert CGm._lib_versions({'nope-lib-xyz': 'nope'}) == 'nope 없음'                            # 없는 라이브러리는 '없음'
+
+
+
+# ---- v16.17 (사용자 09-30 ③): 탐색적 표지 exploratory · suggest ----
+
+def _xg():
+    """가짜 그래프: mn(main) ←premise cl ←premise ev2 · mn ←support ev1 · ev4 는 main 과 안 이어짐(ev4 → x2 context)."""
+    return [
+        {'id': 'ev1', 'role': 'evidence', 'statement': 'E1', 'depends_on': []},
+        {'id': 'ev2', 'role': 'evidence', 'statement': 'E2', 'depends_on': []},
+        {'id': 'ev4', 'role': 'evidence', 'statement': 'E4', 'depends_on': []},
+        {'id': 'cl', 'role': 'claim', 'statement': 'C', 'depends_on': [{'id': 'ev2', 'type': 'premise'}]},
+        {'id': 'x2', 'role': 'claim', 'statement': 'X2', 'depends_on': [{'id': 'ev4', 'type': 'context'}, {'id': 'ev1', 'type': 'premise'}]},
+        {'id': 'mn', 'role': 'main', 'statement': 'M', 'depends_on': [{'id': 'cl', 'type': 'premise'}, {'id': 'ev1', 'type': 'support'}]}]
+
+
+def _by(g):
+    return {c['id']: c for c in g}
+
+
+def _must(probs, word):
+    return [p for p in probs if not p.startswith('[참고]') and word in p]
+
+
+def _ref(probs, word):
+    return [p for p in probs if p.startswith('[참고]') and word in p]
+
+
+def t_v1617_exploratory_premise_chain_must_and_reason():
+    """③: 탐색적 주장이 main 의 premise 사슬에 있으면 [필수] — exploratory_reason 을 적으면 [참고]로 내리고 사유를 보인다."""
+    g = _xg(); _by(g)['ev2']['exploratory'] = True
+    probs, _ = CGm.mapgraph(g, io.StringIO())
+    assert len(_must(probs, 'ev2')) == 1 and '탐색' in _must(probs, 'ev2')[0], probs          # 실패 길
+    _by(g)['ev2']['exploratory_reason'] = '사전 계획 분석 — Methods 절'
+    probs, _ = CGm.mapgraph(g, io.StringIO())
+    assert not _must(probs, 'ev2'), probs                                                      # 성공 길
+    assert any('사전 계획 분석 — Methods 절' in p for p in _ref(probs, 'ev2')), probs
+    g = _xg(); _by(g)['mn']['exploratory'] = True                                              # main 자신도 사슬
+    assert _must(CGm.mapgraph(g, io.StringIO())[0], 'mn')
+
+
+def t_v1617_exploratory_support_path_ref_off_chain_silent():
+    """support 가 섞인 경로로만 main 에 닿으면 [참고], 이어지지 않으면 mapgraph 는 말하지 않는다."""
+    g = _xg(); _by(g)['ev1']['exploratory'] = True; _by(g)['ev4']['exploratory'] = True
+    probs, _ = CGm.mapgraph(g, io.StringIO())
+    assert not _must(probs, '탐색'), probs
+    assert _ref(probs, 'ev1') and any('support' in p for p in _ref(probs, 'ev1')), probs
+    assert not [p for p in probs if p.startswith('[참고] ev4') and '탐색' in p], probs
+
+
+def t_v1617_exploratory_field_checks_and_case_mains():
+    """exploratory 는 true/false 만([필수]) · 사유만 있고 표지가 없으면 [참고] · 증례(main 여럿)는 main 마다 사슬."""
+    g = _xg(); _by(g)['cl']['exploratory'] = 'yes'
+    assert _must(CGm.mapgraph(g, io.StringIO())[0], 'exploratory'), 'true/false 가 아닌 값'
+    g = _xg(); _by(g)['cl']['exploratory_reason'] = '까닭'
+    assert _ref(CGm.mapgraph(g, io.StringIO())[0], 'exploratory_reason')
+    g = _xg(); _by(g)['cl']['exploratory'] = False; _by(g)['cl']['exploratory_reason'] = ''
+    probs, _ = CGm.mapgraph(g, io.StringIO())
+    assert not [p for p in probs if 'exploratory' in p or '탐색' in p], probs                  # false·빈 사유는 조용
+    case = [{'id': 'f1', 'group': 'g1', 'role': 'evidence', 'statement': 'F1', 'exploratory': True, 'depends_on': []},
+            {'id': 'd1', 'group': 'g1', 'role': 'main', 'statement': 'D1', 'depends_on': [{'id': 'f1', 'type': 'premise'}]},
+            {'id': 'f2', 'group': 'g2', 'role': 'evidence', 'statement': 'F2', 'depends_on': []},
+            {'id': 'd2', 'group': 'g2', 'role': 'main', 'statement': 'D2', 'depends_on': [{'id': 'f2', 'type': 'premise'}]}]
+    probs, _ = CGm.mapgraph(case, io.StringIO(), kind='증례')
+    assert len(_must(probs, 'f1')) == 1 and 'd1' in _must(probs, 'f1')[0] and not _must(probs, 'f2'), probs
+    case[0]['status'] = 'superseded'                                                            # 철회한 주장은 보지 않는다
+    assert not _must(CGm.mapgraph(case, io.StringIO(), kind='증례')[0], '탐색')
+
+
+def t_v1617_mapreport_exploratory_section():
+    """mapreport(리뷰어 보고) 끝에 탐색적 주장 절 — 사슬 안·밖과 사유."""
+    g = _xg(); _by(g)['ev2'].update(exploratory=True, exploratory_reason='사전 계획 분석'); _by(g)['ev4']['exploratory'] = True
+    buf = io.StringIO(); CGm.mapreport(g, buf); t = buf.getvalue()
+    assert '탐색적 주장' in t, t
+    l2 = [l for l in t.splitlines() if l.strip().startswith('[ev2]') and '사전 계획 분석' in l]
+    l4 = [l for l in t.splitlines() if l.strip().startswith('[ev4]') and 'main 과 이어지지 않음' in l]
+    assert l2 and '전제 사슬' in l2[0] and l4, t
+    buf = io.StringIO(); CGm.mapreport(_xg(), buf)
+    assert '탐색적 주장' not in buf.getvalue()                                                   # 없으면 절도 없다
+
+
+def t_v1617_mapstale_exploratory_removed_is_change():
+    """사용자 09-30: 표지를 지우는 것(true→false·칸 삭제)은 [필수] 를 사유 없이 넘는 길 — mapstale [변경]. false→true 는 [참고]."""
+    site = {'doc:p:1': 'alpha text'}
+    base = [{'id': 'a', 'statement': 'A', 'evidence': 'e', 'sites': ['doc:p:1'], 'keys': ['alpha'], 'exploratory': True, 'depends_on': []},
+            {'id': 'b', 'statement': 'B', 'evidence': 'e', 'sites': ['doc:p:1'], 'keys': ['alpha'], 'depends_on': [{'id': 'a', 'type': 'premise'}]}]
+    fr = CGm.mapfreeze(_resolve_dict(site), copy.deepcopy(base))
+    for how in ('false', 'del'):
+        g = copy.deepcopy(fr)
+        if how == 'false':
+            g[0]['exploratory'] = False
+        else:
+            del g[0]['exploratory']
+        buf = io.StringIO(); r = CGm.mapstale(_resolve_dict(site), g, stream=buf)
+        assert r['changed'] == ['a'] and '탐색' in buf.getvalue() and 'b' in [x[0] for x in r['suspect']], (how, buf.getvalue())
+    buf = io.StringIO(); r = CGm.mapstale(_resolve_dict(site), copy.deepcopy(fr), stream=buf)   # 성공 길: 그대로면 조용
+    assert not r['changed'] and '바뀐 것 없음' in buf.getvalue(), buf.getvalue()
+    g = copy.deepcopy(fr); g[1]['exploratory'] = True                                          # false → true: [참고] 한 줄
+    buf = io.StringIO(); r = CGm.mapstale(_resolve_dict(site), g, stream=buf)
+    assert not r['changed'] and any(l.strip().startswith('[참고] b') and '탐색' in l for l in buf.getvalue().splitlines()), buf.getvalue()
+    old = copy.deepcopy(fr); old[0]['verified'].pop('exploratory'); old[0]['exploratory'] = False   # 옛 freeze(기록 없음)는 보지 않는다
+    assert not CGm.mapstale(_resolve_dict(site), old, stream=io.StringIO())['changed']
+
+
+def _sg():
+    """suggest 용 가짜 그래프."""
+    L = lambda i: {'id': i, 'role': 'caveat', 'statement': i, 'depends_on': []}
+    cav = lambda *ks: [{'id': k, 'type': 'caveat'} for k in ks]
+    lit = lambda *ds: [{'kind': '문헌', 'what': d, 'at': '전체'} for d in ds]
+    return [
+        L('k-all'), L('k-two'),
+        {'id': 'e1', 'role': 'evidence', 'statement': 'e1', 'depends_on': cav('k-all')},
+        {'id': 'e2', 'role': 'evidence', 'statement': 'e2', 'depends_on': cav('k-all')},
+        {'id': 'e3', 'role': 'evidence', 'statement': 'e3', 'depends_on': cav('k-all', 'k-two')},
+        {'id': 'e-unused', 'role': 'evidence', 'statement': 'eu', 'depends_on': cav('k-two')},
+        {'id': 'e-rb', 'role': 'evidence', 'statement': 'er', 'depends_on': []},
+        {'id': 'c1', 'role': 'claim', 'statement': 'c1', 'depends_on': [{'id': 'e1', 'type': 'premise'}, {'id': 'e2', 'type': 'support'}]},
+        {'id': 'c2', 'role': 'claim', 'statement': 'c2', 'depends_on': [{'id': 'e1', 'type': 'premise'}, {'id': 'e2', 'type': 'premise'}]},
+        {'id': 'c3', 'role': 'claim', 'statement': 'c3', 'depends_on': [{'id': 'e1', 'type': 'support'}, {'id': 'e2', 'type': 'support'}]},
+        {'id': 'c4', 'role': 'claim', 'statement': 'c4', 'depends_on': [{'id': 'e1', 'type': 'premise'}, {'id': 'e3', 'type': 'premise'}, {'id': 'c1', 'type': 'support'}]},
+        {'id': 'c5', 'role': 'claim', 'statement': 'c5', 'depends_on': [{'id': 'e3', 'type': 'premise'}, {'id': 'e-rb', 'type': 'rebuttal'}]},
+        {'id': 'b1', 'role': 'background', 'statement': 'b1', 'sources': lit('10.1/a', '10.1/b'), 'depends_on': []},
+        {'id': 'b2', 'role': 'background', 'statement': 'b2', 'sources': lit('10.1/a', '10.1/b', '10.1/c'), 'depends_on': []},
+        {'id': 'b3', 'role': 'background', 'statement': 'b3', 'sources': lit('10.1/a'), 'depends_on': []},
+        {'id': 'old', 'role': 'claim', 'status': 'superseded', 'statement': 'o', 'depends_on': [{'id': 'e1', 'type': 'premise'}, {'id': 'e2', 'type': 'premise'}]},
+        {'id': 'mn', 'role': 'main', 'statement': 'm', 'depends_on': [{'id': 'c2', 'type': 'premise'}, {'id': 'c4', 'type': 'premise'}, {'id': 'c5', 'type': 'support'},
+                                                                        {'id': 'b1', 'type': 'context'}, {'id': 'b2', 'type': 'context'}]}]
+
+
+def t_v1617_suggest_rules():
+    """규칙 1 같은 근거 2개 이상·안 이어짐(묶어 한 줄, 문헌 DOI 따로) · 규칙 2 안 쓰인 evidence · 규칙 3 공통 한계 3개 이상 + main 에 직접 걸린 한계 0 머리 줄."""
+    g = _sg(); before = copy.deepcopy(g)
+    buf = io.StringIO(); r = CGm.suggest(g, stream=buf); t = buf.getvalue()
+    assert g == before                                                                          # claims 를 바꾸지 않는다
+    groups = [sorted(x['ids']) for x in r['shared']]
+    assert ['c1', 'c2', 'c3'] in groups, groups                                                 # 셋이 e1·e2 를 함께 — 한 줄로 묶음
+    assert not any('c4' in x for x in groups), groups                                           # c4 는 c1 에 이어짐 · 공유 1
+    assert not any('old' in x for x in groups), groups                                          # 철회는 뺀다
+    assert ['b1', 'b2'] in groups and not any('b3' in x for x in groups), groups                # DOI 공유 2 / 1
+    assert [x['id'] for x in r['unused']] == ['e-unused'], r['unused']                         # e-rb 는 rebuttal 로 쓰임
+    assert [x['id'] for x in r['caveats']] == ['k-all'], r['caveats']                          # 3 이상만(k-two 는 2)
+    lines = t.splitlines()
+    head = [i for i, l in enumerate(lines) if 'main 에 직접 걸린 한계 0개 — 아래 공통 한계 중 main 에 걸 것을 고른다' in l]
+    k = [i for i, l in enumerate(lines) if 'k-all' in l and '[참고]' in l]
+    assert head and k and head[0] < k[0], t                                                     # 머리 줄이 먼저, 줄은 그대로
+    assert all(l.lstrip().startswith(('[참고]', '===', '규칙', '-', '')) for l in lines), t
+    g = _sg(); _by(g)['mn']['depends_on'].append({'id': 'k-all', 'type': 'caveat'})           # main 에 한계가 걸려 있으면 머리 줄 없음
+    buf = io.StringIO(); r = CGm.suggest(g, stream=buf)
+    assert '직접 걸린 한계 0개' not in buf.getvalue() and r['caveats'], buf.getvalue()
+    r = CGm.suggest(_sg(), stream=io.StringIO(), min_shared=3, min_caveat=2)                    # 기준 옵션
+    assert not r['shared'] and sorted(x['id'] for x in r['caveats']) == ['k-all', 'k-two'], r
+
+
+def t_v1617_suggest_half_chain_and_case():
+    """main 사슬 절반 넘게 걸렸는데 main 에는 없는 한계 · 증례 그래프는 규칙 1 을 끈다."""
+    g = [{'id': 'k', 'role': 'caveat', 'statement': 'k', 'depends_on': []},
+         {'id': 'e1', 'role': 'evidence', 'statement': 'e1', 'depends_on': [{'id': 'k', 'type': 'caveat'}]},
+         {'id': 'e2', 'role': 'evidence', 'statement': 'e2', 'depends_on': [{'id': 'k', 'type': 'caveat'}]},
+         {'id': 'e3', 'role': 'evidence', 'statement': 'e3', 'depends_on': []},
+         {'id': 'mn', 'role': 'main', 'statement': 'm', 'depends_on': [{'id': t, 'type': 'premise'} for t in ('e1', 'e2', 'e3')]}]
+    r = CGm.suggest(g, stream=io.StringIO())
+    assert [x['id'] for x in r['half']] == ['k'], r['half']
+    g[4]['depends_on'].append({'id': 'k', 'type': 'caveat'})
+    assert not CGm.suggest(g, stream=io.StringIO())['half']
+    case = [{'id': 'f1', 'role': 'evidence', 'statement': 'f1', 'depends_on': []},
+            {'id': 'f2', 'role': 'evidence', 'statement': 'f2', 'depends_on': []},
+            {'id': 'd1', 'role': 'claim', 'statement': 'd1', 'depends_on': [{'id': 'f1', 'type': 'premise'}, {'id': 'f2', 'type': 'support'}]},
+            {'id': 'd2', 'role': 'claim', 'statement': 'd2', 'depends_on': [{'id': 'f1', 'type': 'support'}, {'id': 'f2', 'type': 'premise'}]}]
+    assert CGm.suggest(copy.deepcopy(case), stream=io.StringIO())['shared']
+    buf = io.StringIO(); r = CGm.suggest(case, stream=buf, kind='증례')
+    assert not r['shared'] and '증례' in buf.getvalue(), buf.getvalue()
+
+
+def t_v1617_suggest_cli_and_add_exploratory():
+    """suggest CLI: -o md · 종료 0 · claims 파일 그대로. add --exploratory 는 표지를 단다."""
+    import json, tempfile, hashlib
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, 'c.json'); json.dump({'doc': 'Fake', 'claims': _sg()}, open(p, 'w'), ensure_ascii=False)
+    h = hashlib.sha256(open(p, 'rb').read()).hexdigest()
+    o = os.path.join(d, 's.md')
+    r = subprocess.run([sys.executable, CGm.__file__, 'suggest', '--claims', p, '-o', o], capture_output=True, text=True)
+    assert r.returncode == 0 and os.path.exists(o) and 'k-all' in open(o, encoding='utf8').read(), (r.stdout, r.stderr)
+    assert hashlib.sha256(open(p, 'rb').read()).hexdigest() == h
+    r = subprocess.run([sys.executable, CGm.__file__, 'suggest', p], capture_output=True, text=True)
+    assert r.returncode == 2 and 'suggest --claims' in r.stdout, r.stdout                     # 파일 이름만 주면 고칠 명령
+    q = os.path.join(d, 'q.json')
+    r = subprocess.run([sys.executable, CGm.__file__, 'add', '--claims', p, '--id', 'nx', '--statement', 'N', '--dep', 'c1:support', '--exploratory', '-o', q],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert _by(json.load(open(q))['claims'])['nx']['exploratory'] is True
+    r = subprocess.run([sys.executable, CGm.__file__, 'add', '--claims', p, '--id', 'ny', '--statement', 'N', '-o', q], capture_output=True, text=True)
+    assert r.returncode == 0 and 'exploratory' not in _by(json.load(open(q))['claims'])['ny']
+
+
+def t_v1617_draw_and_focus_mark():
+    """mapdraw(전체·--all-edges)·focus 상자에 '탐색' — 색은 더하지 않는다. 없으면 표시·범례도 없다."""
+    g = _xg(); _by(g)['ev2']['exploratory'] = True
+    for out in (CGm.mapdraw(g), CGm.mapdraw(g, all_edges=True)):
+        node = [l for l in out.splitlines() if '"ev2<br/>' in l]
+        assert node and '탐색' in node[0], out
+        assert not [l for l in out.splitlines() if '"ev1<br/>' in l and '탐색' in l]
+    assert '탐색' not in CGm.mapdraw(_xg())
+    fg = CGm.focus_graph(g, ['cl'])
+    assert '(탐색)' in CGm.focus_mermaid(fg) and any('탐색' in w for w, _ in CGm.focus_legend(fg))
+    fg = CGm.focus_graph(_xg(), ['cl'])
+    assert '탐색' not in CGm.focus_mermaid(fg) and not any('탐색' in w for w, _ in CGm.focus_legend(fg))
+
+
+def t_v1617_oral_merge_keeps_exploratory():
+    """구연 합친 그래프에서도 저자 표지가 따라온다 — 무대 밖 받침이 탐색적이면 oral check 가 [필수]."""
+    import json, tempfile
+    d = tempfile.mkdtemp()
+    A = os.path.join(d, 'a.json'); O = os.path.join(d, 'o.json')
+    au = _xg(); _by(au)['ev2']['exploratory'] = True
+    json.dump({'doc': 'Fake', 'claims': au}, open(A, 'w'), ensure_ascii=False)
+    ov = CGm.oral_init(A, deck='d'); ov['use'] = {'mn': {'sites': ['slide@300'], 'keys': ['m']}}
+    json.dump(ov, open(O, 'w'), ensure_ascii=False)
+    _, merged, _ = CGm.load_oral(O, A)
+    assert _by(merged)['ev2'].get('exploratory') is True and _by(merged)['ev2'].get('offstage')
+    r = subprocess.run([sys.executable, CGm.__file__, 'oral', 'check', '--author', A, '--oral', O], capture_output=True, text=True)
+    assert r.returncode == 1 and 'ev2' in r.stdout and '탐색' in r.stdout, r.stdout
 
 
 if __name__ == '__main__':
