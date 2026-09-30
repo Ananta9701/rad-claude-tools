@@ -47,7 +47,7 @@ import re
 import sys
 import zipfile
 
-__version__ = '16.17'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.18'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -706,7 +706,8 @@ def suggest(claims, stream=sys.stdout, kind=None, min_shared=SUGGEST_MIN_SHARED,
     이어지지 않은 주장(같은 근거 묶음이면 한 줄로). 증례 그래프(kind 증례)는 끈다 — 감별끼리 같은 소견을 나눠 쓰는 것이 정상.
     규칙 2 어디에도 안 쓰인 근거(role evidence 인데 기대는 주장이 없음 — rebuttal 로 쓰인 소견도 쓰임).
     규칙 3 min_caveat 개 이상 주장에 걸린 공통 한계. main 에 직접 걸린 한계가 0 이면 머리 한 줄을 먼저(사용자 09-30).
-    덧줄: main 전제 사슬(main 제외)의 절반 넘게 걸렸는데 main 에는 없는 한계.
+    덧줄: main 전제 사슬(premise 만, main 포함 — v16.18)의 절반 넘게 걸렸는데 main 에는 없는 한계.
+    v16.18 (저자 09-30): 규칙 3 줄마다 한계 statement 앞 40자 · 이미 main 에 걸린 한계는 권고 대신 '(main 에 이미 걸림)'.
     반환 {'shared': [{ids, claims, dois}], 'unused': [{id, alone}], 'caveats': [{id, n, on}], 'half': [{id, main, on, of}], 'no_main_caveat': [main]}."""
     live = [c for c in claims if c.get('status') not in ('superseded', 'excluded')]
     lid = {c['id'] for c in live}
@@ -758,12 +759,19 @@ def suggest(claims, stream=sys.stdout, kind=None, min_shared=SUGGEST_MIN_SHARED,
                 continue
             seen.add(v)
             st += [u for u, t, _ in edges.get(v, []) if t == 'premise']
-        chain = seen - {m}
+        # v16.18 (저자 09-30 [확인 필요]): 사슬은 설계대로 main 을 포함해 센다 — v16.17 은 main 을 빼고 세어 저자 v10 에서 3줄(설계 1줄)
+        if len(seen) < 2:
+            continue
         for k, on in cav.items():
-            n = len(chain & set(on))
-            if chain and n * 2 > len(chain) and k not in direct[m]:
-                half.append({'id': k, 'main': m, 'on': n, 'of': len(chain)})
+            n = len(seen & set(on))
+            if n * 2 > len(seen) and k not in direct[m]:
+                half.append({'id': k, 'main': m, 'on': n, 'of': len(seen)})
     P = lambda t: print(t, file=stream)
+    by = {c['id']: c for c in claims}
+
+    def head(k):                                  # v16.18 (저자 09-30): 고르기 전에 한계 문장이 낡았는지 보이게 — statement 앞 40자
+        st = re.sub(r'\s+', ' ', by.get(k, {}).get('statement', '') or '').strip()
+        return (' "%s"' % (st if len(st) <= 40 else st[:40].rstrip() + '…')) if st else ''
     P('=== 새 주장 후보 (suggest) — [참고]만, claims 는 바꾸지 않는다 ===')
     if case:
         P('규칙 1 — 증례 그래프라 끔(감별끼리 같은 소견을 나눠 쓰는 것이 정상)')
@@ -783,10 +791,12 @@ def suggest(claims, stream=sys.stdout, kind=None, min_shared=SUGGEST_MIN_SHARED,
     if caveats and no_main:
         P('  [참고] ' + (SUGGEST_NO_MAIN_CAVEAT if len(mains) == 1 else '%s — %s' % (', '.join(no_main), SUGGEST_NO_MAIN_CAVEAT)))
     for x in caveats:
-        P('  [참고] %s — 걸린 주장 %d개(%s) → main 에 직접 걸기(Limitations 첫 문단)'
-          % (x['id'], x['n'], ', '.join(x['on'][:6]) + (' …' if x['n'] > 6 else '')))
+        onm = [m for m in mains if x['id'] in direct[m]]
+        todo = ('(main 에 이미 걸림)' if len(mains) == 1 else '(main %s 에 이미 걸림)' % ', '.join(onm)) if onm else '→ main 에 직접 걸기(Limitations 첫 문단)'
+        P('  [참고] %s%s — 걸린 주장 %d개(%s) %s'
+          % (x['id'], head(x['id']), x['n'], ', '.join(x['on'][:6]) + (' …' if x['n'] > 6 else ''), todo))
     for x in half:
-        P('  [참고] %s — main(%s) 전제 사슬 %d개 중 %d개에 걸렸는데 main 에는 없음' % (x['id'], x['main'], x['of'], x['on']))
+        P('  [참고] %s%s — main(%s) 전제 사슬 %d개 중 %d개에 걸렸는데 main 에는 없음' % (x['id'], head(x['id']), x['main'], x['of'], x['on']))
     return {'shared': shared, 'unused': unused, 'caveats': caveats, 'half': half, 'no_main_caveat': no_main}
 
 

@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.17'
+EXPECT_VERSION = '16.18'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -1662,7 +1662,7 @@ def t_v1617_suggest_half_chain_and_case():
     g = [{'id': 'k', 'role': 'caveat', 'statement': 'k', 'depends_on': []},
          {'id': 'e1', 'role': 'evidence', 'statement': 'e1', 'depends_on': [{'id': 'k', 'type': 'caveat'}]},
          {'id': 'e2', 'role': 'evidence', 'statement': 'e2', 'depends_on': [{'id': 'k', 'type': 'caveat'}]},
-         {'id': 'e3', 'role': 'evidence', 'statement': 'e3', 'depends_on': []},
+         {'id': 'e3', 'role': 'evidence', 'statement': 'e3', 'depends_on': [{'id': 'k', 'type': 'caveat'}]},
          {'id': 'mn', 'role': 'main', 'statement': 'm', 'depends_on': [{'id': t, 'type': 'premise'} for t in ('e1', 'e2', 'e3')]}]
     r = CGm.suggest(g, stream=io.StringIO())
     assert [x['id'] for x in r['half']] == ['k'], r['half']
@@ -1725,6 +1725,44 @@ def t_v1617_oral_merge_keeps_exploratory():
     assert _by(merged)['ev2'].get('exploratory') is True and _by(merged)['ev2'].get('offstage')
     r = subprocess.run([sys.executable, CGm.__file__, 'oral', 'check', '--author', A, '--oral', O], capture_output=True, text=True)
     assert r.returncode == 1 and 'ev2' in r.stdout and '탐색' in r.stdout, r.stdout
+
+
+
+# ---- v16.18 (저자 도구회신 09-30 suggest 첫 실행) ----
+
+def _hg(n_chain, n_on, on_main=False):
+    """main 이 premise 로 e1..e{n_chain} 에 기대고, 한계 k 가 e1..e{n_on} 에 걸린 가짜 그래프."""
+    g = [{'id': 'k', 'role': 'caveat', 'statement': '단면 연구라 인과를 말할 수 없다 — 추적 자료가 없고 표본이 한 기관이다', 'depends_on': []}]
+    for i in range(1, n_chain + 1):
+        g.append({'id': 'e%d' % i, 'role': 'evidence', 'statement': 'e%d' % i,
+                  'depends_on': [{'id': 'k', 'type': 'caveat'}] if i <= n_on else []})
+    g.append({'id': 'mn', 'role': 'main', 'statement': 'm', 'depends_on': [{'id': 'e%d' % i, 'type': 'premise'} for i in range(1, n_chain + 1)]
+              + ([{'id': 'k', 'type': 'caveat'}] if on_main else [])})
+    return g
+
+
+def t_v1618_half_chain_counts_main():
+    """[확인 필요] 덧줄의 사슬은 설계대로 main 을 포함해 센다(premise 만). v16.17 은 main 을 빼고 세어 저자 v10 에서 3줄(코드 실측 1줄).
+    사슬 = main + 5 → 6. 걸린 3 은 절반을 넘지 않는다(3*2 = 6), 걸린 4 는 넘는다."""
+    assert not CGm.suggest(_hg(5, 3), stream=io.StringIO())['half']                      # 실패 길(v16.17 은 3*2 > 5 로 냈다)
+    buf = io.StringIO(); r = CGm.suggest(_hg(5, 4), stream=buf)
+    assert [(x['id'], x['on'], x['of']) for x in r['half']] == [('k', 4, 6)], r['half']   # 성공 길
+    assert 'main(mn) 전제 사슬 6개 중 4개' in buf.getvalue(), buf.getvalue()
+    assert not CGm.suggest(_hg(5, 5, on_main=True), stream=io.StringIO())['half']        # main 에 걸리면 덧줄 없음
+
+
+def t_v1618_rule3_already_on_main_and_statement():
+    """이미 main 에 걸린 공통 한계는 권고 대신 '(main 에 이미 걸림)' · 규칙 3 줄마다 한계 statement 앞 40자."""
+    buf = io.StringIO(); CGm.suggest(_hg(4, 3), stream=buf)                              # main 에 없음 — 권고 그대로
+    line = [l for l in buf.getvalue().splitlines() if l.strip().startswith('[참고] k ')]
+    assert line and '→ main 에 직접 걸기' in line[0] and '이미 걸림' not in line[0], buf.getvalue()
+    assert '"단면 연구라 인과를 말할 수 없다 — 추적 자료가 없고 표본이 한 기관이…"' in line[0], line
+    buf = io.StringIO(); CGm.suggest(_hg(4, 3, on_main=True), stream=buf)                # main 에 걸림 — 권고를 빼고 표시
+    line = [l for l in buf.getvalue().splitlines() if l.strip().startswith('[참고] k ')]
+    assert line and '(main 에 이미 걸림)' in line[0] and '직접 걸기' not in line[0], buf.getvalue()
+    buf = io.StringIO(); CGm.suggest(_hg(3, 3), stream=buf)
+    hl = [l for l in buf.getvalue().splitlines() if '전제 사슬' in l]
+    assert hl and '"단면 연구라' in hl[0], buf.getvalue()
 
 
 if __name__ == '__main__':
