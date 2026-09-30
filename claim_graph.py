@@ -48,7 +48,7 @@ import sys
 import unicodedata
 import zipfile
 
-__version__ = '16.20'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.21'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -499,6 +499,135 @@ def lit_graph_problems(meta, claims, path=None):
                    % (len(pend), ' (AI 초안 %d)' % sum(1 for c in claims if c.get('status') == 'proposed' and c.get('origin') == 'ai')
                       if any(c.get('origin') == 'ai' for c in claims) else ''))
     return out
+
+
+# v16.21 (④ 2판, 사용자 09-30 결정 1·2·5): 우리 주장 ↔ 논문 주장 짝 — 우리 그래프 맨 위 `lit_links`. rel(우리 쪽에서) → 합친 그래프의 간선 type
+LIT_RELS = {'same': 'support', 'support': 'support', 'rebut': 'rebuttal', 'background': 'context'}
+
+
+def lit_id(doi, theirs):
+    """합친 그래프에서 논문 주장의 id — lit:<DOI>#<그 논문 그래프의 id>."""
+    return 'lit:%s#%s' % (doi, theirs)
+
+
+def _lit_doi(s):
+    return str(s or '').strip().lower().replace('https://doi.org/', '')
+
+
+def _lit_dir(store, doi):
+    """보관소에서 meta.md 첫 줄의 doi= 가 같은 폴더(없으면 None) — sources 의 문헌 찾기(_source_file)와 같은 규칙."""
+    for d in (sorted(os.listdir(store)) if os.path.isdir(store) else []):
+        mp = os.path.join(store, d, 'meta.md')
+        if os.path.exists(mp):
+            m = re.search(r'doi=(\S+)', open(mp, encoding='utf8').readline())
+            if m and m.group(1).lower() == doi:
+                return os.path.join(store, d)
+    return None
+
+
+def _main_chain(claims):
+    """{살아 있는 main: premise 만 따라 닿는 주장 집합(main 포함)} — 탐색적 표지의 전제 사슬과 같은 정의."""
+    by = {c['id']: c for c in claims}
+    edges = _edges(claims)
+    out = {}
+    for c in claims:
+        if c.get('role') != 'main' or c.get('status') in ('superseded', 'excluded'):
+            continue
+        seen, st = set(), [c['id']]
+        while st:
+            v = st.pop()
+            if v in seen or v not in by:
+                continue
+            seen.add(v)
+            st += [u for u, t, _ in edges.get(v, []) if t == 'premise']
+        out[c['id']] = seen
+    return out
+
+
+def lit_merge(meta, claims, store):
+    """v16.21 (④ 2판): 우리 그래프 + `lit_links` 가 가리키는 논문 주장만 → (합친 claims, 문제 목록). 문제: [참고] 가 아니면 [필수].
+    논문 주장은 id `lit:<DOI>#<id>`, `lit: true` — 자리·keys·간선·sources 없이(자리 검사는 그 논문 paper.md 에서 한다), 역할은 `lit_role` 로.
+    우리 주장에 간선 하나(rel → type, weight 는 type 기본값). 합친 파일을 남기지 않는다(구연 덧붙임과 같은 방식). 우리 파일은 바꾸지 않는다.
+    [필수]: 모양 · ours 없음 · rel·verdict 값 · 보관소에 없는 DOI · 논문 claims.json 없음/다른 논문 · theirs 없음 ·
+            **판정 안 된(proposed) 논문 주장이 same·support 로 main 의 전제(premise) 사슬을 받침**(결정 5).
+    [참고]: verdict 없음 · 우리 주장 sources 에 같은 DOI 없음 · 같은 짝 두 번 · 사람 이름 꼴 · 철회된(superseded) 논문 주장."""
+    import copy as _copy
+    links = meta.get('lit_links')
+    if links is None:
+        return claims, []
+    if not isinstance(links, list):
+        return claims, ['lit_links 는 목록이어야 함 — [{"ours", "doi", "theirs", "rel", "verdict", "by", "date"}, …]']
+    probs, out = [], _copy.deepcopy(claims)
+    by = {c['id']: c for c in out}
+    papers, added, seen, backs = {}, {}, set(), []
+    for k, l in enumerate(links, 1):
+        if not isinstance(l, dict):
+            probs.append('lit_links[%d] 는 {ours, doi, theirs, rel, …} 이어야 함' % k); continue
+        ours, doi, theirs, rel = l.get('ours'), _lit_doi(l.get('doi')), str(l.get('theirs') or ''), l.get('rel')
+        tag = 'lit_links[%d] %s → %s' % (k, ours, lit_id(doi, theirs))
+        bad = False
+        if ours not in by:
+            probs.append('%s: ours "%s" 가 우리 그래프에 없다' % (tag, ours)); bad = True
+        if rel not in LIT_RELS:
+            probs.append('%s: rel "%s" 는 %s 중 하나여야 함' % (tag, rel, '/'.join(LIT_RELS))); bad = True
+        if l.get('verdict') and l['verdict'] not in VERDICTS:
+            probs.append('%s: verdict "%s" 는 %s 중 하나여야 함' % (tag, l['verdict'], '/'.join(VERDICTS))); bad = True
+        if not _DOI_SHAPE.match(doi):
+            probs.append('%s: doi "%s" 가 DOI 모양(10.xxxx/…)이 아니다' % (tag, l.get('doi'))); continue
+        if doi not in papers:
+            dd = _lit_dir(store, doi)
+            if dd is None:
+                papers[doi] = ('보관소에 없다 — 원문을 받은 논문만 짝을 맺는다', None)
+            elif not os.path.exists(os.path.join(dd, 'claims.json')):
+                papers[doi] = ('논문 그래프 %s/claims.json 이 없다 — 초안(문헌 Cowork)·판정(리뷰어) 뒤에 짝을 맺는다' % os.path.basename(dd), None)
+            else:
+                pm, pc = load_claims_full(os.path.join(dd, 'claims.json'))
+                if pm.get('kind') not in LIT_KINDS or _lit_doi(pm.get('doi')) != doi:
+                    papers[doi] = ('%s/claims.json 이 이 논문의 문헌 그래프가 아니다(kind %s · doi %s)'
+                                   % (os.path.basename(dd), pm.get('kind'), pm.get('doi')), None)
+                else:
+                    papers[doi] = (None, {c.get('id'): c for c in pc})
+            if papers[doi][0]:
+                probs.append('문헌 %s: %s' % (doi, papers[doi][0]))
+        err, pby = papers[doi]
+        if err:
+            continue
+        if theirs not in pby:
+            probs.append('%s: 논문 그래프에 주장 "%s" 가 없다' % (tag, theirs)); continue
+        if bad:
+            continue
+        if (ours, doi, theirs) in seen:
+            probs.append('[참고] %s: 같은 짝이 두 번 — 하나만 둔다' % tag); continue
+        seen.add((ours, doi, theirs))
+        lid = lit_id(doi, theirs)
+        if lid not in added:
+            p_ = pby[theirs]
+            node = {'id': lid, 'lit': True, 'statement': p_.get('statement', ''), 'status': p_.get('status', 'accepted'),
+                    'confidence': p_.get('confidence', 'mid'), 'sites': [], 'keys': [], 'depends_on': []}
+            for f in ('role', 'origin'):
+                if p_.get(f):
+                    node['lit_role' if f == 'role' else f] = p_[f]
+            added[lid] = node
+            nm = sorted({m.group(0) for m in _NAME_LIKE.finditer(node['statement'])})
+            if nm:
+                probs.append('[참고] %s: 사람 이름 꼴 %s — 논문 주장도 사람 이름 없이' % (lid, ', '.join('"%s"' % h for h in nm)))
+            if node['status'] == 'superseded':
+                probs.append('[참고] %s: 논문 그래프에서 철회된(superseded) 주장과 짝 — 정정·철회 논문인지 본다' % lid)
+        by[ours].setdefault('depends_on', []).append({'id': lid, 'type': LIT_RELS[rel]})
+        if rel in ('same', 'support'):
+            backs.append((ours, lid))
+        if not l.get('verdict'):
+            probs.append('[참고] %s: verdict 없음 — 리뷰어 판정 전%s' % (tag, ' (%s)' % l['by'] if l.get('by') else ''))
+        if not any(isinstance(x, dict) and x.get('kind') == '문헌' and _lit_doi(x.get('what')) == doi for x in (by[ours].get('sources') or [])):
+            probs.append('[참고] %s: 우리 주장 %s 의 sources 에 같은 DOI 가 없다 — 원문 자리(at)·판정은 sources 에' % (tag, ours))
+    out += list(added.values())
+    chain = _main_chain(out)
+    for ours, lid in backs:
+        ms = sorted(m for m, s in chain.items() if ours in s)
+        if ms and added[lid]['status'] == 'proposed':
+            probs.append('%s: 판정 전(proposed) 논문 주장 %s 이 main(%s) 의 전제 사슬에 있는 %s 을 받친다 — 리뷰어가 paper.md 로 판정(accepted)한 뒤에 쓴다'
+                         % (ours, lid, ', '.join(ms), ours))
+    return out, probs
 
 
 def _exploratory_paths(claims):
@@ -2844,7 +2973,7 @@ def render_png(html_path, png_path, browser, size=(1800, 1400), timeout=90):
         note = '[참고] 여백을 자르지 못했다(%s)' % type(e).__name__
     return True, note
 
-_CLAIMS_ONLY = ('mapgraph', 'gaps', 'impact', 'mapdraw', 'mapreport', 'scaffold', 'add', 'link', 'suggest')
+_CLAIMS_ONLY = ('mapgraph', 'gaps', 'impact', 'mapdraw', 'mapreport', 'scaffold', 'add', 'link', 'suggest', 'litcheck')
 
 
 def main():
@@ -2870,6 +2999,10 @@ def main():
     dr.add_argument('--all-edges', action='store_true', help='전체 그림을 v16.0 모양으로 — 아래→위, caveat 상자·간선까지 모두 (v16.1)')
     for p_ in (g, i, dr):                 # v16.12: 구연 — 저자 파일(읽기 전용) + 덧붙임을 읽는 순간 합쳐서
         p_.add_argument('--oral', default=None, metavar='덧붙임.json'); p_.add_argument('--author', default=None, metavar='저자claims.json')
+    for p_ in (g, i):                     # v16.21 (④ 2판): lit_links 가 가리키는 논문 주장을 읽는 순간 합쳐서(파일은 남기지 않는다)
+        p_.add_argument('--lit', default=None, metavar='문헌보관소', help='lit_links 의 논문 주장을 lit:<DOI>#<id> 로 합쳐서 (v16.21)')
+    lc = sub.add_parser('litcheck', help='우리 그래프의 lit_links(논문 주장 짝) 검사 — 보관소의 논문 그래프와 대조 (v16.21)')
+    lc.add_argument('--claims', required=True); lc.add_argument('--store', required=True, metavar='문헌보관소')
     fo = sub.add_parser('focus', help='초점 그림 — 선택한 주장의 받침(상류 2단계·한계·반박)과 영향(하류), 이메일용 (v16.15)')
     fo.add_argument('ids', nargs='+'); fo.add_argument('--claims', default=None); fo.add_argument('-o', required=True, help='쓸 md')
     fo.add_argument('--oral', default=None); fo.add_argument('--author', default=None)
@@ -3030,9 +3163,35 @@ def main():
         print('구연: 쓴 저자 주장 %d · 무대 밖 상류 %d개 · 발표 주장 %d' % (o_.get('used', 0), o_.get('offstage', 0), o_.get('own', 0)))
         gp_, _ = mapgraph(cl_, kind=meta_.get('kind'))
         sys.exit(1 if any(not p_.startswith('[참고]') for p_ in probs + gp_) else 0)
+    if a.cmd == 'litcheck':
+        meta_, cl_ = load_claims_full(a.claims)
+        n = len(meta_.get('lit_links') or []) if isinstance(meta_.get('lit_links'), list) else 0
+        if meta_.get('lit_links') is None:
+            print('lit_links 없음 — 짝을 맺은 논문 주장이 없다'); sys.exit(0)
+        merged, lp = lit_merge(meta_, cl_, a.store)
+        lits = [c for c in merged if c.get('lit')]
+        print('=== 문헌 짝 (lit_links) ===')
+        print('짝 %d · 논문 주장 %d(판정 대기 %d) · 논문 %d편' % (n, len(lits), sum(c.get('status') == 'proposed' for c in lits),
+                                                         len({c['id'].split('#')[0] for c in lits})))
+        for p_ in lp:
+            print(p_ if p_.startswith('[참고]') else '[필수] ' + p_)
+        if not lp:
+            print('문제 없음')
+        sys.exit(1 if any(not p_.startswith('[참고]') for p_ in lp) else 0)
+    if getattr(a, 'lit', None) and getattr(a, 'oral', None):
+        print('[중단] --lit 과 --oral 은 아직 같이 쓰지 않는다(④ 2판) — 저자 claims 에 --claims 로'); sys.exit(2)
     if a.cmd == 'mapgraph':
         meta_, cl_, _ = _claims_arg(a)
+        lp_ = []
+        if a.lit:
+            cl_, lp_ = lit_merge(meta_, cl_, a.lit)
+            print('문헌: 논문 주장 %d개를 lit:<DOI>#<id> 로 합침(보관소 %s)' % (sum(1 for c in cl_ if c.get('lit')), a.lit))
+        elif isinstance(meta_.get('lit_links'), list) and meta_['lit_links']:
+            print('[참고] lit_links %d개 — 논문 주장까지 보려면 --lit <문헌 보관소>, 짝 검사는 litcheck' % len(meta_['lit_links']))
         probs, _ = mapgraph(cl_, sources=a.sources, kind=meta_.get('kind'))
+        for p_ in lp_:
+            print('  [!] %s' % (p_ if p_.startswith('[참고]') else '[필수] ' + p_))
+        probs = probs + lp_
         if meta_.get('kind') in LIT_KINDS:          # v16.19 (④ 1판): 문헌 그래프 — doi·meta.md·id·사람 이름 꼴·판정 대기
             lp = lit_graph_problems(meta_, cl_, a.claims)
             for p_ in lp:
@@ -3040,7 +3199,12 @@ def main():
             probs = probs + lp
         sys.exit(1 if any(not p.startswith('[참고]') for p in probs) else 0)
     elif a.cmd == 'impact':
-        cl = _claims_arg(a)[1]
+        meta_, cl, _ = _claims_arg(a)
+        if a.lit:                                   # v16.21: 논문 주장이 바뀌거나 철회되면 우리 하류 — impact lit:<DOI>#<id> --lit 보관소
+            cl, lp_ = lit_merge(meta_, cl, a.lit)
+            for p_ in lp_:
+                if not p_.startswith('[참고]'):
+                    print('  [!] [필수] %s' % p_)
         if a.sites:
             rows = impact(cl, a.ids, stream=io.StringIO())
             by_id = {c['id']: c for c in cl}

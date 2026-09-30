@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.20'
+EXPECT_VERSION = '16.21'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -2020,6 +2020,147 @@ def t_v1620_line_end_hyphen_found_joined():
             src.resolve('doc:find:' + bad); assert False, bad                                   # 실패 길: 대문자 뒤는 붙이지 않음·없는 낱말
         except KeyError as e:
             assert '없음' in str(e), e
+
+
+# ---- v16.21: ④ 2판 — lit_links(우리 주장 ↔ 논문 주장 짝) · litcheck · --lit 합치기(mapgraph·impact) ----
+
+def _lit_store(status='accepted'):
+    """가짜 보관소 — 논문 둘(fake-a: 논문 그래프 있음, fake-b: 원문만). 논문 주장 r1(evidence)·m1(main)."""
+    import json, tempfile
+    store = tempfile.mkdtemp(prefix='cgls_')
+    pa = _paper_dir(store)
+    p = _lit_claims(pa)
+    g = json.load(open(p))
+    for c in g['claims']:
+        c['status'] = status
+    json.dump(g, open(p, 'w'), ensure_ascii=False)
+    _paper_dir(store, doi='10.9999/fake-b')
+    return store
+
+
+def _ours(d, links, src_doi='10.9999/fake-a'):
+    """우리 가짜 그래프 — main mn ← premise cond ← premise ev · side 는 support 로만 mn 을 받침."""
+    import json
+    cl = [{'id': 'ev', 'role': 'evidence', 'statement': 'E', 'depends_on': []},
+          {'id': 'cond', 'role': 'claim', 'statement': 'C', 'depends_on': [{'id': 'ev', 'type': 'premise'}],
+           'sources': [{'kind': '문헌', 'what': src_doi, 'at': 'PDF 1', 'verdict': '부합'}] if src_doi else []},
+          {'id': 'side', 'role': 'claim', 'statement': 'S', 'depends_on': [{'id': 'ev', 'type': 'premise'}]},
+          {'id': 'mn', 'role': 'main', 'statement': 'M', 'depends_on': [{'id': 'cond', 'type': 'premise'}, {'id': 'side', 'type': 'support'}]}]
+    p = os.path.join(d, 'ours.json')
+    json.dump({'doc': 'Fake', 'lit_links': links, 'claims': cl}, open(p, 'w'), ensure_ascii=False)
+    return p
+
+
+def _link(ours='cond', doi='10.9999/fake-a', theirs='m1', rel='support', verdict='부합', **kw):
+    return dict(ours=ours, doi=doi, theirs=theirs, rel=rel, **({'verdict': verdict} if verdict else {}), **kw)
+
+
+def t_v1621_lit_merge_success_edges():
+    """④ 2판(결정 1·2): lit_links 의 논문 주장만 lit:<DOI>#<id> 로 합친다 — same·support → support 0.7, rebut → rebuttal 0.5, background → context 0.3.
+    논문 주장은 자리·keys·간선 없이, 역할은 lit_role. 우리 파일은 바뀌지 않는다. 문제 없으면 빈 목록."""
+    import json, tempfile
+    store = _lit_store()
+    d = tempfile.mkdtemp(prefix='cglm_')
+    p = _ours(d, [_link(), _link(ours='mn', theirs='r1', rel='background'), _link(ours='side', theirs='r1', rel='rebut', verdict='반대 방향')])
+    before = open(p, encoding='utf8').read()
+    meta, cl = CGm.load_claims_full(p)
+    for c in cl:
+        if c['id'] in ('mn', 'side'):
+            c['sources'] = [{'kind': '문헌', 'what': '10.9999/fake-a', 'at': 'PDF 1', 'verdict': '부합'}]
+    merged, probs = CGm.lit_merge(meta, cl, store)
+    assert probs == [], probs
+    by = {c['id']: c for c in merged}
+    lm, lr = 'lit:10.9999/fake-a#m1', 'lit:10.9999/fake-a#r1'
+    assert by[lm]['lit'] is True and by[lm]['lit_role'] == 'main' and by[lm]['sites'] == [] and by[lm]['depends_on'] == [], by[lm]
+    e = {(c['id'], up): (t, w) for c in merged for up, t, w in CGm._edges([c])[c['id']]}
+    assert e[('cond', lm)] == ('support', 0.7) and e[('mn', lr)] == ('context', 0.3) and e[('side', lr)] == ('rebuttal', 0.5), e
+    assert len([c for c in merged if c.get('lit')]) == 2                                          # r1 은 두 짝이어도 한 번
+    assert open(p, encoding='utf8').read() == before and not any(up.startswith('lit:') for c in cl for up, _, _ in CGm._edges([c])[c['id']])
+    assert CGm.lit_merge({'doc': 'x'}, cl, store) == (cl, [])                                     # lit_links 없으면 그대로
+
+
+def t_v1621_litcheck_hard_errors():
+    """④ 2판: [필수] — ours 없음 · rel·verdict 값 · DOI 모양 · 보관소에 없는 DOI · 논문 claims.json 없음 · 다른 논문의 그래프 · theirs 없음 · 목록 아님."""
+    import json, tempfile
+    store = _lit_store()
+    d = tempfile.mkdtemp(prefix='cglh_')
+    cases = [(_link(ours='nope'), 'ours'), (_link(rel='same-ish'), 'rel'), (_link(verdict='맞음'), 'verdict'), (_link(doi='fake'), 'DOI 모양'),
+             (_link(doi='10.9999/fake-z'), '보관소에 없다'), (_link(doi='10.9999/fake-b'), 'claims.json 이 없다'), (_link(theirs='m9'), '"m9" 가 없다')]
+    for link, word in cases:
+        meta, cl = CGm.load_claims_full(_ours(d, [link]))
+        _, probs = CGm.lit_merge(meta, cl, store)
+        hard = [x for x in probs if not x.startswith('[참고]')]
+        assert len(hard) == 1 and word in hard[0], (word, probs)
+    pb = os.path.join(store, '10.9999_fake-b', 'claims.json')                                    # fake-b 폴더에 fake-a 그래프를 둠
+    json.dump({'kind': '문헌', 'doi': '10.9999/fake-a', 'claims': [{'id': 'm1', 'statement': 'x'}]}, open(pb, 'w'))
+    meta, cl = CGm.load_claims_full(_ours(d, [_link(doi='10.9999/fake-b')]))
+    assert any('문헌 그래프가 아니다' in x for x in CGm.lit_merge(meta, cl, store)[1])
+    assert CGm.lit_merge({'lit_links': {'a': 1}}, [], store)[1][0].startswith('lit_links 는 목록')
+
+
+def t_v1621_unjudged_lit_backing_main_chain_is_hard():
+    """④ 2판(결정 5): 판정 전(proposed) 논문 주장이 same·support 로 main 의 전제(premise) 사슬 안 주장을 받치면 [필수].
+    성공 길: 판정됨(accepted) · 사슬 밖(support 로만 main 에 닿는 side) · rebut/background 짝은 [필수] 아님."""
+    import tempfile
+    d = tempfile.mkdtemp(prefix='cglu_')
+    sp = _lit_store(status='proposed')
+    for link, hard_expected in ((_link(), True), (_link(ours='mn', rel='same'), True), (_link(ours='side'), False),
+                                (_link(rel='rebut', verdict='반대 방향'), False), (_link(rel='background'), False)):
+        meta, cl = CGm.load_claims_full(_ours(d, [link]))
+        _, probs = CGm.lit_merge(meta, cl, sp)
+        hard = [x for x in probs if not x.startswith('[참고]')]
+        assert bool(hard) == hard_expected and all('판정 전' in x and 'main(mn)' in x for x in hard), (link, probs)
+    meta, cl = CGm.load_claims_full(_ours(d, [_link()]))
+    assert not [x for x in CGm.lit_merge(meta, cl, _lit_store())[1] if not x.startswith('[참고]')]   # accepted 면 조용
+
+
+def t_v1621_lit_notes():
+    """④ 2판 [참고]: verdict 없음(by 표시) · 우리 sources 에 같은 DOI 없음 · 같은 짝 두 번 · 논문 주장 사람 이름 꼴 · 철회된 논문 주장."""
+    import json, tempfile
+    store = _lit_store()
+    d = tempfile.mkdtemp(prefix='cgln_')
+    meta, cl = CGm.load_claims_full(_ours(d, [_link(verdict=None, by='AI 제안'), _link(verdict=None, by='AI 제안')], src_doi=None))
+    _, probs = CGm.lit_merge(meta, cl, store)
+    assert all(x.startswith('[참고]') for x in probs), probs
+    assert any('verdict 없음' in x and 'AI 제안' in x for x in probs) and any('sources 에 같은 DOI 가 없다' in x for x in probs)
+    assert any('같은 짝이 두 번' in x for x in probs), probs
+    pc = os.path.join(store, '10.9999_fake-a', 'claims.json')
+    g = json.load(open(pc)); g['claims'][1]['statement'] = 'Kim et al. 이 보고(2021)'; g['claims'][1]['status'] = 'superseded'
+    json.dump(g, open(pc, 'w'), ensure_ascii=False)
+    meta, cl = CGm.load_claims_full(_ours(d, [_link()]))
+    probs = CGm.lit_merge(meta, cl, store)[1]
+    assert any('사람 이름 꼴' in x for x in probs) and any('철회된' in x for x in probs) and all(x.startswith('[참고]') for x in probs), probs
+
+
+def t_v1621_cli_litcheck_mapgraph_impact_lit():
+    """④ 2판 CLI: litcheck(종료 0/1) · mapgraph --lit(논문 주장이 순서에, [필수] 면 종료 1) · --lit 없으면 한 줄 안내 ·
+    impact lit:<DOI>#<id> --lit 이 우리 하류를 보인다 · --oral 과 같이 쓰면 종료 2 · add 가 lit_links 를 지키고 판정 전이면 litcheck 종료 1."""
+    import json, tempfile
+    store = _lit_store()
+    d = tempfile.mkdtemp(prefix='cglc_')
+    p = _ours(d, [_link()])
+    run = lambda *a: subprocess.run([sys.executable, CGm.__file__] + list(a), capture_output=True, text=True)
+    r = run('litcheck', '--claims', p, '--store', store)
+    assert r.returncode == 0 and '짝 1 · 논문 주장 1(판정 대기 0)' in r.stdout and '문제 없음' in r.stdout, r.stdout
+    r = run('mapgraph', '--claims', p, '--lit', store)
+    assert r.returncode == 0 and 'lit:10.9999/fake-a#m1' in r.stdout and '합침' in r.stdout, r.stdout[-800:]
+    r = run('mapgraph', '--claims', p)
+    assert r.returncode == 0 and 'lit_links 1개' in r.stdout and 'lit:10.9999' not in r.stdout, r.stdout[-600:]
+    r = run('impact', '--claims', p, '--lit', store, 'lit:10.9999/fake-a#m1')
+    assert r.returncode == 0 and 'cond' in r.stdout and 'mn' in r.stdout and '[필수]' in r.stdout, r.stdout
+    r = run('mapgraph', '--claims', p, '--lit', store, '--oral', p, '--author', p)
+    assert r.returncode == 2, r.stdout
+    q = os.path.join(d, 'ours2.json')
+    r = run('add', '--claims', p, '--id', 'nw', '--statement', 'N', '-o', q)
+    assert r.returncode == 0 and json.load(open(q))['lit_links'] == [_link()], r.stdout            # 맨 위 칸 보존
+    sp = _lit_store(status='proposed')                                                            # 실패 길: 판정 전 → [필수] 종료 1
+    r = run('litcheck', '--claims', p, '--store', sp)
+    assert r.returncode == 1 and '[필수]' in r.stdout and '판정 대기 1' in r.stdout, r.stdout
+    r = run('mapgraph', '--claims', p, '--lit', sp)
+    assert r.returncode == 1 and '판정 전' in r.stdout, r.stdout[-600:]
+    open(os.path.join(d, 'none.json'), 'w').write(json.dumps({'claims': []}))
+    r = run('litcheck', '--claims', os.path.join(d, 'none.json'), '--store', store)
+    assert r.returncode == 0 and 'lit_links 없음' in r.stdout
 
 
 if __name__ == '__main__':

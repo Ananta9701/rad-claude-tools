@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.20
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.21
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -308,7 +308,7 @@ cd /tmp && npm install mermaid@11 && python3 ~/rct/claim_graph.py focus <id> --c
 ## 3-8. 문헌 그래프 — 논문 한 편의 주장 (v16.19 1판, 사용자 09-30 큰 방향 ④)
 
 선행 논문의 주장도 같은 claims.json 규약으로 적는다. **자료는 Drive 에만**(`문헌 보관소/<DOI 폴더>/claims.json` — 그 논문의 `paper.md`·`meta.md` 옆),
-**사람 이름 없이 DOI 로만**. 공개 저장소에는 도구와 가짜 시험 파일(가짜 DOI `10.9999/fake-…`)만. 우리 주장과의 짝(`lit_links`)은 다음 판.
+**사람 이름 없이 DOI 로만**. 공개 저장소에는 도구와 가짜 시험 파일(가짜 DOI `10.9999/fake-…`)만. 우리 주장과의 짝은 아래 `lit_links`(v16.21 2판).
 
 ```json
 {"kind": "문헌", "doc": "10.9999/fake-a", "doi": "10.9999/fake-a", "paper_sha": "<meta.md 의 sha>",
@@ -338,6 +338,37 @@ cd /tmp && npm install mermaid@11 && python3 ~/rct/claim_graph.py focus <id> --c
 - 쪽 표지를 sources 의 `at` 으로 옮길 때: `DocSource(paper.md).mark_of('doc:find:…')` 가 그 문단의 표지를 돌려준다.
   **옛 표지 `[p.N]`**(literature 0.6 까지 — N 은 PDF 쪽)은 `PDF N`, `[p.N · 인쇄]` 는 `[p.인쇄 · PDF N]` 으로 풀어 돌려준다(v16.20 — 인쇄 쪽으로 읽히지 않게).
   `doc:sec:PDF N`·`doc:sec:p.인쇄` 는 쪽 번호로 맞춘다(옛 표지도 · `PDF 1` 이 `PDF 10` 을 집지 않는다).
+
+### 3-8-1. 짝 `lit_links` · `litcheck` · `--lit` (v16.21 2판, 사용자 09-30 결정 1·2·5)
+
+우리 그래프 **맨 위 칸** `lit_links` 에 우리 주장과 논문 주장의 짝을 적는다(mapdiff 의 `pairs_with` 는 같은 문서의 두 그래프 짝이라 섞지 않는다).
+
+```json
+"lit_links": [{"ours": "cond-up", "doi": "10.9999/fake-a", "theirs": "m1", "rel": "support",
+               "verdict": "부합", "by": "AI 제안", "date": "2026-10-01"}]
+```
+
+| rel(우리 쪽에서) | 뜻 | 합친 그래프의 간선 |
+|---|---|---|
+| `same` | 같은 뜻 — 우리 결과가 그 논문 주장을 되풀이 | support 0.7 (premise 로 올리지 않는다) |
+| `support` | 받침 — 그 논문 주장이 우리 주장을 받친다 | support 0.7 |
+| `rebut` | 반박 — 반대 결과 | rebuttal 0.5 |
+| `background` | 배경 | context 0.3 |
+
+- `verdict` 는 sources 와 같은 넷(`부합`·`부분`·`근거 없음`·`반대 방향`) — **리뷰어가** 판정한다(1차 회신 뒤 — 블라인드). AI 가 제안한 짝은 `by: "AI 제안"`.
+  원문 **자리**(쪽·판정)는 지금처럼 `sources` 에 — `lit_links` 는 그 위의 **주장 단위** 층이다.
+- **`--lit <문헌 보관소>`**(`mapgraph`·`impact`): 읽는 순간 짝이 가리키는 **논문 주장만** 합친다(합친 파일을 남기지 않음, 우리 파일은 그대로 — 구연 덧붙임과 같은 방식).
+  논문 주장 id 는 `lit:<DOI>#<id>`, `lit: true`, 역할은 `lit_role` — 자리·keys·간선·sources 없이(자리 검사는 그 논문 paper.md 에서). 논문 주장 쪽의 상류는 합치지 않는다.
+  `impact --claims 우리.json --lit <보관소> lit:<DOI>#m1` → 논문 주장이 정정·철회되면 우리 하류. `--oral` 과는 아직 같이 쓰지 않는다(종료 2).
+  `--lit` 없이 `mapgraph` 하면 `lit_links N개` 안내 한 줄.
+- **`litcheck --claims 우리.json --store <보관소>`** — 종료 1 이면 [필수]:
+
+| 판정 | 내용 |
+|---|---|
+| 필수 | lit_links 가 목록 아님 · 짝 모양 · `ours` 가 우리 그래프에 없음 · `rel`·`verdict` 값 · DOI 모양 · **보관소에 없는 DOI** · 그 논문 폴더에 `claims.json` 없음 · 그 claims.json 이 이 논문의 문헌 그래프가 아님(kind·doi) · `theirs` 없음 · **판정 전(proposed) 논문 주장이 same·support 로 main 의 전제(premise) 사슬 안 주장을 받침**(결정 5 — 탐색적 표지와 같은 사슬) |
+| 참고 | verdict 없음(`by` 함께) · 우리 주장 `sources` 에 같은 DOI 없음 · 같은 짝 두 번 · 논문 주장에 사람 이름 꼴 · 철회된(superseded) 논문 주장과 짝 |
+
+- 다음 판(3판): `mapstale --lit`(짝 맺을 때 논문 주장 글 지문 — 바뀌거나 철회되면 [변경]) · `mapdraw`·`focus --lit`(청록 상자) · `gaps` 가 `부합` 짝을 "문헌 있음" 으로.
 
 ## 3-3. 관계도 그림 `mapdraw` (v16, 전체 그림 v16.1)
 
@@ -397,6 +428,7 @@ pptx 는 `deck_toolkit.py <명령> deck.pptx --claims ...`, docx/md 는 `claim_g
 | `mapfreeze doc --claims -o [--sources 폴더]` | 검증을 **실제로** 마친 뒤 | 해시 기록 = "확인했다" 선언. `--sources` 면 근거 원문도(§3-2) — 보관소에 없는 DOI 가 있으면 [필수]로 멈춤(v16.10). 폴더 없이 다시 freeze 하면 전 근거 기록은 그대로 |
 | `mapstale doc --claims [--sources 폴더]` | 그 뒤 어떤 편집이든 한 뒤 | v16: `--sources` 면 근거 원문 `[같음]`·`[변환]`·`[변경]`(§3-2). [변경] 주장, [필수]/[참고] 하류, 기록 없는 새 주장. v15.5: freeze 가 `verified.keys` 해시를 함께 적어 **keys 만 바꾼 그래프도 [변경]**(구판 freeze 는 그 해시가 없어 검사 안 함). 출력 끝에 "실제로 바뀐 주장의 자리(직접)"를 하류 전파와 구분해 낸다 |
 | `suggest --claims [-o 후보.md] [--min-shared 2] [--min-caveat 3]` | 관계도를 다 그린 뒤 | 새 주장 후보 [참고] — 안 이어진 이웃 · 안 쓰인 근거 · 공통 한계(§3-7, v16.17). claims 는 바꾸지 않는다 |
+| `litcheck --claims 우리.json --store <문헌 보관소>` · `mapgraph`·`impact … --lit <보관소>` | 논문 주장과 짝을 맺은 뒤 | 짝 검사 · 논문 주장을 `lit:<DOI>#<id>` 로 합쳐 검사·영향(§3-8-1, v16.21) |
 | `gaps --claims -o 작업표.md` · `gaps --to-instr 작업표.md -o 검증지시.md` | 근거 채우기 전 | 근거 공백 작업표 · 채운 표 → literature 검증지시 (§3-4, v16.5) |
 | `mapdraw --claims -o 관계도.md [--impact ID …] [--text] [--all-edges]` | 설명·검토용 그림 | Mermaid 글(§3-3, v16 · 전체 그림 v16.1) |
 | `focus <id…> (--claims … \| --oral … --author …) -o 초점.md [--png 초점.png] [--pptx 덱] [--up 2] [--ids]` | 교신저자 설명·구연 준비 | §3-6 초점 그림 — 받침 2단계·한계·반박·영향, 쉬운 말 범례, 로컬 브라우저로 PNG (v16.15) |
