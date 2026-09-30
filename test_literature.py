@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.8.5'
+EXPECT_VERSION = '0.8.6'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 

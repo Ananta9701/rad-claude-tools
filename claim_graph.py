@@ -48,7 +48,7 @@ import sys
 import unicodedata
 import zipfile
 
-__version__ = '16.21'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.22'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -525,6 +525,75 @@ def _lit_dir(store, doi):
     return None
 
 
+def _lit_paper(store, doi):
+    """(문제 또는 None, {id: 논문 주장}) — 보관소의 그 논문 폴더 claims.json(kind 문헌·같은 doi)."""
+    dd = _lit_dir(store, doi)
+    if dd is None:
+        return '보관소에 없다 — 원문을 받은 논문만 짝을 맺는다', None
+    if not os.path.exists(os.path.join(dd, 'claims.json')):
+        return '논문 그래프 %s/claims.json 이 없다 — 초안(문헌 Cowork)·판정(리뷰어) 뒤에 짝을 맺는다' % os.path.basename(dd), None
+    pm, pc = load_claims_full(os.path.join(dd, 'claims.json'))
+    if pm.get('kind') not in LIT_KINDS or _lit_doi(pm.get('doi')) != doi:
+        return ('%s/claims.json 이 이 논문의 문헌 그래프가 아니다(kind %s · doi %s)' % (os.path.basename(dd), pm.get('kind'), pm.get('doi')), None)
+    return None, {c.get('id'): c for c in pc}
+
+
+def _lit_fp(p_):
+    """v16.22: 논문 주장 글 지문 — statement·status(철회도 바뀜으로)."""
+    return _fingerprint((p_.get('statement') or '') + '|' + (p_.get('status') or 'accepted'))
+
+
+def lit_label(c):
+    """v16.22: 그림 상자 이름 — `문헌 <DOI 뒷부분> · <id>`(lit id 의 : / # 는 Mermaid 에 넣지 않는다, 사람 이름 없이)."""
+    return '문헌 %s · %s' % (str(c.get('lit_doi', '')).split('/', 1)[-1], c.get('lit_theirs', ''))
+
+
+def lit_freeze(meta, claims, store, at=None):
+    """v16.22 (④ 3판): 짝마다 논문 주장 글 지문을 lit_links[i].verified 에 적는다 — 구연 offstage_verified 와 같은 몫.
+    lit_merge 에 [필수] 가 있으면 아무것도 적지 않고 SystemExit. 반환 적은 짝 수."""
+    import datetime
+    at = at or datetime.date.today().isoformat()
+    _, probs = lit_merge(meta, claims, store)
+    hard = [p_ for p_ in probs if not p_.startswith('[참고]')]
+    if hard:
+        raise SystemExit('[멈춤] 문헌 짝(lit_links)에 [필수] %d개 — 검증 기록(mapfreeze --lit)을 하지 않았다(litcheck 로 고친 뒤 다시):\n  %s'
+                         % (len(hard), '\n  '.join(hard[:20])))
+    papers, n = {}, 0
+    for l in meta.get('lit_links') or []:
+        doi = _lit_doi(l.get('doi'))
+        if doi not in papers:
+            papers[doi] = _lit_paper(store, doi)
+        l['verified'] = {'at': at, 'text': _lit_fp(papers[doi][1][str(l.get('theirs'))])}
+        n += 1
+    return n
+
+
+def lit_stale(meta, store):
+    """v16.22 (④ 3판): ([(우리 id, 까닭)], [기록 없는 짝]) — 짝 맺을 때(mapfreeze --lit) 적은 논문 주장 글 지문과 지금을 비교.
+    논문 그래프·주장이 없어짐 · 철회(superseded) · 글이 바뀜 → 우리 쪽 주장 [변경](mapstale 이 하류로 전파)."""
+    changed, unver, papers = [], [], {}
+    links = meta.get('lit_links')
+    for k, l in enumerate(links if isinstance(links, list) else [], 1):
+        if not isinstance(l, dict):
+            continue
+        ours, doi, theirs = l.get('ours'), _lit_doi(l.get('doi')), str(l.get('theirs') or '')
+        tag = '문헌 짝 %s → %s' % (ours, lit_id(doi, theirs))
+        v = l.get('verified')
+        if not v:
+            unver.append(tag); continue
+        if doi not in papers:
+            papers[doi] = _lit_paper(store, doi)
+        err, pby = papers[doi]
+        if err or theirs not in pby:
+            changed.append((ours, '%s: 논문 주장을 찾을 수 없음(%s)' % (tag, err or '"%s" 없음' % theirs))); continue
+        p_ = pby[theirs]
+        if p_.get('status') == 'superseded':
+            changed.append((ours, '%s: 논문 주장이 철회됨(superseded — 정정·철회 논문?)' % tag))
+        elif _lit_fp(p_) != v.get('text'):
+            changed.append((ours, '%s: 논문 주장 글(statement·status)이 바뀜 (%s 기록 뒤)' % (tag, v.get('at', '?'))))
+    return changed, unver
+
+
 def _main_chain(claims):
     """{살아 있는 main: premise 만 따라 닿는 주장 집합(main 포함)} — 탐색적 표지의 전제 사슬과 같은 정의."""
     by = {c['id']: c for c in claims}
@@ -575,18 +644,7 @@ def lit_merge(meta, claims, store):
         if not _DOI_SHAPE.match(doi):
             probs.append('%s: doi "%s" 가 DOI 모양(10.xxxx/…)이 아니다' % (tag, l.get('doi'))); continue
         if doi not in papers:
-            dd = _lit_dir(store, doi)
-            if dd is None:
-                papers[doi] = ('보관소에 없다 — 원문을 받은 논문만 짝을 맺는다', None)
-            elif not os.path.exists(os.path.join(dd, 'claims.json')):
-                papers[doi] = ('논문 그래프 %s/claims.json 이 없다 — 초안(문헌 Cowork)·판정(리뷰어) 뒤에 짝을 맺는다' % os.path.basename(dd), None)
-            else:
-                pm, pc = load_claims_full(os.path.join(dd, 'claims.json'))
-                if pm.get('kind') not in LIT_KINDS or _lit_doi(pm.get('doi')) != doi:
-                    papers[doi] = ('%s/claims.json 이 이 논문의 문헌 그래프가 아니다(kind %s · doi %s)'
-                                   % (os.path.basename(dd), pm.get('kind'), pm.get('doi')), None)
-                else:
-                    papers[doi] = (None, {c.get('id'): c for c in pc})
+            papers[doi] = _lit_paper(store, doi)
             if papers[doi][0]:
                 probs.append('문헌 %s: %s' % (doi, papers[doi][0]))
         err, pby = papers[doi]
@@ -602,8 +660,8 @@ def lit_merge(meta, claims, store):
         lid = lit_id(doi, theirs)
         if lid not in added:
             p_ = pby[theirs]
-            node = {'id': lid, 'lit': True, 'statement': p_.get('statement', ''), 'status': p_.get('status', 'accepted'),
-                    'confidence': p_.get('confidence', 'mid'), 'sites': [], 'keys': [], 'depends_on': []}
+            node = {'id': lid, 'lit': True, 'lit_doi': doi, 'lit_theirs': theirs, 'statement': p_.get('statement', ''),
+                    'status': p_.get('status', 'accepted'), 'confidence': p_.get('confidence', 'mid'), 'sites': [], 'keys': [], 'depends_on': []}
             for f in ('role', 'origin'):
                 if p_.get(f):
                     node['lit_role' if f == 'role' else f] = p_[f]
@@ -874,9 +932,20 @@ def _lit(c):
     return [x for x in (c.get('sources') or []) if isinstance(x, dict) and x.get('kind') in ('문헌', '교과서')]
 
 
-def find_gaps(claims):
+def _lit_ok(lit_links):
+    """v16.22 (④ 3판): {우리 id: {DOI}} — same·support 짝이고 verdict 부합(리뷰어 판정)인 것만. gaps 가 sources 와 같게 문헌으로 센다."""
+    out = {}
+    for l in (lit_links if isinstance(lit_links, list) else []):
+        if isinstance(l, dict) and l.get('rel') in ('same', 'support') and l.get('verdict') == '부합' and l.get('ours'):
+            out.setdefault(l['ours'], set()).add(_lit_doi(l.get('doi')))
+    return out
+
+
+def find_gaps(claims, lit_links=None):
     """공백 목록 [(id, role, [공백 종류], 검색어)]. 종류: 문헌 없음 · 근거 하나(sources 1 또는 받침 간선 1) · 약한 고리 · 외톨이.
-    철회(superseded)한 주장은 뺀다. 간선이 하나도 없는 그래프는 외톨이를 줄마다 내지 않는다(요약은 표 머리에)."""
+    철회(superseded)한 주장은 뺀다. 간선이 하나도 없는 그래프는 외톨이를 줄마다 내지 않는다(요약은 표 머리에).
+    lit_links(v16.22): same·support 짝이 verdict 부합이면 그 DOI 를 문헌으로 센다(sources 에 같은 DOI 가 있으면 하나로)."""
+    okl = _lit_ok(lit_links)
     edges = _edges(claims)
     rev = _dependents(claims)
     noedge = len(claims) > 1 and not any(edges.values())
@@ -887,6 +956,8 @@ def find_gaps(claims):
             continue
         cid, role, kinds = c['id'], c.get('role'), []
         lit = _lit(c)
+        have = {_lit_doi(x.get('what')) for x in lit if x.get('kind') == '문헌'}
+        lit = lit + [{'kind': '문헌', 'what': d, 'lit_link': True} for d in sorted(okl.get(cid, ())) if d not in have]
         if role in LIT_ROLES and not lit:
             cited = any(_CITE_BRACKET.search(t or '') for t in [c.get('statement', '')] + list(c.get('sites', [])))
             kinds.append(GAP_CITED if cited else '문헌 없음')
@@ -912,10 +983,11 @@ def _gap_kind(k):
     return k if k == GAP_CITED else k.split(' — ')[0]
 
 
-def gaps_table(claims, name='원고'):
+def gaps_table(claims, name='원고', lit_links=None):
     """작업표 md. 1부 = 찾을 공백(공백마다 받침·반박 두 줄), 2부 = 인용은 있는데 sources 만 빈 주장(기입 한 줄).
     사람이 채울 칸: 검색어(역할 대화창이 만든다) · 후보 DOI · 출처(AI 제안/사람) · 입수 · 판정."""
-    rows, noedge = find_gaps(claims)
+    rows, noedge = find_gaps(claims, lit_links)
+    nlit = sum(len(v) for v in _lit_ok(lit_links).values())
     kinds = {}
     for _, _, ks, _ in rows:
         for k in ks:
@@ -929,7 +1001,8 @@ def gaps_table(claims, name='원고'):
          '> **규칙(사용자 09-29)**: 후보 논문은 이 표에만 적는다. **AI 가 제안한 논문(대화창 웹 검색·Gemini 조사)은 출처 칸에 "AI 제안"** — '
          'DOI 확인 → 원문 입수(literature) → 리뷰어 판정을 거친 것만 claims 의 sources 에 옮긴다. 받침만 찾지 말고 **반박 줄도 찾는다**(없으면 판정 칸에 "찾았으나 없음").',
          '> **검색어 칸은 비어 있다** — 역할 대화창이 공백(주장 문장)을 읽고 만든다(원고 추적용 keys 는 검색어로 쓰지 않는다).',
-         '> 문헌 공백은 claim·main·background 만 본다(evidence = 우리 결과는 뺀다). 채운 표 → `claim_graph.py gaps --to-instr 이 표.md -o 검증지시.md` → literature(Cowork).', '',
+         '> 문헌 공백은 claim·main·background 만 본다(evidence = 우리 결과는 뺀다). 채운 표 → `claim_graph.py gaps --to-instr 이 표.md -o 검증지시.md` → literature(Cowork).',
+         ] + (['> 문헌 짝(lit_links) 중 same·support 이고 판정 `부합` 인 %d개는 문헌으로 셌다(sources 와 같게).' % nlit] if nlit else []) + ['',
          '## 1. 찾을 공백 %d개' % len(find), '',
          '| 번호 | 주장 | 역할 | 공백 | 방향 | 검색어 | 후보 DOI | 출처 | 입수 | 판정 |', '|---|---|---|---|---|---|---|---|---|---|']
     for k, (cid, role, ks, terms) in enumerate(find, 1):
@@ -1113,6 +1186,9 @@ _ROLE_KO = {'main': '주 결론', 'evidence': '근거(결과)', 'premise': '근�
             'rebuttal': '반박', 'caveat': '한계'}
 
 
+_LIT_STYLE = 'fill:#ccfbf1,stroke:#0f766e,color:#111'   # v16.22: 선행 연구(짝 맺은 논문 주장) — 청록 하나
+
+
 def _mapdraw_compact(claims, text=False):
     """v16.1 전체 그림 기본(사용자 09-29 — 저자 51주장·간선 83 이 6614×1033 px 로 화면 폭에서 못 읽힘):
     왼쪽(근거) → 오른쪽(main), caveat 상자·간선은 접어 걸린 상자에 '한계 N', 역할별 색, 간선 없는 상자는 그림 밖 목록."""
@@ -1140,7 +1216,7 @@ def _mapdraw_compact(claims, text=False):
          '', '```mermaid', 'flowchart LR']
     groups = {}                         # v16.6 (사용자 09-29): group 칸 → Mermaid subgraph — 증례마다 묶어 선이 다른 증례 상자를 가로질러 읽히지 않게
     for cid, c in by_id.items():
-        if cid in linked and c.get('group'):
+        if cid in linked and c.get('group') and not c.get('lit'):
             groups.setdefault(str(c['group']), []).append(cid)
     gid = {g: 'g%d' % k for k, g in enumerate(groups, 1)}
     node_lines = {}
@@ -1148,7 +1224,9 @@ def _mapdraw_compact(claims, text=False):
         if cid not in linked:
             continue
         a, b = _ROLE_SHAPE.get(c.get('role'), ('[', ']'))
-        lab = [cid, '%s·%s' % (c.get('role') or '-', c.get('confidence', 'mid'))]
+        lab = [lit_label(c) if c.get('lit') else cid, '%s·%s' % ((c.get('lit_role') if c.get('lit') else c.get('role')) or '-', c.get('confidence', 'mid'))]
+        if c.get('lit') and c.get('status') == 'proposed':   # v16.22: 논문 주장 — 리뷰어 판정 전
+            lab.append('판정 전')
         if ncav.get(cid):
             lab.append('한계 %d' % ncav[cid])
         if text and c.get('statement'):
@@ -1167,7 +1245,12 @@ def _mapdraw_compact(claims, text=False):
             L.append('    direction LR')
         L += ['    ' + node_lines[cid] for cid in members]
         L.append('  end')
-    L += ['  ' + line for cid, line in node_lines.items() if not by_id[cid].get('group')]
+    lits = [cid for cid in node_lines if by_id[cid].get('lit')]
+    if lits:                            # v16.22 (④ 3판): 짝 맺은 논문 주장은 따로 묶은 상자 하나(청록)
+        L.append('  subgraph glit["선행 연구"]')
+        L += ['    ' + node_lines[cid] for cid in lits]
+        L.append('  end')
+    L += ['  ' + line for cid, line in node_lines.items() if not by_id[cid].get('group') and not by_id[cid].get('lit')]
     for up, typ, cid in drawn:
         L.append('  %s %s %s' % (nid[up], _EDGE_ARROW.get(typ, '-->'), nid[cid]))
     if len(groups) > 1:                 # v16.8 (사용자 09-29): 보이지 않는 연결로 묶음을 처음 나온 순서대로 위→아래(계단) — 순서가 뒤집히고
@@ -1185,7 +1268,12 @@ def _mapdraw_compact(claims, text=False):
     off = [nid[cid] for cid in by_id if cid in linked and by_id[cid].get('offstage')]
     if off:                             # v16.12: 구연의 무대 밖 상류 — 흐린 글·가는 점선(화면에는 없고 받침으로만)
         L += ['  classDef offstage fill:#fafafa,color:#888888,stroke:#aaaaaa,stroke-dasharray:2 3', '  class %s offstage' % ','.join(off)]
+    lit_ids = [nid[cid] for cid in by_id if cid in linked and by_id[cid].get('lit')]
+    if lit_ids:
+        L += ['  classDef lit %s' % _LIT_STYLE, '  class %s lit' % ','.join(lit_ids)]
     L += ['```', '']
+    if lit_ids:
+        L.append('청록 "선행 연구" = 짝 맺은 논문 주장(`문헌 <DOI 뒷부분> · id`, --lit) — "판정 전" 은 리뷰어 판정 전(proposed).')
     if exc:
         L.append('흰 상자 + 점선 테두리 + "배제" = 배제된 감별(status excluded) — 배제 근거에서 "반박"(x) 선이 들어온다.')
     if any(by_id[cid].get('exploratory') is True for cid in linked):
@@ -1222,7 +1310,7 @@ def mapdraw(claims, changed=None, text=False, stream=sys.stdout, all_edges=False
             lvl[cid] = 'must' if sc >= IMPACT_CUTOFF else 'ref'
         for x in changed:
             lvl[x] = 'changed'
-        title = 'impact: %s' % ', '.join(changed)
+        title = 'impact: %s' % ', '.join(lit_label(by_id[x]) if by_id.get(x, {}).get('lit') else x for x in changed)
     nid = {cid: 'n%d' % k for k, cid in enumerate(by_id, 1)}
     L = ['# 관계도 — %s' % title, '',
          '> claim_graph.py v%s mapdraw. 화살표: 근거 → 그것에 기대는 주장. 굵은 선 premise · 실선 support · 점선 context · '
@@ -1232,7 +1320,7 @@ def mapdraw(claims, changed=None, text=False, stream=sys.stdout, all_edges=False
         if cid not in keep:
             continue
         a, b = _ROLE_SHAPE.get(c.get('role'), ('[', ']'))
-        lab = [cid, '%s·%s' % (c.get('role') or '-', c.get('confidence', 'mid'))]
+        lab = [lit_label(c) if c.get('lit') else cid, '%s·%s' % ((c.get('lit_role') if c.get('lit') else c.get('role')) or '-', c.get('confidence', 'mid'))]
         if text and c.get('statement'):
             st = c['statement']
             lab.append(st[:40] + ('…' if len(st) > 40 else ''))
@@ -1242,6 +1330,8 @@ def mapdraw(claims, changed=None, text=False, stream=sys.stdout, all_edges=False
             lab.append('배제')
         if c.get('exploratory') is True:            # v16.17: 탐색적 주장 — 글자만(색은 더하지 않는다)
             lab.append('탐색')
+        if c.get('lit') and c.get('status') == 'proposed':
+            lab.append('판정 전')
         L.append('  %s%s"%s"%s' % (nid[cid], a, '<br/>'.join(_mm(x) for x in lab), b))   # 줄바꿈 <br/> 은 두고 글만 이스케이프
     for cid in by_id:
         if cid not in keep:
@@ -1262,6 +1352,9 @@ def mapdraw(claims, changed=None, text=False, stream=sys.stdout, all_edges=False
     off = [nid[c['id']] for c in claims if c.get('offstage') and c['id'] in keep and c['id'] in nid]
     if off:
         L += ['  classDef offstage fill:#fafafa,color:#888888,stroke:#aaaaaa,stroke-dasharray:2 3', '  class %s offstage' % ','.join(off)]
+    lit_ids = [nid[c['id']] for c in claims if c.get('lit') and c['id'] in keep and c['id'] not in lvl]
+    if lit_ids:                         # v16.22: 논문 주장 — 바뀜·필수·참고 색이 우선
+        L += ['  classDef lit %s' % _LIT_STYLE, '  class %s lit' % ','.join(lit_ids)]
     L += ['```', '']
     if lvl:
         L.append('빨강 = 바뀐 주장 · 노랑 = 다시 볼 것(필수, 강도 ≥ %.2f) · 파랑 = 참고.' % IMPACT_CUTOFF)
@@ -1601,7 +1694,7 @@ def mapfreeze(resolve, claims, at=None, sources=None, stream=None):
     return claims
 
 
-def mapstale(resolve, claims, stream=sys.stdout, sources=None):
+def mapstale(resolve, claims, stream=sys.stdout, sources=None, lit=None):
     """sources(v16): 근거 원문 폴더(문헌 보관소·교과서 분할). 주면 freeze 때 적은 근거 원문과 비교한다 —
     본문이 같으면 쪽 표지·머리말이 바뀌어도 알리지 않고(형식만), 원 파일(PDF·XML sha)이 같은데 본문이 다르면 '변환 바뀜' 으로 따로
     (하류 전파 없음, '근거 없음'·'부분' 판정만 다시 볼 것), 원 파일이 다르거나 sha 가 없는데 본문이 다르면 [변경]."""
@@ -1659,9 +1752,19 @@ def mapstale(resolve, claims, stream=sys.stdout, sources=None):
                 continue
             changed.append(c['id']); detail.append('%s: 근거 원문 %s 의 글이 바뀜%s' % (
                 c['id'], label, ' (원 파일도 다름)' if was.get('orig') and now.get('orig') else '')); break
+    lit_unver = []
+    if lit is not None:                   # v16.22 (④ 3판): (lit_stale 결과) 논문 주장이 바뀌거나 철회되면 우리 쪽 주장을 [변경] 으로 — 하류로 전파
+        for cid, d in lit[0]:
+            detail.append(d)
+            if cid not in changed:
+                changed.append(cid)
+        lit_unver = lit[1]
     print('=== 검증 이후 변경 ===', file=stream)
     if unverified:
         print('  [!] 아직 검증 기록 없음: %s' % ', '.join(unverified), file=stream)
+    if lit_unver:
+        print('  [!] 문헌 짝 검증 기록 없음 %d개(mapfreeze --lit 으로 기록): %s' % (len(lit_unver), ', '.join(lit_unver[:10])), file=stream)
+        unverified = unverified + lit_unver
     for d in detail:
         print('  [변경] %s' % d, file=stream)
     for cid in ex_added:
@@ -2674,6 +2777,19 @@ def load_oral(overlay_path, author_path):
     return oral_merge(am, ac, ov, author_sha=_file_sha(author_path))
 
 
+def _lit_apply(a, meta, cl):
+    """v16.22: --lit 이면 lit_merge 로 합친 claims([필수] 는 알리고 그대로 그린다), --oral 과 같이면 종료 2."""
+    if not getattr(a, 'lit', None):
+        return cl
+    if getattr(a, 'oral', None):
+        print('[중단] --lit 과 --oral 은 아직 같이 쓰지 않는다(④) — 저자 claims 에 --claims 로'); sys.exit(2)
+    merged, lp = lit_merge(meta, cl, a.lit)
+    for p_ in lp:
+        if not p_.startswith('[참고]'):
+            print('  [!] [필수] %s' % p_)
+    return merged
+
+
 def _claims_arg(a):
     """--claims 하나, 또는 --oral 덧붙임 + --author 저자 파일(v16.12). (meta, claims, 구연 문제). 잘못 주면 종료 코드 2."""
     if getattr(a, 'oral', None) or getattr(a, 'author', None):
@@ -2704,8 +2820,11 @@ _FOCUS_STYLE = {'focus': 'fill:#ffd8a8,stroke:#c2410c,stroke-width:3px,color:#11
                 'limit': 'fill:#fff3cd,stroke:#b58105,stroke-dasharray:4 3,color:#111',
                 'rebut': 'fill:#fde2e2,stroke:#b91c1c,color:#111',
                 'impact': 'fill:#e9d8fd,stroke:#6b46c1,color:#111',
-                'offstage': 'fill:#fafafa,stroke:#aaaaaa,stroke-dasharray:2 3,color:#777'}
-_FOCUS_WORD = [('focus', '선택한 주장'), ('base', '핵심 근거'), ('context', '배경'), ('limit', '한계'), ('rebut', '반박'), ('impact', '영향받는 결론')]
+                'offstage': 'fill:#fafafa,stroke:#aaaaaa,stroke-dasharray:2 3,color:#777',
+                'lit': 'fill:#ccfbf1,stroke:#0f766e,color:#111',                    # v16.22 (④ 3판): 선행 연구(짝 맺은 논문 주장)
+                'lit_rebut': 'fill:#ccfbf1,stroke:#b91c1c,stroke-width:2px,color:#111'}
+_FOCUS_WORD = [('focus', '선택한 주장'), ('base', '핵심 근거'), ('context', '배경'), ('lit', '선행 연구'), ('limit', '한계'), ('rebut', '반박'),
+               ('lit_rebut', '선행 연구 반박'), ('impact', '영향받는 결론')]
 
 
 def focus_graph(claims, ids, up=FOCUS_UP):
@@ -2740,13 +2859,18 @@ def focus_graph(claims, ids, up=FOCUS_UP):
     for cid, strength, _ in impact(claims, list(ids), stream=io.StringIO()):
         if strength >= IMPACT_CUTOFF and cid not in kind:
             kind[cid] = 'impact'
+    for cid in list(kind):              # v16.22 (④ 3판): --lit 로 합친 논문 주장 — 받침은 "선행 연구", 반박은 "선행 연구 반박"
+        if by[cid].get('lit') and kind[cid] in ('base', 'context'):
+            kind[cid] = 'lit'
+        elif by[cid].get('lit') and kind[cid] == 'rebut':
+            kind[cid] = 'lit_rebut'
     drawn = [(u, typ, v) for v in kind for u, typ, _ in edges.get(v, []) if u in kind]
     return {'claims': [by[i] for i in by if i in kind], 'ids': list(ids), 'kind': kind, 'edges': drawn}
 
 
 def _focus_text(c, full, ids, screen):
     if ids:
-        t = c['id']
+        t = lit_label(c) if c.get('lit') else c['id']
     else:
         st = re.sub(r'\s+', ' ', c.get('statement', '') or c['id']).strip()
         if full:
@@ -2762,6 +2886,8 @@ def _focus_text(c, full, ids, screen):
             t = st if len(st) <= 40 else st[:40].rstrip() + '…'
     if c.get('exploratory') is True:              # v16.17: 탐색적 주장 — 글자만
         t += '<br/>(탐색)'
+    if c.get('lit') and not ids:                  # v16.22: 어느 논문의 어느 주장인지(사람 이름 없이 DOI 뒷부분)
+        t += '<br/>(' + lit_label(c) + (' · 판정 전' if c.get('status') == 'proposed' else '') + ')'
     if c.get('offstage'):
         t += '<br/>(화면에 없음)'
     elif c.get('sites') and screen is not False:
@@ -2775,7 +2901,7 @@ def focus_mermaid(fg, ids=False, screen=None):
     """mermaid 글 — 받침 | 선택한 주장 | 영향 세 칸(LR). screen(자리) → '화면 N' 을 주면 화면 번호로."""
     kind = fg['kind']; nid = {c['id']: 'n%d' % k for k, c in enumerate(fg['claims'], 1)}
     L = ['flowchart LR']
-    cols = [('s_up', '받침', ('base', 'context', 'limit', 'rebut')), ('s_focus', '선택한 주장', ('focus',)), ('s_down', '영향', ('impact',))]
+    cols = [('s_up', '받침', ('base', 'context', 'lit', 'limit', 'rebut', 'lit_rebut')), ('s_focus', '선택한 주장', ('focus',)), ('s_down', '영향', ('impact',))]
     for sid, title, ks in cols:
         mem = [c for c in fg['claims'] if kind[c['id']] in ks]
         if not mem:
@@ -2815,7 +2941,7 @@ def focus_legend(fg):
     """[(말, 스타일)] — 그림에 있는 것만. 반박 선이 없으면 반박도 뺀다(사용자 09-30)."""
     have = set(fg['kind'].values())
     if not any(t == 'rebuttal' for _, t, _ in fg['edges']):
-        have.discard('rebut')
+        have.discard('rebut'); have.discard('lit_rebut')
     out = [(w, _FOCUS_STYLE[k]) for k, w in _FOCUS_WORD if k in have]
     if any(c.get('offstage') for c in fg['claims']):
         out.append(('화면에 없음', _FOCUS_STYLE['offstage']))
@@ -2852,7 +2978,7 @@ def find_mermaid_js(given=None, cwd=None, env=None):
 def focus_html(fg, mermaid_src, ids=False, screen=None, title=''):
     import html as _h
     src = ('file://' + mermaid_src) if mermaid_src.startswith('/') else mermaid_src
-    leg = ''.join('<span class="k"><i style="%s"></i>%s</span>' % (_h.escape(st.replace(',', ';').replace('fill:', 'background:').replace('stroke-dasharray:4 3', '').replace('stroke-dasharray:2 3', '')), _h.escape(w))
+    leg = ''.join('<span class="k"><i style="%s"></i>%s</span>' % (_h.escape(st.replace(',', ';').replace('fill:', 'background:').replace('stroke:', 'border-color:').replace('stroke-dasharray:4 3', '').replace('stroke-dasharray:2 3', '')), _h.escape(w))
                   for w, st in focus_legend(fg))
     return ('<!doctype html><html><head><meta charset="utf-8"><title>%s</title><style>'
             'body{margin:24px;background:#fff;font-family:-apple-system,"Apple SD Gothic Neo","Noto Sans CJK KR","Noto Sans KR",sans-serif;color:#111}'
@@ -2999,13 +3125,14 @@ def main():
     dr.add_argument('--all-edges', action='store_true', help='전체 그림을 v16.0 모양으로 — 아래→위, caveat 상자·간선까지 모두 (v16.1)')
     for p_ in (g, i, dr):                 # v16.12: 구연 — 저자 파일(읽기 전용) + 덧붙임을 읽는 순간 합쳐서
         p_.add_argument('--oral', default=None, metavar='덧붙임.json'); p_.add_argument('--author', default=None, metavar='저자claims.json')
-    for p_ in (g, i):                     # v16.21 (④ 2판): lit_links 가 가리키는 논문 주장을 읽는 순간 합쳐서(파일은 남기지 않는다)
+    for p_ in (g, i, dr):                 # v16.21 (④ 2판): lit_links 가 가리키는 논문 주장을 읽는 순간 합쳐서(파일은 남기지 않는다) · v16.22 mapdraw·focus
         p_.add_argument('--lit', default=None, metavar='문헌보관소', help='lit_links 의 논문 주장을 lit:<DOI>#<id> 로 합쳐서 (v16.21)')
     lc = sub.add_parser('litcheck', help='우리 그래프의 lit_links(논문 주장 짝) 검사 — 보관소의 논문 그래프와 대조 (v16.21)')
     lc.add_argument('--claims', required=True); lc.add_argument('--store', required=True, metavar='문헌보관소')
     fo = sub.add_parser('focus', help='초점 그림 — 선택한 주장의 받침(상류 2단계·한계·반박)과 영향(하류), 이메일용 (v16.15)')
     fo.add_argument('ids', nargs='+'); fo.add_argument('--claims', default=None); fo.add_argument('-o', required=True, help='쓸 md')
     fo.add_argument('--oral', default=None); fo.add_argument('--author', default=None)
+    fo.add_argument('--lit', default=None, metavar='문헌보관소', help='짝 맺은 논문 주장을 "선행 연구" 상자로 (v16.22)')
     fo.add_argument('--up', type=int, default=FOCUS_UP, help='받침 단계(기본 2)'); fo.add_argument('--ids', dest='ids_flag', action='store_true', help='상자에 id 만')
     fo.add_argument('--pptx', default=None, help='구연: 화면 자리를 화면 번호로(덱)')
     fo.add_argument('--png', default=None, help='PNG 도 — 로컬 브라우저 headless'); fo.add_argument('--mermaid-js', default=None, help='mermaid.min.js 파일(없으면 환경변수·npm·CDN 순)')
@@ -3020,6 +3147,7 @@ def main():
         p = sub.add_parser(name); p.add_argument('doc'); p.add_argument('--claims', required=True)
         if name in ('mapfreeze', 'mapstale'):
             p.add_argument('--sources', default=None, help='근거 원문 폴더(문헌 보관소·교과서 분할) — 주면 근거 원문 바뀜도 본다 (v16)')
+            p.add_argument('--lit', default=None, metavar='문헌보관소', help='문헌 짝(lit_links)의 논문 주장 글 지문 — freeze 는 적고 stale 은 비교 (v16.22)')
         if name == 'mapfreeze':
             p.add_argument('-o', required=True)
         if name == 'mapcheck':
@@ -3059,6 +3187,8 @@ def main():
         print('[중단] 파일은 --claims 로 준다: %s --claims %s %s' % (argv[0], argv[1], ' '.join(argv[2:])))
         sys.exit(2)
     a = ap.parse_args()
+    if getattr(a, 'lit', None) and getattr(a, 'oral', None):
+        print('[중단] --lit 과 --oral 은 아직 같이 쓰지 않는다(④) — 저자 claims 에 --claims 로'); sys.exit(2)
     if a.cmd in ('add', 'link'):
         meta, cl = load_claims_full(a.claims)
         try:
@@ -3085,11 +3215,13 @@ def main():
             print('저장: %s' % a.o); sys.exit(0)
         if not a.claims:
             print('[중단] gaps 는 --claims(작업표 만들기) 또는 --to-instr(검증지시로) 가 필요하다'); sys.exit(2)
-        name, _, cl = load_claims_meta(a.claims)
-        open(a.o, 'w', encoding='utf8').write(gaps_table(cl, a.name or doc_name(name or '원고')))
-        print('저장: %s (공백 %d)' % (a.o, len(find_gaps(cl)[0]))); sys.exit(0)
+        meta_, cl = load_claims_full(a.claims)
+        name = meta_.get('doc') or meta_.get('deck')
+        open(a.o, 'w', encoding='utf8').write(gaps_table(cl, a.name or doc_name(name or '원고'), lit_links=meta_.get('lit_links')))
+        print('저장: %s (공백 %d)' % (a.o, len(find_gaps(cl, meta_.get('lit_links'))[0]))); sys.exit(0)
     if a.cmd == 'focus':
         meta_, cl_, _ = _claims_arg(a)
+        cl_ = _lit_apply(a, meta_, cl_)
         try:
             fg_ = focus_graph(cl_, a.ids, up=a.up)
         except ValueError as e:
@@ -3103,7 +3235,8 @@ def main():
                 return '화면 %s' % m_.group(1) if m_ else site_
         with open(a.o, 'w', encoding='utf8') as f_:
             f_.write(focus_md(fg_, ids=a.ids_flag, screen=scr_))
-        print('저장: %s (선택 %d · 받침 %d · 한계·반박 %d · 영향 %d)' % (a.o, *[sum(1 for v in fg_['kind'].values() if v in ks) for ks in (('focus',), ('base',), ('limit', 'rebut'), ('impact',))]))
+        print('저장: %s (선택 %d · 받침 %d · 한계·반박 %d · 영향 %d%s)' % (a.o, *[sum(1 for v in fg_['kind'].values() if v in ks) for ks in (('focus',), ('base',), ('limit', 'rebut'), ('impact',))],
+              (' · 선행 연구 %d' % sum(1 for v in fg_['kind'].values() if v in ('lit', 'lit_rebut'))) if a.lit else ''))
         if not a.png:
             sys.exit(0)
         try:
@@ -3178,8 +3311,6 @@ def main():
         if not lp:
             print('문제 없음')
         sys.exit(1 if any(not p_.startswith('[참고]') for p_ in lp) else 0)
-    if getattr(a, 'lit', None) and getattr(a, 'oral', None):
-        print('[중단] --lit 과 --oral 은 아직 같이 쓰지 않는다(④ 2판) — 저자 claims 에 --claims 로'); sys.exit(2)
     if a.cmd == 'mapgraph':
         meta_, cl_, _ = _claims_arg(a)
         lp_ = []
@@ -3216,7 +3347,8 @@ def main():
         else:
             impact(cl, a.ids)
     elif a.cmd == 'mapdraw':
-        out = mapdraw(_claims_arg(a)[1], changed=a.impact, text=a.text, all_edges=a.all_edges)
+        meta_, cl_, _ = _claims_arg(a)
+        out = mapdraw(_lit_apply(a, meta_, cl_), changed=a.impact, text=a.text, all_edges=a.all_edges)
         with open(a.o, 'w', encoding='utf8') as f:
             f.write(out)
         print('저장: %s' % a.o)
@@ -3286,7 +3418,12 @@ def main():
             sys.exit(1 if any(not p.startswith('[참고]') for p in probs) else 0)
         elif a.cmd == 'mapfreeze':
             meta, cl = load_claims_full(a.claims)
+            nlit = lit_freeze(meta, cl, a.lit) if a.lit else None      # v16.22: [필수] 가 있으면 여기서 멈춘다(아무것도 적지 않음)
             mapfreeze(src.resolve, cl, sources=a.sources, stream=sys.stdout)
+            if nlit is not None:
+                print('문헌 짝 %d개의 논문 주장 글 지문 기록(lit_links[].verified)' % nlit)
+            elif isinstance(meta.get('lit_links'), list) and meta['lit_links']:
+                print('[참고] lit_links %d개 — 논문 주장이 바뀌면 알리려면 --lit <문헌 보관소> 로 freeze' % len(meta['lit_links']))
             lit_ = meta.get('kind') in LIT_KINDS           # v16.19: 문헌 그래프의 doc 은 DOI — paper.md 이름으로 바꾸지 않는다
             print('기록 완료: %s' % save_claims(a.o, cl, meta=meta, doc=None if lit_ else a.doc))
         elif a.cmd == 'mapstale':
@@ -3294,7 +3431,7 @@ def main():
             stale_doc = meta.get('doc') or meta.get('deck')
             if stale_doc and doc_name(stale_doc) != doc_name(a.doc) and meta.get('kind') not in LIT_KINDS:
                 print('[경고] 그래프의 doc=%s 와 대상 %s 가 다름 — 다른 판에 대한 freeze 일 수 있음' % (doc_name(stale_doc), doc_name(a.doc)))
-            r = mapstale(src.resolve, cl, sources=a.sources)
+            r = mapstale(src.resolve, cl, sources=a.sources, lit=lit_stale(meta, a.lit) if a.lit else None)
             sys.exit(1 if (r['changed'] or r['unverified']) else 0)
 
 

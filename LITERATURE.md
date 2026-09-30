@@ -1,4 +1,4 @@
-# LITERATURE — 논문 원문 받기·변환·찾기 규약 (literature.py v0.8.5)
+# LITERATURE — 논문 원문 받기·변환·찾기 규약 (literature.py v0.8.6)
 
 > Cowork 「문헌」 역할. 원문 검증(리뷰어)과 분야 말뭉치(저자, 다음 단계)에 쓸 논문 원문을 모은다.
 > Cowork 는 찾기·받기(·변환·위치 찾기)까지, **판정(이 문장이 원문과 맞는가)은 리뷰어** 가 한다(사용자 09-28).
@@ -131,6 +131,20 @@ python3 ~/rct/literature.py locate "<지시.md>" --store "<문헌 보관소>" --
 - **주의 1 — 쪽 표지가 없다.** 인용할 쪽·`locate`·claim_graph `sources.at` 은 **pypdf `paper.md` 의 쪽 표지**로 적는다. Docling md 는 그 쪽 안의 수식·표를 읽는 데만.
 - **주의 2 — 빼기 부호 `−`(U+2212)를 하이픈 `-` 로 바꾼다.** 음수·빼기가 판정에 걸리면 PDF 로 확인한다.
 - 수식 켬은 느리다(한 편 수 분). 환경·모델은 도구 세트에 없다 — 설치는 사용자 허락 뒤(약 1.2 GB + 모델 1.3 GB).
+
+### 3-2. 논문 그래프 — 논문 주장을 우리 그래프와 짝짓기 (claim_graph 16.19~16.22, 사용자 09-30 큰 방향 ④)
+
+보관소에 받은 논문 한 편의 주장을 `문헌 보관소/<DOI 폴더>/claims.json`(kind `문헌`) 으로 적고, 우리 원고 주장과 짝을 맺는다. 규약은 `CLAIM_GRAPH.md` §3-8·§3-8-1.
+
+1. **초안 — 문헌 Cowork**(보관소 곁, 병원 PC 당직 때만 — 며칠 걸릴 수 있다): 지시를 받으면 `claim_graph.py extract paper.md -o 후보.json` 으로 후보를 보고,
+   **짝이 될 주장과 그 받침만**(편당 3~8개) claims.json 에 적는다 — `status: proposed` · `origin: ai` · 자리 `doc:find:<paper.md 의 짧은 원문 구절>` · 사람 이름 없이(DOI 로만).
+2. **자리 확인**: `claim_graph.py mapcheck paper.md --claims claims.json` — 적은 구절이 원문에 없으면 그 자리에서 고친다(지어낸 인용 차단). `mapgraph --claims claims.json` 으로 doi·meta.md·이름 꼴 검사.
+3. **판정 — 리뷰어**: paper.md 를 읽고 accepted·고침·뺌 → `mapfreeze paper.md --claims claims.json -o claims.json`.
+4. **짝 — 저자·리뷰어**: 우리 claims 맨 위 `lit_links` 에 `{ours, doi, theirs, rel, verdict, by, date}` — verdict 는 리뷰어(1차 회신 뒤 — 블라인드). 검사 `litcheck --claims 우리.json --store <보관소>`.
+5. 그 뒤 `mapfreeze … --lit <보관소>` 로 논문 주장 글 지문을 적어 두면, 논문 그래프가 바뀌거나 정정·철회될 때 `mapstale … --lit` 이 우리 하류를 [변경] 으로 알린다.
+
+- 공개 저장소·시험 파일에는 실제 논문 글을 넣지 않는다(가짜 DOI `10.9999/fake-…` 만). 논문 그래프는 Drive 에만.
+- `claim_graph.py` 는 **문헌 세트(selfcheck --role 문헌)에 들어 있지 않다** — Cowork 는 GitHub 전체를 `~/rct` 로 받으므로 같은 폴더에 있다. 첫 실물 지시 때 세트에 넣을지 정한다.
 
 ## 4. 리뷰어가 읽는 법
 

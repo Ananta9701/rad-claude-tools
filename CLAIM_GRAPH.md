@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.21
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.22
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -368,7 +368,15 @@ cd /tmp && npm install mermaid@11 && python3 ~/rct/claim_graph.py focus <id> --c
 | 필수 | lit_links 가 목록 아님 · 짝 모양 · `ours` 가 우리 그래프에 없음 · `rel`·`verdict` 값 · DOI 모양 · **보관소에 없는 DOI** · 그 논문 폴더에 `claims.json` 없음 · 그 claims.json 이 이 논문의 문헌 그래프가 아님(kind·doi) · `theirs` 없음 · **판정 전(proposed) 논문 주장이 same·support 로 main 의 전제(premise) 사슬 안 주장을 받침**(결정 5 — 탐색적 표지와 같은 사슬) |
 | 참고 | verdict 없음(`by` 함께) · 우리 주장 `sources` 에 같은 DOI 없음 · 같은 짝 두 번 · 논문 주장에 사람 이름 꼴 · 철회된(superseded) 논문 주장과 짝 |
 
-- 다음 판(3판): `mapstale --lit`(짝 맺을 때 논문 주장 글 지문 — 바뀌거나 철회되면 [변경]) · `mapdraw`·`focus --lit`(청록 상자) · `gaps` 가 `부합` 짝을 "문헌 있음" 으로.
+- **3판(v16.22)**:
+  - **`mapfreeze doc --claims 우리.json --lit <보관소> -o …`** — 짝마다 논문 주장 글 지문(statement·status)을 `lit_links[i].verified` 에 적는다(구연 `offstage_verified` 와 같은 몫).
+    짝에 [필수] 가 있으면(litcheck 와 같은 검사 — 판정 전 논문 주장이 main 사슬 등) 아무것도 적지 않고 멈춘다. `--lit` 없이 freeze 하면 `lit_links N개` 안내 한 줄.
+  - **`mapstale doc --claims … --lit <보관소>`** — 논문 주장 글이 바뀜 · 철회(superseded) · 논문 그래프·주장이 없어짐 → **우리 쪽 주장 [변경]**, `impact` 와 같이 하류로 전파.
+    기록 없는 짝은 `[!] 문헌 짝 검증 기록 없음`(종료 1). `--lit` 없으면 짝을 보지 않는다(전과 같음).
+  - **`mapdraw … --lit <보관소>`** — 짝 맺은 논문 주장을 **"선행 연구" 묶음(청록)** 으로, 상자 이름 `문헌 <DOI 뒷부분> · id`(lit id 의 `: / #` 는 Mermaid 에 넣지 않는다), 판정 전이면 "판정 전". `--impact` 그림에도.
+  - **`focus <id> … --lit <보관소>`** — 받침 칸에 **"선행 연구"**(청록), 반박 짝이면 **"선행 연구 반박"**(청록 + 빨간 테두리). 범례는 그림에 있을 때만.
+  - **`gaps`** — `lit_links` 중 same·support 이고 `verdict: 부합` 인 짝의 DOI 를 **문헌으로 센다**(sources 와 같게, 같은 DOI 는 하나로 — "근거 하나" 도 같이). 판정 없음·부분·background·rebut 은 세지 않는다. `--lit` 없이(짝 칸만 읽는다).
+  - `--lit` 과 `--oral` 은 아직 같이 쓰지 않는다(종료 2).
 
 ## 3-3. 관계도 그림 `mapdraw` (v16, 전체 그림 v16.1)
 
@@ -428,7 +436,7 @@ pptx 는 `deck_toolkit.py <명령> deck.pptx --claims ...`, docx/md 는 `claim_g
 | `mapfreeze doc --claims -o [--sources 폴더]` | 검증을 **실제로** 마친 뒤 | 해시 기록 = "확인했다" 선언. `--sources` 면 근거 원문도(§3-2) — 보관소에 없는 DOI 가 있으면 [필수]로 멈춤(v16.10). 폴더 없이 다시 freeze 하면 전 근거 기록은 그대로 |
 | `mapstale doc --claims [--sources 폴더]` | 그 뒤 어떤 편집이든 한 뒤 | v16: `--sources` 면 근거 원문 `[같음]`·`[변환]`·`[변경]`(§3-2). [변경] 주장, [필수]/[참고] 하류, 기록 없는 새 주장. v15.5: freeze 가 `verified.keys` 해시를 함께 적어 **keys 만 바꾼 그래프도 [변경]**(구판 freeze 는 그 해시가 없어 검사 안 함). 출력 끝에 "실제로 바뀐 주장의 자리(직접)"를 하류 전파와 구분해 낸다 |
 | `suggest --claims [-o 후보.md] [--min-shared 2] [--min-caveat 3]` | 관계도를 다 그린 뒤 | 새 주장 후보 [참고] — 안 이어진 이웃 · 안 쓰인 근거 · 공통 한계(§3-7, v16.17). claims 는 바꾸지 않는다 |
-| `litcheck --claims 우리.json --store <문헌 보관소>` · `mapgraph`·`impact … --lit <보관소>` | 논문 주장과 짝을 맺은 뒤 | 짝 검사 · 논문 주장을 `lit:<DOI>#<id>` 로 합쳐 검사·영향(§3-8-1, v16.21) |
+| `litcheck --claims 우리.json --store <문헌 보관소>` · `mapgraph`·`impact`·`mapdraw`·`focus … --lit <보관소>` · `mapfreeze`·`mapstale … --lit <보관소>` | 논문 주장과 짝을 맺은 뒤 | 짝 검사 · 논문 주장을 `lit:<DOI>#<id>` 로 합쳐 검사·영향·그림 · 논문 주장 글 지문 기록·비교(§3-8-1, v16.21·v16.22) |
 | `gaps --claims -o 작업표.md` · `gaps --to-instr 작업표.md -o 검증지시.md` | 근거 채우기 전 | 근거 공백 작업표 · 채운 표 → literature 검증지시 (§3-4, v16.5) |
 | `mapdraw --claims -o 관계도.md [--impact ID …] [--text] [--all-edges]` | 설명·검토용 그림 | Mermaid 글(§3-3, v16 · 전체 그림 v16.1) |
 | `focus <id…> (--claims … \| --oral … --author …) -o 초점.md [--png 초점.png] [--pptx 덱] [--up 2] [--ids]` | 교신저자 설명·구연 준비 | §3-6 초점 그림 — 받침 2단계·한계·반박·영향, 쉬운 말 범례, 로컬 브라우저로 PNG (v16.15) |

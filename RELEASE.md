@@ -1,21 +1,22 @@
-# RELEASE v2.79 — manifest v99 — 2026-09-30
+# RELEASE v2.80 — manifest v100 — 2026-10-01
 
-> **v2.79** — ④ 문헌 그래프 2판: 우리 주장 ↔ 논문 주장 짝 `lit_links`(우리 그래프 맨 위 칸) · 짝 검사 `litcheck` · `mapgraph`·`impact --lit <문헌 보관소>` 가 짝 맺은 논문 주장을 `lit:<DOI>#<id>` 로 읽는 순간 합친다. 판정 전 논문 주장이 main 의 전제 사슬을 받치면 [필수].
+> **v2.80** — ④ 문헌 그래프 3판: 짝 맺은 논문 주장의 글 지문을 `mapfreeze --lit` 로 적고 `mapstale --lit` 이 논문 주장이 바뀌거나 철회되면 우리 쪽 [변경] 을 하류로 알린다 · `mapdraw`·`focus --lit` 에 청록 "선행 연구" 상자 · `gaps` 가 판정 `부합` 인 same·support 짝을 문헌으로 센다 · LITERATURE §3-2(논문 그래프 절차).
 
 ## 1. 바뀐 것
 
 | 도구 | 판 | 내용 |
 |---|---|---|
-| `claim_graph.py` | 16.21 | `LIT_RELS`(same·support → support · rebut → rebuttal · background → context) · `lit_merge(meta, claims, 보관소)` — 짝이 가리키는 논문 주장만 `lit:<DOI>#<id>`·`lit: true`·`lit_role` 로(자리·keys·간선·sources 없이), 우리 주장에 간선 하나, 우리 파일은 그대로 · [필수] lit_links 모양·ours 없음·rel·verdict 값·DOI 모양·보관소에 없는 DOI·논문 claims.json 없음/다른 논문·theirs 없음·**판정 전(proposed) 논문 주장이 same·support 로 main 전제 사슬 안 주장을 받침** · [참고] verdict 없음·sources 에 같은 DOI 없음·같은 짝 두 번·사람 이름 꼴·철회된 논문 주장 · 새 명령 `litcheck --claims --store`(종료 0/1) · `mapgraph`·`impact` 에 `--lit <보관소>`(`--oral` 과 같이면 종료 2), `--lit` 없이 mapgraph 하면 `lit_links N개` 안내 한 줄 |
-| `CLAIM_GRAPH.md` | 16.21 | §3-8-1 새 절(짝·litcheck·--lit) · §4 명령 표 |
-| 테스트 | — | test_claim_graph 5(합치기 성공·rel 별 간선·논문 주장 한 번·우리 파일 그대로·lit_links 없으면 그대로 / [필수] 8가지 / 판정 전 + main 사슬 [필수], 판정됨·사슬 밖·rebut·background 는 아님 / [참고] 5가지 / CLI litcheck 0·1·없음 · mapgraph --lit · 안내 줄 · impact lit id · --oral 같이 종료 2 · add 가 lit_links 보존) |
+| `claim_graph.py` | 16.22 | `lit_freeze`(짝마다 `lit_links[i].verified` = 논문 주장 statement·status 지문, [필수] 면 아무것도 안 적고 멈춤) · `lit_stale`(글 바뀜·철회·없어짐 → 우리 쪽 [변경], 기록 없는 짝) · `mapstale(…, lit=)` 이 [변경] 을 하류로 · CLI `mapfreeze`·`mapstale --lit`(freeze 에 --lit 없으면 안내 한 줄) · `lit_label`(`문헌 <DOI 뒷부분> · id`) · `mapdraw --lit`(전체 그림: "선행 연구" 묶음·청록·"판정 전" / `--impact` 그림·제목도) · `focus --lit`("선행 연구"·"선행 연구 반박" 종류·범례·상자 아래 `(문헌 … · 판정 전)`, 저장 줄에 선행 연구 수) · `find_gaps`·`gaps_table(…, lit_links)` — same·support + `부합` 짝을 문헌으로(같은 DOI 하나로), 작업표 머리에 한 줄 · `--lit`+`--oral` 종료 2 를 인자 읽은 바로 뒤로(focus 도) · 초점 그림 HTML 범례 네모에 테두리 색 |
+| `CLAIM_GRAPH.md` | 16.22 | §3-8-1 3판 · §4 명령 표 |
+| `literature.py` · `LITERATURE.md` | 0.8.6 | **문서만** — §3-2 논문 그래프 절차(초안 문헌 Cowork → mapcheck → 리뷰어 판정 → 짝 → `--lit` freeze), claim_graph 가 문헌 세트 밖이라는 한 줄. 코드 동작 변경 없음 |
+| 테스트 | — | test_claim_graph 3(freeze --lit 지문·그대로면 조용·글 바뀜 [변경]+하류·철회·없어짐·기록 없는 짝 종료 1·--lit 없으면 안 봄·[필수] 면 freeze 멈춤 / mapdraw 선행 연구 묶음·lit id 안 들어감·--lit 없으면 없음·impact 그림 판정 전 · focus lit·lit_rebut·범례 있을 때만·--oral 같이 종료 2 / gaps 부합 짝 인정·판정 없음·부분·background·rebut 은 안 셈·같은 DOI 하나로·두 논문) |
 
 ## 2. 회신 항목별 답
 
 | 항목 | 반영 |
 |---|---|
-| 부관리자 지시 09-30(`권한방식과역할상태_v1` 3번): 작은 고침 다음 ④ 2판 | 위. 설계안 ④ §2 의 2판 몫(짝 칸·litcheck·합치기 `--lit` mapgraph·impact). mapstale·mapdraw·focus `--lit`·gaps 인정은 3판 |
-| 사용자·부관리자 09-30 ④ 결정 1·2·5 | 새 칸 `lit_links` · same·support=support(premise 로 올리지 않음)·rebut=rebuttal·background=context · 판정 전 논문 주장이 main 전제 사슬 → [필수] |
+| 부관리자 지시 10-01(`시범현황과다음판_v2` 5번): ④ 3판 | 위. 설계안 ④ §2 의 3판 몫(mapstale·mapdraw·focus `--lit`·gaps 인정)과 §4 ⑧ LITERATURE 한 절 |
+| 같은 지시 1번: test_textbook v051 "알려진 실패" | 코드 쪽에는 알려진 실패 목록이 없다. v051(pypdf 5.x 가 CMYK 를 두 번 뒤집음)은 v2.50(textbook 0.7)에서 고쳤고 매 빌드 옛 라이브러리 판(Pillow 12.1.1·pypdf 5.9.0)으로 다시 돈다 — 목록에서 빼도 된다 |
 
 ## 3. 받을 파일
 
@@ -25,38 +26,38 @@
 ### 저자 (7)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.21 | `74e957423b4b` | ○ |
-| `test_claim_graph.py` | v16.21 | `2eac787fe295` | ○ |
-| `CLAIM_GRAPH.md` | v16.21 | `2c743663f04d` | ○ |
+| `claim_graph.py` | v16.22 | `c54df1a56d49` | ○ |
+| `test_claim_graph.py` | v16.22 | `133383b262cd` | ○ |
+| `CLAIM_GRAPH.md` | v16.22 | `77673864873d` | ○ |
 | `verify_toolkit.py` | v1.3.7 | `0833539073f1` | — |
 | `test_verify_toolkit.py` | v1.3.7 | `ac6e42ed2103` | — |
-| `TOOLS_MANIFEST.md` | v99 | `c3c8ef64a3b7` | ○ |
-| `RELEASE.md` | v2.79 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v100 | `4548950d3b8c` | ○ |
+| `RELEASE.md` | v2.80 | — | 이 문서 |
 
 ### 발표 (11)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.21 | `74e957423b4b` | ○ |
-| `test_claim_graph.py` | v16.21 | `2eac787fe295` | ○ |
-| `CLAIM_GRAPH.md` | v16.21 | `2c743663f04d` | ○ |
+| `claim_graph.py` | v16.22 | `c54df1a56d49` | ○ |
+| `test_claim_graph.py` | v16.22 | `133383b262cd` | ○ |
+| `CLAIM_GRAPH.md` | v16.22 | `77673864873d` | ○ |
 | `deck_toolkit.py` | v16.51 | `c14c4686c2b1` | — |
 | `test_toolkit.py` | v16.51 | `2193bcdf541c` | — |
 | `DECK_SPEC.md` | v16.51 | `9ce13600b06d` | — |
 | `handoff.py` | v2.2 | `d8b5305111f4` | — |
 | `test_handoff.py` | v2.2 | `7b2a11d55b3a` | — |
 | `HANDOFF_FORMAT.md` | v2.2 | `92fb4a11e9bb` | — |
-| `TOOLS_MANIFEST.md` | v99 | `c3c8ef64a3b7` | ○ |
-| `RELEASE.md` | v2.79 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v100 | `4548950d3b8c` | ○ |
+| `RELEASE.md` | v2.80 | — | 이 문서 |
 
 ### 리뷰어 (6)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.21 | `74e957423b4b` | ○ |
-| `test_claim_graph.py` | v16.21 | `2eac787fe295` | ○ |
-| `CLAIM_GRAPH.md` | v16.21 | `2c743663f04d` | ○ |
+| `claim_graph.py` | v16.22 | `c54df1a56d49` | ○ |
+| `test_claim_graph.py` | v16.22 | `133383b262cd` | ○ |
+| `CLAIM_GRAPH.md` | v16.22 | `77673864873d` | ○ |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v99 | `c3c8ef64a3b7` | ○ |
-| `RELEASE.md` | v2.79 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v100 | `4548950d3b8c` | ○ |
+| `RELEASE.md` | v2.80 | — | 이 문서 |
 
 ### 교과서 (5)
 | 파일 | 판 | 해시 | 변경 |
@@ -64,24 +65,24 @@
 | `textbook.py` | v0.7.2 | `446049895c66` | — |
 | `test_textbook.py` | v0.7.2 | `93d75911d86c` | — |
 | `TEXTBOOK.md` | v0.7.2 | `4bfff4aa0771` | — |
-| `TOOLS_MANIFEST.md` | v99 | `c3c8ef64a3b7` | ○ |
-| `RELEASE.md` | v2.79 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v100 | `4548950d3b8c` | ○ |
+| `RELEASE.md` | v2.80 | — | 이 문서 |
 
 ### 문헌 (5)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `literature.py` | v0.8.5 | `2d1bddcb98e6` | — |
-| `test_literature.py` | v0.8.5 | `c0c1ad7ce476` | — |
-| `LITERATURE.md` | v0.8.5 | `25e2f224c92f` | — |
-| `TOOLS_MANIFEST.md` | v99 | `c3c8ef64a3b7` | ○ |
-| `RELEASE.md` | v2.79 | — | 이 문서 |
+| `literature.py` | v0.8.6 | `b99516fb6f9a` | ○ |
+| `test_literature.py` | v0.8.6 | `ac0646359a75` | ○ |
+| `LITERATURE.md` | v0.8.6 | `73b0b00bd897` | ○ |
+| `TOOLS_MANIFEST.md` | v100 | `4548950d3b8c` | ○ |
+| `RELEASE.md` | v2.80 | — | 이 문서 |
 
 ### 코드 (25)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.21 | `74e957423b4b` | ○ |
-| `test_claim_graph.py` | v16.21 | `2eac787fe295` | ○ |
-| `CLAIM_GRAPH.md` | v16.21 | `2c743663f04d` | ○ |
+| `claim_graph.py` | v16.22 | `c54df1a56d49` | ○ |
+| `test_claim_graph.py` | v16.22 | `133383b262cd` | ○ |
+| `CLAIM_GRAPH.md` | v16.22 | `77673864873d` | ○ |
 | `deck_toolkit.py` | v16.51 | `c14c4686c2b1` | — |
 | `test_toolkit.py` | v16.51 | `2193bcdf541c` | — |
 | `DECK_SPEC.md` | v16.51 | `9ce13600b06d` | — |
@@ -93,26 +94,26 @@
 | `textbook.py` | v0.7.2 | `446049895c66` | — |
 | `test_textbook.py` | v0.7.2 | `93d75911d86c` | — |
 | `TEXTBOOK.md` | v0.7.2 | `4bfff4aa0771` | — |
-| `literature.py` | v0.8.5 | `2d1bddcb98e6` | — |
-| `test_literature.py` | v0.8.5 | `c0c1ad7ce476` | — |
-| `LITERATURE.md` | v0.8.5 | `25e2f224c92f` | — |
+| `literature.py` | v0.8.6 | `b99516fb6f9a` | ○ |
+| `test_literature.py` | v0.8.6 | `ac0646359a75` | ○ |
+| `LITERATURE.md` | v0.8.6 | `73b0b00bd897` | ○ |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v99 | `c3c8ef64a3b7` | ○ |
+| `TOOLS_MANIFEST.md` | v100 | `4548950d3b8c` | ○ |
 | `CODE_PROJECT_README.md` | v5 | `f4c839b0b750` | — |
-| `HISTORY.md` | — | `7b15679d7827` | ○ |
+| `HISTORY.md` | — | `dbe2892effa3` | ○ |
 | `release.py` | — | `d0fe4b4d184a` | — |
 | `GITHUB_README.md` | — | `c81d29504e46` | — |
 | `PRIVATE_TERMS.txt` | — | `6e8c2862cf5e` | — |
-| `RELEASE.md` | v2.79 | — | 이 문서 |
+| `RELEASE.md` | v2.80 | — | 이 문서 |
 <!-- sets:end -->
 
 ## 4. 각 프로젝트 대화창이 첫 세션에서 할 일
 
-1. 모든 역할: selfcheck 로 manifest v99 이상.
-2. 문헌 그래프·짝은 아직 실물이 없다 — 첫 실물(문헌 Cowork 가 논문 그래프 초안 → 리뷰어 판정 → 짝)은 따로 지시가 간다. 그 전에는 할 일 없음.
+1. 모든 역할: selfcheck 로 manifest v100 이상.
+2. 문헌 그래프·짝은 아직 실물이 없다 — 첫 실물 지시가 따로 간다(문헌 Cowork 초안 → 리뷰어 판정 → 짝). 그 전에는 할 일 없음.
 
 ## 5. 검증하지 않은 것
 
-- 실물 없음 — 가짜 보관소(가짜 DOI 두 편)로만. 실제 보관소 폴더 이름·meta.md 첫 줄 모양은 v2.77 `sources` 찾기와 같은 규칙이라 그쪽 실물(09-29 보관소 3편)에 기댄다.
-- `--lit` 합친 그래프로 `mapdraw`·`focus` 는 아직 안 된다(3판) — 논문 주장 id 에 `:`·`/`·`#` 이 있어 Mermaid 상자 이름을 따로 만들어야 한다.
-- 논문 주장이 철회되면 우리 하류에 [변경] 을 내는 것(`mapstale --lit`)은 3판 — 지금은 `litcheck` 의 [참고] 한 줄과 `impact --lit` 로 사람이 본다.
+- 실물 없음 — 가짜 보관소로만. Mermaid 그림(mapdraw·focus --lit)은 Mac Chrome + 로컬 mermaid 11.17.2 로 PNG 를 찍어 확인(선행 연구 묶음·청록·빨간 테두리·범례).
+- `mapstale --lit` 은 논문 주장 **글(statement·status)** 만 본다 — 논문 주장의 자리(paper.md 구절)가 바뀐 것은 그 논문 그래프의 `mapstale paper.md` 가 본다(두 번 돌린다).
+- `claim_graph.py` 가 문헌 세트에 없다 — 문헌 Cowork 는 GitHub 전체(`~/rct`)에서 쓴다. 세트에 넣을지는 첫 실물 지시 때.

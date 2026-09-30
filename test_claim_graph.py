@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.21'
+EXPECT_VERSION = '16.22'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -2161,6 +2161,108 @@ def t_v1621_cli_litcheck_mapgraph_impact_lit():
     open(os.path.join(d, 'none.json'), 'w').write(json.dumps({'claims': []}))
     r = run('litcheck', '--claims', os.path.join(d, 'none.json'), '--store', store)
     assert r.returncode == 0 and 'lit_links 없음' in r.stdout
+
+
+# ---- v16.22: ④ 3판 — mapfreeze·mapstale --lit(논문 주장 글 지문) · mapdraw·focus --lit(선행 연구 상자) · gaps 가 부합 짝을 문헌으로 ----
+
+def _lit_env():
+    import tempfile
+    store = _lit_store()
+    d = tempfile.mkdtemp(prefix='cg22_')
+    doc = os.path.join(d, 'ms.md'); open(doc, 'w', encoding='utf8').write('# Fake ms\nline one\n')
+    run = lambda *a: subprocess.run([sys.executable, CGm.__file__] + list(a), capture_output=True, text=True)
+    return store, d, doc, run
+
+
+def _set_paper(store, **chg):
+    import json
+    pc = os.path.join(store, '10.9999_fake-a', 'claims.json')
+    g = json.load(open(pc))
+    for c in g['claims']:
+        if c['id'] == 'm1':
+            c.update(chg)
+    json.dump(g, open(pc, 'w'), ensure_ascii=False)
+
+
+def t_v1622_lit_freeze_stale_propagates():
+    """④ 3판: mapfreeze --lit 이 짝마다 논문 주장 글 지문(verified)을 적고, mapstale --lit 이 글 바뀜·철회·없어짐을 우리 쪽 [변경] 으로 — 하류(mn)까지.
+    성공 길: 그대로면 조용(종료 0). 실패 길: 판정 전 논문 주장이 main 사슬 → freeze 멈춤(아무것도 안 씀) · 기록 없는 짝은 [!] 종료 1."""
+    import json
+    store, d, doc, run = _lit_env()
+    p = _ours(d, [_link()]); fz = os.path.join(d, 'fz.json')
+    r = run('mapfreeze', doc, '--claims', p, '--lit', store, '-o', fz)
+    assert r.returncode == 0 and '지문 기록' in r.stdout, r.stdout + r.stderr
+    v = json.load(open(fz))['lit_links'][0]['verified']
+    assert v['text'] and v['at'], v
+    r = run('mapstale', doc, '--claims', fz, '--lit', store)
+    assert r.returncode == 0 and '[변경]' not in r.stdout, r.stdout                               # 그대로면 조용
+    _set_paper(store, statement='가짜 지표가 병변을 가르지 못한다')
+    r = run('mapstale', doc, '--claims', fz, '--lit', store)
+    assert r.returncode == 1 and '[변경] 문헌 짝 cond → lit:10.9999/fake-a#m1: 논문 주장 글' in r.stdout and 'mn' in r.stdout, r.stdout
+    _set_paper(store, statement='가짜 지표가 병변을 가른다', status='superseded')
+    r = run('mapstale', doc, '--claims', fz, '--lit', store)
+    assert '철회' in r.stdout and r.returncode == 1, r.stdout
+    _set_paper(store, status='accepted', id='m9')
+    r = run('mapstale', doc, '--claims', fz, '--lit', store)
+    assert '찾을 수 없음' in r.stdout and r.returncode == 1, r.stdout
+    r = run('mapstale', doc, '--claims', p, '--lit', store)                                     # 기록 없는 짝
+    assert r.returncode == 1 and '문헌 짝 검증 기록 없음 1개' in r.stdout, r.stdout
+    r = run('mapstale', doc, '--claims', fz)                                                    # --lit 없으면 짝을 보지 않는다(전과 같음)
+    assert '문헌 짝' not in r.stdout, r.stdout
+    sp = _lit_store(status='proposed'); fz2 = os.path.join(d, 'fz2.json')
+    r = run('mapfreeze', doc, '--claims', p, '--lit', sp, '-o', fz2)
+    assert r.returncode != 0 and '[멈춤]' in (r.stdout + r.stderr) and not os.path.exists(fz2), r.stdout + r.stderr
+
+
+def t_v1622_mapdraw_focus_lit_boxes():
+    """④ 3판: mapdraw --lit 은 짝 맺은 논문 주장을 "선행 연구" 묶음(청록)으로, 상자 이름은 `문헌 <DOI 뒷부분> · id`(lit id 의 : / # 를 Mermaid 에 넣지 않음).
+    focus --lit 은 받침 칸에 "선행 연구", 반박이면 "선행 연구 반박" — 범례는 있을 때만. --lit 없으면 전과 같다."""
+    store, d, doc, run = _lit_env()
+    p = _ours(d, [_link(), _link(ours='mn', theirs='r1', rel='rebut', verdict='반대 방향')])
+    out = os.path.join(d, 'draw.md')
+    r = run('mapdraw', '--claims', p, '--lit', store, '-o', out)
+    t = open(out, encoding='utf8').read()
+    assert r.returncode == 0 and 'subgraph glit["선행 연구"]' in t and '문헌 fake-a · m1' in t and 'classDef lit' in t, t
+    assert 'lit:10.9999' not in t and '#m1' not in t, t
+    run('mapdraw', '--claims', p, '-o', out)
+    assert '선행 연구' not in open(out, encoding='utf8').read()                                   # --lit 없으면 그대로
+    run('mapdraw', '--claims', p, '--lit', _lit_store(status='proposed'), '--impact', 'lit:10.9999/fake-a#m1', '-o', out)
+    t = open(out, encoding='utf8').read()
+    assert '판정 전' in t and '문헌 fake-a · m1' in t and 'lit:10.9999' not in t, t
+    meta, cl = CGm.load_claims_full(p)
+    fg = CGm.focus_graph(CGm.lit_merge(meta, cl, store)[0], ['mn'])
+    k = fg['kind']
+    assert k['lit:10.9999/fake-a#r1'] == 'lit_rebut' and k['lit:10.9999/fake-a#m1'] == 'lit', k
+    words = [w for w, _ in CGm.focus_legend(fg)]
+    assert '선행 연구' in words and '선행 연구 반박' in words, words
+    assert '문헌 fake-a · m1' in CGm.focus_mermaid(fg) and 'lit:10.9999' not in CGm.focus_mermaid(fg)
+    fg2 = CGm.focus_graph(CGm.lit_merge({'lit_links': [_link()]}, cl, store)[0], ['mn'])
+    assert '선행 연구 반박' not in [w for w, _ in CGm.focus_legend(fg2)]                          # 반박 없으면 범례에도 없음
+    r = run('focus', 'mn', '--claims', p, '--lit', store, '-o', os.path.join(d, 'f.md'))
+    assert r.returncode == 0 and '선행 연구' in open(os.path.join(d, 'f.md'), encoding='utf8').read(), r.stdout
+    assert run('focus', 'mn', '--oral', p, '--author', p, '--lit', store, '-o', os.path.join(d, 'f2.md')).returncode == 2
+
+
+def t_v1622_gaps_counts_judged_lit_links():
+    """④ 3판(설계안 §2): same·support 짝이 verdict 부합이면 "문헌 없음" 공백을 채운 것으로(sources 와 같게, 같은 DOI 는 하나로).
+    실패 길: 판정 없음·부분·background·rebut 짝은 세지 않는다."""
+    import tempfile
+    d = tempfile.mkdtemp(prefix='cg22g_')
+    def gaps_of(links, src=None):
+        meta, cl = CGm.load_claims_full(_ours(d, links, src_doi=src))
+        return {cid: ks for cid, _, ks, _ in CGm.find_gaps(cl, meta.get('lit_links'))[0]}
+    g = gaps_of([_link()])
+    assert not any('문헌 없음' in k for k in g.get('cond', [])), g                               # 부합 support 짝 → 문헌 있음
+    assert any('sources 1' in k for k in g.get('cond', [])), g                                  # 하나뿐이면 근거 하나
+    for bad in (_link(verdict=None), _link(verdict='부분'), _link(rel='background'), _link(rel='rebut', verdict='부합')):
+        assert any(k.startswith('문헌 없음') for k in gaps_of([bad]).get('cond', [])), bad
+    g = gaps_of([_link()], src='10.9999/fake-a')                                                  # sources 와 같은 DOI → 하나로
+    assert any('sources 1' in k for k in g.get('cond', [])), g
+    g = gaps_of([_link(), _link(doi='10.9999/fake-b')], src=None)                                 # 두 논문 → 근거 하나 아님
+    assert not any('sources 1' in k for k in g.get('cond', [])), g
+    meta, cl = CGm.load_claims_full(_ours(d, [_link()], src_doi=None))
+    assert '문헌으로 셌다' in CGm.gaps_table(cl, 'F', lit_links=meta['lit_links'])
+    assert '문헌으로 셌다' not in CGm.gaps_table(cl, 'F')
 
 
 if __name__ == '__main__':
