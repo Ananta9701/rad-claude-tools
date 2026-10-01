@@ -1,22 +1,23 @@
-# RELEASE v2.80 — manifest v100 — 2026-10-01
+# RELEASE v2.81 — manifest v101 — 2026-10-01
 
-> **v2.80** — ④ 문헌 그래프 3판: 짝 맺은 논문 주장의 글 지문을 `mapfreeze --lit` 로 적고 `mapstale --lit` 이 논문 주장이 바뀌거나 철회되면 우리 쪽 [변경] 을 하류로 알린다 · `mapdraw`·`focus --lit` 에 청록 "선행 연구" 상자 · `gaps` 가 판정 `부합` 인 same·support 짝을 문헌으로 센다 · LITERATURE §3-2(논문 그래프 절차).
+> **v2.81** — 저자 회신 둘: `verify_toolkit` 1.3.8 — 영어 본문 문단 안 한글 자리표시(`[자리표시 — …]`·〔수정〕·(한글))만 지우고 나머지 영어를 센다(1.3.7 은 그 문단을 **경고 없이** 통째로 빼서 단어·인용이 사라졌다), 괄호 밖에도 한글이 있는 문단은 종전대로 빼되 몇 문단·몇 낱말·그 안 인용을 알린다 · `claim_graph` 16.23 — `suggest` 규칙 3 이 main 에 안 걸린 한계에 "→ main 에 직접 걸기" 대신 "→ main 에 걸 후보(사슬 k/n)".
 
 ## 1. 바뀐 것
 
 | 도구 | 판 | 내용 |
 |---|---|---|
-| `claim_graph.py` | 16.22 | `lit_freeze`(짝마다 `lit_links[i].verified` = 논문 주장 statement·status 지문, [필수] 면 아무것도 안 적고 멈춤) · `lit_stale`(글 바뀜·철회·없어짐 → 우리 쪽 [변경], 기록 없는 짝) · `mapstale(…, lit=)` 이 [변경] 을 하류로 · CLI `mapfreeze`·`mapstale --lit`(freeze 에 --lit 없으면 안내 한 줄) · `lit_label`(`문헌 <DOI 뒷부분> · id`) · `mapdraw --lit`(전체 그림: "선행 연구" 묶음·청록·"판정 전" / `--impact` 그림·제목도) · `focus --lit`("선행 연구"·"선행 연구 반박" 종류·범례·상자 아래 `(문헌 … · 판정 전)`, 저장 줄에 선행 연구 수) · `find_gaps`·`gaps_table(…, lit_links)` — same·support + `부합` 짝을 문헌으로(같은 DOI 하나로), 작업표 머리에 한 줄 · `--lit`+`--oral` 종료 2 를 인자 읽은 바로 뒤로(focus 도) · 초점 그림 HTML 범례 네모에 테두리 색 |
-| `CLAIM_GRAPH.md` | 16.22 | §3-8-1 3판 · §4 명령 표 |
-| `literature.py` · `LITERATURE.md` | 0.8.6 | **문서만** — §3-2 논문 그래프 절차(초안 문헌 Cowork → mapcheck → 리뷰어 판정 → 짝 → `--lit` freeze), claim_graph 가 문헌 세트 밖이라는 한 줄. 코드 동작 변경 없음 |
-| 테스트 | — | test_claim_graph 3(freeze --lit 지문·그대로면 조용·글 바뀜 [변경]+하류·철회·없어짐·기록 없는 짝 종료 1·--lit 없으면 안 봄·[필수] 면 freeze 멈춤 / mapdraw 선행 연구 묶음·lit id 안 들어감·--lit 없으면 없음·impact 그림 판정 전 · focus lit·lit_rebut·범례 있을 때만·--oral 같이 종료 2 / gaps 부합 짝 인정·판정 없음·부분·background·rebut 은 안 셈·같은 DOI 하나로·두 논문) |
+| `verify_toolkit.py` | 1.3.8 | `_english_part`: 본문 구간 문단에서 한글이 든 `[…]`·`〔…〕`·`【…】`·`(…)` 구간만 지움 → `check_word_count`·`check_citations` 가 남은 영어를 센다. 괄호를 지운 뒤에도 한글이 남은 문단은 한글 메모로 보고 뺀다(종전) — 이제 "⚠ 한글이 괄호 밖에도 있는 문단 N개를 통째로 뺐습니다(영어 낱말 W개 빠짐 — 그 안 인용 …)" 경고. 반환에 `korean`(segments·paras·words·cites) |
+| `claim_graph.py` | 16.23 | `suggest` 규칙 3: main 에 안 걸린 공통 한계의 권고 "→ main 에 걸 후보(사슬 k/n)(Limitations 첫 문단)" — k/n 은 덧줄과 같은 main 전제 사슬(premise 만, main 포함) n 개 중 걸린 수, main 이 둘 이상이면 main 마다. 반환 `caveats[i].chain = {main: [k, n]}`. 규칙(3개 이상 주장)·덧줄·"(main 에 이미 걸림)" 은 그대로 |
+| `CLAIM_GRAPH.md` | 16.23 | §3 suggest 표 규칙 3 줄 |
+| 테스트 | — | test_verify_toolkit 2(자리표시 든 영어 문단 — 단어·인용 그대로·〔〕() 도 / 괄호 밖 한글 문단 — 빼되 경고·빠진 인용 표시·한글 없으면 경고 없음) · test_claim_graph 1(사슬 3/6 후보 · 사슬 밖 한계 0/6 · 이미 걸림엔 수 없음), v16.18 시험 문구를 새 권고로 |
 
 ## 2. 회신 항목별 답
 
 | 항목 | 반영 |
 |---|---|
-| 부관리자 지시 10-01(`시범현황과다음판_v2` 5번): ④ 3판 | 위. 설계안 ④ §2 의 3판 몫(mapstale·mapdraw·focus `--lit`·gaps 인정)과 §4 ⑧ LITERATURE 한 절 |
-| 같은 지시 1번: test_textbook v051 "알려진 실패" | 코드 쪽에는 알려진 실패 목록이 없다. v051(pypdf 5.x 가 CMYK 를 두 번 뒤집음)은 v2.50(textbook 0.7)에서 고쳤고 매 빌드 옛 라이브러리 판(Pillow 12.1.1·pypdf 5.9.0)으로 다시 돈다 — 목록에서 빼도 된다 |
+| 저자 10-01 `도구회신_저자to코드_wordcount한글문단_v1` — wordcount 가 한글 든 본문 문단을 조용히 뺌 | 재현(가짜 원고: 본문 11 → 5, 경고 없음). 1.3.8 에서 한글 괄호 구간만 지우고 센다 + 남은 한글 문단은 경고 |
+| 같은 회신 — `citations` 가 자리표시 안 숫자(244명·44명)를 인용 번호로 읽음 | **원인이 다르다**: 인용 패턴은 숫자·쉼표·하이픈만 든 `[…]` 만 잡아서 `[자리표시 — 244명·44명]` 은 읽지 않는다. 실제 원인은 wordcount 와 같다 — 자리표시가 든 문단을 통째로 빼서 **그 문단의 진짜 인용 [n] 이 사라지고** 뒤 번호가 순서 위반·결번으로 보였다(재현: 순서 위반 [7] · 결번 2–6). 같은 고침으로 해결 — v49 를 다시 세면 21 → 2 근처가 나와야 한다(실물로는 안 셈) |
+| 저자 10-01 `도구회신_저자to코드_suggest재실행_v1` §3-2 — 사슬 0/6 한계에도 "main 에 직접 걸기" | 사용자 10-01 답(부관리자 지시 `v7답과전체지침v4_v1` 2번 ①): 규칙은 두고 줄마다 "사슬 k/n" + "후보" — 위 16.23 |
 
 ## 3. 받을 파일
 
@@ -26,38 +27,38 @@
 ### 저자 (7)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.22 | `c54df1a56d49` | ○ |
-| `test_claim_graph.py` | v16.22 | `133383b262cd` | ○ |
-| `CLAIM_GRAPH.md` | v16.22 | `77673864873d` | ○ |
-| `verify_toolkit.py` | v1.3.7 | `0833539073f1` | — |
-| `test_verify_toolkit.py` | v1.3.7 | `ac6e42ed2103` | — |
-| `TOOLS_MANIFEST.md` | v100 | `4548950d3b8c` | ○ |
-| `RELEASE.md` | v2.80 | — | 이 문서 |
+| `claim_graph.py` | v16.23 | `e6c4243ade62` | ○ |
+| `test_claim_graph.py` | v16.23 | `b40e84e1314b` | ○ |
+| `CLAIM_GRAPH.md` | v16.23 | `0410c30e4f71` | ○ |
+| `verify_toolkit.py` | v1.3.8 | `529ce4740c17` | ○ |
+| `test_verify_toolkit.py` | v1.3.8 | `a1b46f5e0e74` | ○ |
+| `TOOLS_MANIFEST.md` | v101 | `9261e15df37b` | ○ |
+| `RELEASE.md` | v2.81 | — | 이 문서 |
 
 ### 발표 (11)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.22 | `c54df1a56d49` | ○ |
-| `test_claim_graph.py` | v16.22 | `133383b262cd` | ○ |
-| `CLAIM_GRAPH.md` | v16.22 | `77673864873d` | ○ |
+| `claim_graph.py` | v16.23 | `e6c4243ade62` | ○ |
+| `test_claim_graph.py` | v16.23 | `b40e84e1314b` | ○ |
+| `CLAIM_GRAPH.md` | v16.23 | `0410c30e4f71` | ○ |
 | `deck_toolkit.py` | v16.51 | `c14c4686c2b1` | — |
 | `test_toolkit.py` | v16.51 | `2193bcdf541c` | — |
 | `DECK_SPEC.md` | v16.51 | `9ce13600b06d` | — |
 | `handoff.py` | v2.2 | `d8b5305111f4` | — |
 | `test_handoff.py` | v2.2 | `7b2a11d55b3a` | — |
 | `HANDOFF_FORMAT.md` | v2.2 | `92fb4a11e9bb` | — |
-| `TOOLS_MANIFEST.md` | v100 | `4548950d3b8c` | ○ |
-| `RELEASE.md` | v2.80 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v101 | `9261e15df37b` | ○ |
+| `RELEASE.md` | v2.81 | — | 이 문서 |
 
 ### 리뷰어 (6)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.22 | `c54df1a56d49` | ○ |
-| `test_claim_graph.py` | v16.22 | `133383b262cd` | ○ |
-| `CLAIM_GRAPH.md` | v16.22 | `77673864873d` | ○ |
+| `claim_graph.py` | v16.23 | `e6c4243ade62` | ○ |
+| `test_claim_graph.py` | v16.23 | `b40e84e1314b` | ○ |
+| `CLAIM_GRAPH.md` | v16.23 | `0410c30e4f71` | ○ |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v100 | `4548950d3b8c` | ○ |
-| `RELEASE.md` | v2.80 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v101 | `9261e15df37b` | ○ |
+| `RELEASE.md` | v2.81 | — | 이 문서 |
 
 ### 교과서 (5)
 | 파일 | 판 | 해시 | 변경 |
@@ -65,55 +66,55 @@
 | `textbook.py` | v0.7.2 | `446049895c66` | — |
 | `test_textbook.py` | v0.7.2 | `93d75911d86c` | — |
 | `TEXTBOOK.md` | v0.7.2 | `4bfff4aa0771` | — |
-| `TOOLS_MANIFEST.md` | v100 | `4548950d3b8c` | ○ |
-| `RELEASE.md` | v2.80 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v101 | `9261e15df37b` | ○ |
+| `RELEASE.md` | v2.81 | — | 이 문서 |
 
 ### 문헌 (5)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `literature.py` | v0.8.6 | `b99516fb6f9a` | ○ |
-| `test_literature.py` | v0.8.6 | `ac0646359a75` | ○ |
-| `LITERATURE.md` | v0.8.6 | `73b0b00bd897` | ○ |
-| `TOOLS_MANIFEST.md` | v100 | `4548950d3b8c` | ○ |
-| `RELEASE.md` | v2.80 | — | 이 문서 |
+| `literature.py` | v0.8.6 | `b99516fb6f9a` | — |
+| `test_literature.py` | v0.8.6 | `ac0646359a75` | — |
+| `LITERATURE.md` | v0.8.6 | `73b0b00bd897` | — |
+| `TOOLS_MANIFEST.md` | v101 | `9261e15df37b` | ○ |
+| `RELEASE.md` | v2.81 | — | 이 문서 |
 
 ### 코드 (25)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `claim_graph.py` | v16.22 | `c54df1a56d49` | ○ |
-| `test_claim_graph.py` | v16.22 | `133383b262cd` | ○ |
-| `CLAIM_GRAPH.md` | v16.22 | `77673864873d` | ○ |
+| `claim_graph.py` | v16.23 | `e6c4243ade62` | ○ |
+| `test_claim_graph.py` | v16.23 | `b40e84e1314b` | ○ |
+| `CLAIM_GRAPH.md` | v16.23 | `0410c30e4f71` | ○ |
 | `deck_toolkit.py` | v16.51 | `c14c4686c2b1` | — |
 | `test_toolkit.py` | v16.51 | `2193bcdf541c` | — |
 | `DECK_SPEC.md` | v16.51 | `9ce13600b06d` | — |
-| `verify_toolkit.py` | v1.3.7 | `0833539073f1` | — |
-| `test_verify_toolkit.py` | v1.3.7 | `ac6e42ed2103` | — |
+| `verify_toolkit.py` | v1.3.8 | `529ce4740c17` | ○ |
+| `test_verify_toolkit.py` | v1.3.8 | `a1b46f5e0e74` | ○ |
 | `handoff.py` | v2.2 | `d8b5305111f4` | — |
 | `test_handoff.py` | v2.2 | `7b2a11d55b3a` | — |
 | `HANDOFF_FORMAT.md` | v2.2 | `92fb4a11e9bb` | — |
 | `textbook.py` | v0.7.2 | `446049895c66` | — |
 | `test_textbook.py` | v0.7.2 | `93d75911d86c` | — |
 | `TEXTBOOK.md` | v0.7.2 | `4bfff4aa0771` | — |
-| `literature.py` | v0.8.6 | `b99516fb6f9a` | ○ |
-| `test_literature.py` | v0.8.6 | `ac0646359a75` | ○ |
-| `LITERATURE.md` | v0.8.6 | `73b0b00bd897` | ○ |
+| `literature.py` | v0.8.6 | `b99516fb6f9a` | — |
+| `test_literature.py` | v0.8.6 | `ac0646359a75` | — |
+| `LITERATURE.md` | v0.8.6 | `73b0b00bd897` | — |
 | `REVIEW_PROTOCOL.md` | v7.2 | `7f6e413d4d48` | — |
-| `TOOLS_MANIFEST.md` | v100 | `4548950d3b8c` | ○ |
+| `TOOLS_MANIFEST.md` | v101 | `9261e15df37b` | ○ |
 | `CODE_PROJECT_README.md` | v5 | `f4c839b0b750` | — |
-| `HISTORY.md` | — | `dbe2892effa3` | ○ |
+| `HISTORY.md` | — | `ac775f25b177` | ○ |
 | `release.py` | — | `d0fe4b4d184a` | — |
 | `GITHUB_README.md` | — | `c81d29504e46` | — |
 | `PRIVATE_TERMS.txt` | — | `6e8c2862cf5e` | — |
-| `RELEASE.md` | v2.80 | — | 이 문서 |
+| `RELEASE.md` | v2.81 | — | 이 문서 |
 <!-- sets:end -->
 
 ## 4. 각 프로젝트 대화창이 첫 세션에서 할 일
 
-1. 모든 역할: selfcheck 로 manifest v100 이상.
-2. 문헌 그래프·짝은 아직 실물이 없다 — 첫 실물 지시가 따로 간다(문헌 Cowork 초안 → 리뷰어 판정 → 짝). 그 전에는 할 일 없음.
+1. 모든 역할: selfcheck 로 manifest v101 이상.
+2. 저자: 원고 v49·v50 을 `wordcount`·`citations` 로 다시 센다 — 자리표시를 지운 사본과 같은 수가 나오는지(회신의 5,234·5,313 / 인용 위반 2), 남은 경고("통째로 뺐습니다")가 있으면 그 문단을 본다. `suggest` 규칙 3 줄이 "후보(사슬 k/n)" 로 나오는지 claims v11 로 한 번.
 
 ## 5. 검증하지 않은 것
 
-- 실물 없음 — 가짜 보관소로만. Mermaid 그림(mapdraw·focus --lit)은 Mac Chrome + 로컬 mermaid 11.17.2 로 PNG 를 찍어 확인(선행 연구 묶음·청록·빨간 테두리·범례).
-- `mapstale --lit` 은 논문 주장 **글(statement·status)** 만 본다 — 논문 주장의 자리(paper.md 구절)가 바뀐 것은 그 논문 그래프의 `mapstale paper.md` 가 본다(두 번 돌린다).
-- `claim_graph.py` 가 문헌 세트에 없다 — 문헌 Cowork 는 GitHub 전체(`~/rct`)에서 쓴다. 세트에 넣을지는 첫 실물 지시 때.
+- 실물 원고(v49·v50)로 다시 세지 않았다 — 가짜 docx 로만. 회신의 5,234·5,313(자리표시를 지운 사본)과 같게 나와야 하나, 자리표시가 괄호 밖 한글이면 경고와 함께 여전히 빠진다.
+- 한글 괄호는 `[]`·`〔〕`·`【】`·`()` 만 본다. 다른 표시(예: `<…>`, 따옴표 안 한글)는 문단째 빠지고 경고가 난다.
+- `suggest` 사슬 k/n 은 가짜 그래프로만 — 저자 claims v11 로는 안 돌렸다(회신 수치로는 `dti-16-directions` 3/6, 나머지 0/6 이 나와야 한다).

@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.22'
+EXPECT_VERSION = '16.23'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -1755,14 +1755,36 @@ def t_v1618_rule3_already_on_main_and_statement():
     """이미 main 에 걸린 공통 한계는 권고 대신 '(main 에 이미 걸림)' · 규칙 3 줄마다 한계 statement 앞 40자."""
     buf = io.StringIO(); CGm.suggest(_hg(4, 3), stream=buf)                              # main 에 없음 — 권고 그대로
     line = [l for l in buf.getvalue().splitlines() if l.strip().startswith('[참고] k ')]
-    assert line and '→ main 에 직접 걸기' in line[0] and '이미 걸림' not in line[0], buf.getvalue()
+    assert line and '→ main 에 걸 후보' in line[0] and '이미 걸림' not in line[0], buf.getvalue()   # v16.23: '직접 걸기' → '후보(사슬 k/n)'
     assert '"단면 연구라 인과를 말할 수 없다 — 추적 자료가 없고 표본이 한 기관이…"' in line[0], line
     buf = io.StringIO(); CGm.suggest(_hg(4, 3, on_main=True), stream=buf)                # main 에 걸림 — 권고를 빼고 표시
     line = [l for l in buf.getvalue().splitlines() if l.strip().startswith('[참고] k ')]
-    assert line and '(main 에 이미 걸림)' in line[0] and '직접 걸기' not in line[0], buf.getvalue()
+    assert line and '(main 에 이미 걸림)' in line[0] and '걸 후보' not in line[0] and '사슬' not in line[0], buf.getvalue()
     buf = io.StringIO(); CGm.suggest(_hg(3, 3), stream=buf)
     hl = [l for l in buf.getvalue().splitlines() if '전제 사슬' in l]
     assert hl and '"단면 연구라' in hl[0], buf.getvalue()
+
+
+def t_v1623_rule3_candidate_with_chain_count():
+    """저자 10-01 질문 · 사용자 10-01 답: 규칙 3 은 그대로, main 에 안 걸린 한계는 '→ main 에 걸 후보(사슬 k/n)'.
+    v16.22 는 사슬 0/n 인 한계에도 '→ main 에 직접 걸기' 를 붙여 main 에 걸 것으로 읽혔다."""
+    buf = io.StringIO(); r = CGm.suggest(_hg(5, 3), stream=buf)                          # 사슬 main+5 = 6 중 3개에 걸림
+    x = [c for c in r['caveats'] if c['id'] == 'k'][0]
+    assert x['chain'] == {'mn': [3, 6]}, x
+    line = [l for l in buf.getvalue().splitlines() if l.strip().startswith('[참고] k ')]
+    assert line and '→ main 에 걸 후보(사슬 3/6)' in line[0] and '직접 걸기' not in line[0], line   # 성공 길
+    g = _hg(5, 0)                                                                         # 사슬 밖 주장 셋에만 걸린 한계 — 0/6
+    for i in range(3):
+        g.append({'id': 'x%d' % i, 'statement': 'side claim %d' % i, 'role': 'claim',
+                            'depends_on': [{'id': 'k', 'type': 'caveat'}]})
+    buf = io.StringIO(); r = CGm.suggest(g, stream=buf)
+    x = [c for c in r['caveats'] if c['id'] == 'k'][0]
+    assert x['chain'] == {'mn': [0, 6]} and not r['half'], (x, r['half'])
+    line = [l for l in buf.getvalue().splitlines() if l.strip().startswith('[참고] k ')]
+    assert line and '(사슬 0/6)' in line[0], line                                          # 실패 길: 0/6 도 숨기지 않고 수로 보인다
+    buf = io.StringIO(); r = CGm.suggest(_hg(5, 5, on_main=True), stream=buf)             # 이미 걸림 — 수 없이 표시만
+    line = [l for l in buf.getvalue().splitlines() if l.strip().startswith('[참고] k ')]
+    assert line and '(main 에 이미 걸림)' in line[0] and '사슬' not in line[0], line
 
 
 

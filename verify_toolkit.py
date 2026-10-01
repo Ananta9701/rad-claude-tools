@@ -39,7 +39,7 @@ import zipfile
 import os
 import shutil
 
-__version__ = '1.3.7'   # TOOLS_MANIFEST 와 대조. 판이 오르면 test_verify_toolkit.EXPECT_VERSION 도 함께
+__version__ = '1.3.8'   # TOOLS_MANIFEST 와 대조. 판이 오르면 test_verify_toolkit.EXPECT_VERSION 도 함께
 
 # ══════════════════════════════════════════════════════════════
 # PAPER-SPECIFIC CONFIG — 논문·학술지가 바뀌면 여기만 수정
@@ -181,6 +181,42 @@ def strip_all_highlight(src, out):
 
 
 # ---------- 3. 인용 순서/개수 검증 (Vancouver) ----------
+_HANGUL = re.compile(r'[가-힣]')
+_HANGUL_BRACKET = re.compile(r'\[[^\[\]]*[가-힣][^\[\]]*\]|〔[^〔〕]*〕|【[^【】]*】|\([^()]*[가-힣][^()]*\)')
+
+
+def _english_part(paras):
+    """v1.3.8 (저자 10-01): 영어 본문 문단 안의 한글 괄호 구간(`[자리표시 — …]`·〔수정〕·(한글))만 지우고 나머지 영어는 남긴다.
+    괄호를 지운 뒤에도 한글이 남은 문단은 한글 메모로 보고 통째로 뺀다(종전대로) — 대신 몇 문단·몇 단어를 뺐는지 돌려준다.
+    v1.3.7 까지는 한글이 한 글자라도 든 문단을 **경고 없이** 통째로 빼서, 자리표시 하나 든 영어 문단 수백 단어와 그 안 인용이 사라졌다
+    (원고 v49 본문 4,862 ↔ 5,234 · 인용 순서 위반 21 ↔ 2 — 인용은 빠진 문단의 [n] 이 사라져 뒤 번호가 앞당겨 보인 것).
+    반환 (남긴 글 목록, {'segments': 지운 괄호 구간 수, 'paras': 뺀 문단 수, 'words': 뺀 문단의 한글 없는 낱말 수, 'cites': 뺀 문단의 인용 표기})."""
+    kept, info = [], {'segments': 0, 'paras': 0, 'words': 0, 'cites': []}
+    for t in paras:
+        if not _HANGUL.search(t):
+            kept.append(t)
+            continue
+        u, n = _HANGUL_BRACKET.subn(' ', t)
+        while n:                                   # 괄호 안 괄호(드묾)도 벗긴다
+            info['segments'] += n
+            u, n = _HANGUL_BRACKET.subn(' ', u)
+        if _HANGUL.search(u):
+            info['paras'] += 1
+            info['words'] += sum(1 for w in u.split() if not _HANGUL.search(w))
+            info['cites'] += re.findall(CITATION_PATTERN, u)
+            continue
+        kept.append(re.sub(r'\s+', ' ', u).strip())
+    return kept, info
+
+
+def _warn_korean(info, what):
+    if info['segments']:
+        print(f"  ⓘ 한글 괄호 구간 {info['segments']}곳(자리표시·메모)을 지우고 나머지 영어를 셌습니다")
+    if info['paras']:
+        c = (' — 그 안 인용 ' + ' '.join(info['cites'][:8]) + (' …' if len(info['cites']) > 8 else '')) if info['cites'] else ''
+        print(f"  ⚠ 한글이 괄호 밖에도 있는 문단 {info['paras']}개를 통째로 뺐습니다({what}에서 영어 낱말 {info['words']}개 빠짐{c}) — 본문이면 한글을 괄호에 넣거나 지우고 다시 세세요")
+
+
 def check_citations(path, body_start=BODY_START_MARKER, refs_marker=REFERENCES_MARKER,
                      pattern=CITATION_PATTERN):
     """본문 인용이 [1]부터 순차로 이어지는지, 목록 수와 일치하는지 확인.
@@ -199,7 +235,7 @@ def check_citations(path, body_start=BODY_START_MARKER, refs_marker=REFERENCES_M
     except StopIteration:
         print("  ⚠ body_start 또는 refs_marker를 찾지 못했습니다. CONFIG 확인.")
         return None
-    body_paras = [t for t in paras[i0:i1] if not re.search(r'[가-힣]', t)]  # 한글 메모 제외
+    body_paras, kinfo = _english_part(paras[i0:i1])   # v1.3.8: 한글 괄호 구간만 지움, 한글 메모 문단은 빼되 알린다
     body = " ".join(body_paras)
 
     seq = []
@@ -229,6 +265,7 @@ def check_citations(path, body_start=BODY_START_MARKER, refs_marker=REFERENCES_M
     refs = [t.strip() for t in paras[i1:] if re.match(r'^\d+\.\s+[A-Z]', t.strip())]  # v1.1: REFERENCES 이후만 센다
 
     print(f"=== 인용 검증: {path} ===")
+    _warn_korean(kinfo, '인용 검사')
     print(f"  본문 사용 문헌 수: {len(order)}")
     print(f"  REFERENCES 목록 수: {len(refs)}")
     print(f"  일치 여부: {'✓' if len(order) == len(refs) else '⚠ 불일치'}")
@@ -239,7 +276,7 @@ def check_citations(path, body_start=BODY_START_MARKER, refs_marker=REFERENCES_M
     missing = sorted(set(range(1, max(order) + 1)) - set(order)) if order else []
     print(f"  중간 결번: {missing if missing else '없음'}")
     return {'used': len(order), 'listed': len(refs), 'order_violations': bad, 'gaps': missing,
-            'first_violation': first_bad}
+            'first_violation': first_bad, 'korean': kinfo}
 
 
 class _PvalueResult(list):
@@ -291,10 +328,10 @@ def check_word_count(path, body_start=BODY_START_MARKER, body_end=BODY_END_MARKE
     try:
         i0 = paras.index(body_start)
         i1 = paras.index(body_end)
-        body_wc = sum(len(t.split()) for t in paras[i0:i1] if t.strip()
-                       and not re.search(r'[가-힣]', t) and not re.match(r'^\d+\.\s+[A-Z]', t.strip()))
+        kept, kinfo = _english_part(paras[i0:i1])   # v1.3.8: 한글 괄호 구간만 지움, 한글 메모 문단은 빼되 알린다
+        body_wc = sum(len(t.split()) for t in kept if t.strip() and not re.match(r'^\d+\.\s+[A-Z]', t.strip()))
     except ValueError:
-        body_wc = None
+        body_wc, kinfo = None, None
         print(f"  ⚠ 구간 마커를 찾지 못했습니다 (from={body_start!r} to={body_end!r}) — 본문 수를 세지 않았습니다")
     ab0, ab1 = full.find('Objective:'), full.find('Key Words:')
     ab_wc = len(full[ab0:ab1].split()) if ab0 > 0 and ab1 > 0 else None
@@ -302,12 +339,13 @@ def check_word_count(path, body_start=BODY_START_MARKER, body_end=BODY_END_MARKE
     print(f"=== 단어수 검증 (표·참고문헌·figure legend 제외, KJR 규정): {path} ===")
     if body_wc is not None:
         print(f"  구간: {body_start!r} ~ {body_end!r}")
+        _warn_korean(kinfo, '본문')
         flag = '✓' if body_wc <= body_limit else '⚠ 초과'
         print(f"  본문: {body_wc} / {body_limit}  {flag}")
     if ab_wc is not None:
         flag = '✓' if ab_wc <= abstract_limit else '⚠ 초과'
         print(f"  초록: {ab_wc} / {abstract_limit}  {flag}")
-    return {'body': body_wc, 'abstract': ab_wc}
+    return {'body': body_wc, 'abstract': ab_wc, 'korean': kinfo}
 
 
 # ---------- 5. P값 소수점 자리수 ----------

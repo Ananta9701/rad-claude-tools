@@ -23,7 +23,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '1.3.7'
+EXPECT_VERSION = '1.3.8'
 TMP = os.environ.get('VT_TMP', '/tmp/vt_test')
 shutil.rmtree(TMP, ignore_errors=True)
 os.makedirs(TMP, exist_ok=True)
@@ -538,6 +538,33 @@ def t_cli_all_runs():
     p = _docx('cli.docx', BODY)
     r = subprocess.run([sys.executable, V.__file__, 'all', p], capture_output=True, text=True)
     assert r.returncode == 0 and '인용 검증' in r.stdout and 'P값 형식' in r.stdout, r.stdout[-500:] + r.stderr[-500:]
+
+
+def t_v138_korean_placeholder_in_english_paragraph():
+    """저자 10-01: 영어 본문 문단에 한글 자리표시 하나만 있어도 v1.3.7 은 그 문단을 경고 없이 통째로 뺐다
+    (본문 단어 누락 · 그 안 인용이 사라져 뒤 번호가 순서 위반·결번으로 보임). 재현: 아래가 v1.3.7 에서 body 5 · 순서 위반 [7] · 결번 [2..6]."""
+    paras = list(BODY); paras[3] = 'First [1]. Then [2,3] and [4-6]. [자리표시 — 244명·44명]'
+    r, out = _quiet(V.check_word_count, _docx('w_ph.docx', paras))
+    assert r['body'] == 11 and r['korean']['segments'] == 1 and r['korean']['paras'] == 0, r     # 성공 길: 괄호만 지우고 영어는 센다
+    assert '한글 괄호 구간 1곳' in out, out
+    r, out = _quiet(V.check_citations, _docx('c_ph.docx', paras))
+    assert r['used'] == 7 and r['order_violations'] == [] and r['gaps'] == [], r
+    paras[3] = 'First [1]. Then [2,3] and [4-6]. 〔수정〕 (한글 메모)'                              # 〔〕·() 도 같은 길
+    r, _ = _quiet(V.check_word_count, _docx('w_ph2.docx', paras))
+    assert r['body'] == 11 and r['korean']['segments'] == 2, r
+
+
+def t_v138_korean_outside_brackets_dropped_with_warning():
+    """실패 길: 괄호 밖에도 한글이 남는 문단은 종전대로 통째로 빼되, 이제 몇 문단·몇 낱말·그 안 인용을 알린다."""
+    paras = list(BODY); paras[3] = 'First [1]. Then [2,3] and [4-6] 여기 한글 문장.'
+    r, out = _quiet(V.check_word_count, _docx('w_kd.docx', paras))
+    assert r['body'] == 5 and r['korean']['paras'] == 1 and r['korean']['words'] == 6, r
+    assert '문단 1개를 통째로 뺐습니다' in out and '영어 낱말 6개' in out, out
+    r, out = _quiet(V.check_citations, _docx('c_kd.docx', paras))
+    assert r['gaps'] == [2, 3, 4, 5, 6] and r['korean']['cites'] == ['[1]', '[2,3]', '[4-6]'], r   # 빠진 결과는 그대로 — 경고로 원인을 보인다
+    assert '그 안 인용 [1] [2,3] [4-6]' in out, out
+    r, out = _quiet(V.check_word_count, _docx('w_clean.docx', BODY))                      # 한글 없으면 경고도 없다
+    assert r['korean'] == {'segments': 0, 'paras': 0, 'words': 0, 'cites': []} and '한글' not in out, out
 
 
 if __name__ == '__main__':
