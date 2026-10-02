@@ -1,6 +1,6 @@
 # TOOLS_MANIFEST — 도구 릴리스 목록 (코드 프로젝트 진본)
 
-**manifest 판: v103 · 릴리스 v2.83 · 2026-10-02**
+**manifest 판: v104 · 릴리스 v2.84 · 2026-10-02**
 
 > **이 파일이 진본 판정 기준이다.** 파일명은 고정(`TOOLS_MANIFEST.md`), 판은 이 줄에만 있다.
 > 세트는 전부 삭제 → 전부 재업로드이므로 파일명에 판이 있을 이유가 없고, 파일명 판이 "어느 manifest 가 최신인가"
@@ -10,14 +10,14 @@
 
 | 파일 | 판 | 해시 | 테스트 | 크기(바이트) |
 |---|---|---|---|---|
-| `claim_graph.py` | v16.23 | `e6c4243ade62` | `test_claim_graph.py` 101/101 | 204726 |
-| `test_claim_graph.py` | v16.23 동반 | `b40e84e1314b` | — | 164061 |
-| `CLAIM_GRAPH.md` | v16.23 | `0410c30e4f71` | — | 65446 |
-| `deck_toolkit.py` | v16.51 | `c14c4686c2b1` | `test_toolkit.py` 265/265 (deck 164 + 공용 101, SKIP 0) | 387224 |
-| `test_toolkit.py` | v16.51 동반 | `2193bcdf541c` | — | 187647 |
-| `DECK_SPEC.md` | v16.51 | `9ce13600b06d` | — | 117127 |
-| `verify_toolkit.py` | v1.3.8 | `529ce4740c17` | `test_verify_toolkit.py` 47/47 | 40736 |
-| `test_verify_toolkit.py` | v1.3.8 동반 | `a1b46f5e0e74` | — | 27919 |
+| `claim_graph.py` | v16.24 | `078d3171ba96` | `test_claim_graph.py` 101/101 | 204720 |
+| `test_claim_graph.py` | v16.24 동반 | `696f603a61b8` | — | 164061 |
+| `CLAIM_GRAPH.md` | v16.24 | `1858ba70d529` | — | 65444 |
+| `deck_toolkit.py` | v16.52 | `fd63018fe975` | `test_toolkit.py` 265/265 (deck 164 + 공용 101, SKIP 0) | 387224 |
+| `test_toolkit.py` | v16.52 동반 | `3bef3c5c6f90` | — | 187647 |
+| `DECK_SPEC.md` | v16.52 | `852650b149a3` | — | 117355 |
+| `verify_toolkit.py` | v1.3.9 | `c88c2b37d1ce` | `test_verify_toolkit.py` 47/47 | 40651 |
+| `test_verify_toolkit.py` | v1.3.9 동반 | `fe6c80d1abad` | — | 27919 |
 | `handoff.py` | v2.2 | `d8b5305111f4` | `test_handoff.py` 27/27 | 87549 |
 | `test_handoff.py` | v2.2 동반 | `7b2a11d55b3a` | — | 45806 |
 | `HANDOFF_FORMAT.md` | v2.2 | `92fb4a11e9bb` | — | 15351 |
@@ -27,7 +27,7 @@
 | `literature.py` | v0.8.6 | `b99516fb6f9a` | `test_literature.py` 17/17 | 48678 |
 | `test_literature.py` | v0.8.6 동반 | `ac0646359a75` | — | 39279 |
 | `LITERATURE.md` | v0.8.6 | `73b0b00bd897` | — | 18917 |
-| `REVIEW_PROTOCOL.md` | v7.4 | `8c56bf02ca59` | — | 20411 |
+| `REVIEW_PROTOCOL.md` | v7.5 | `5b4961094b0c` | — | 20806 |
 | `CODE_PROJECT_README.md` · `HISTORY.md` · `release.py` | 코드 프로젝트 전용 | (배포하지 않음 — 판·해시는 RELEASE §3 코드 표) | — | — |
 
 해시: `sha256sum <파일> | cut -c1-12`. 판: `python3 -c "import claim_graph; print(claim_graph.__version__)"` (deck_toolkit·verify_toolkit 동일), 문서는 첫 줄.
@@ -48,7 +48,7 @@
 | CODE_PROJECT_README.md · HISTORY.md · release.py · GITHUB_README.md · PRIVATE_TERMS.txt | × | × | × | × | × | 진본 |
 | **받는 파일 수** | **7** | **11** | **6** | **5** | **5** | 25 |
 
-**코드 프로젝트도 공개 도구는 GitHub 에서 받는다** (v2.18~) — 프로젝트 파일에는 코드 전용 5개만 둔다(`CODE_PROJECT_README.md` 첫머리).
+**코드는 Claude Code 세션에서 일한다** (v2.43~) — 공개 도구는 이 GitHub 저장소, 코드 전용 5개는 비공개 저장소에 둔다. claude.ai 프로젝트 파일은 쓰지 않는다.
 
 **교과서** (v2.22~): 사람 프로젝트가 아니라 Cowork 가 교과서 폴더에서 돌리는 역할(`selfcheck --role 교과서`). 규약은 `TEXTBOOK.md`.
 
@@ -65,10 +65,10 @@ GitHub 에서 읽는다(넘김 문서를 쓰는 쪽). 발표에서 claim_graph 3
 ## 3. 절차
 
 **세션 시작 확인 3단계** — 셋 다 맞아야 작업 시작. 하나라도 어긋나면 멈추고 사용자에게 알린다.
-**한 명령으로**: `python3 claim_graph.py selfcheck --dir /mnt/project --tests` (v20) — 3단계 + 테스트 + 파일 분류를 표로 낸다.
+**한 명령으로**: `python3 /tmp/rct/claim_graph.py selfcheck --dir /tmp/rct --role {역할} --tests` (v20 · GitHub 세트 — `README.md` 의 한 줄 명령) — 3단계 + 테스트 + 파일 분류를 표로 낸다.
 그 표를 수령 확인 도구회신 §1 에 그대로 붙인다. 아래는 그 명령이 하는 일이다.
 1. 이 파일 둘째 줄의 **manifest 판**이 `RELEASE.md` 첫 줄의 판과 같은가
-2. §1 의 **파일별 판**과 프로젝트 파일의 판 표기(`__version__`, 문서 첫 줄)가 같은가 — 세트가 한 폴더에 있으면 `python3 test_*.py` 가 이 대조를 자동으로 한다(v19)
+2. §1 의 **파일별 판**과 받은 세트 파일의 판 표기(`__version__`, 문서 첫 줄)가 같은가 — 세트가 한 폴더에 있으면 `python3 test_*.py` 가 이 대조를 자동으로 한다(v19)
 3. **해시**가 같은가
 
 해시는 "그 판이 맞는가"만 보장하고 "최신인가"는 보장하지 않는다 — 2단계가 구판 잔존을 잡는다.
@@ -87,5 +87,5 @@ GitHub 에서 읽는다(넘김 문서를 쓰는 쪽). 발표에서 claim_graph 3
 **코드 수정** — 코드 프로젝트에서만. 다른 프로젝트는 `{YYMMDD}_도구회신_{주제}_v{M}.md` 로 보낸다. 덱 전용 스크립트
 (`build_*.py`)는 발표 프로젝트가 직접 쓰되 툴킷 함수를 고치거나 새 툴킷 함수를 만들면 회신으로 보낸다.
 
-<!-- prev-release: v2.82 · CLAIM_GRAPH.md=0410c30e4f71;CODE_PROJECT_README.md=f4c839b0b750;DECK_SPEC.md=9ce13600b06d;GITHUB_README.md=c81d29504e46;HANDOFF_FORMAT.md=92fb4a11e9bb;HISTORY.md=6c8d7a9e9418;LITERATURE.md=73b0b00bd897;PRIVATE_TERMS.txt=6e8c2862cf5e;REVIEW_PROTOCOL.md=a186eacaf621;TEXTBOOK.md=4bfff4aa0771;claim_graph.py=e6c4243ade62;deck_toolkit.py=c14c4686c2b1;handoff.py=d8b5305111f4;literature.py=b99516fb6f9a;release.py=d0fe4b4d184a;test_claim_graph.py=b40e84e1314b;test_handoff.py=7b2a11d55b3a;test_literature.py=ac0646359a75;test_textbook.py=93d75911d86c;test_toolkit.py=2193bcdf541c;test_verify_toolkit.py=a1b46f5e0e74;textbook.py=446049895c66;verify_toolkit.py=529ce4740c17 -->
-<!-- release-hashes: v2.83 · CLAIM_GRAPH.md=0410c30e4f71;CODE_PROJECT_README.md=f4c839b0b750;DECK_SPEC.md=9ce13600b06d;GITHUB_README.md=c81d29504e46;HANDOFF_FORMAT.md=92fb4a11e9bb;HISTORY.md=101c443bed2b;LITERATURE.md=73b0b00bd897;PRIVATE_TERMS.txt=6e8c2862cf5e;REVIEW_PROTOCOL.md=8c56bf02ca59;TEXTBOOK.md=4bfff4aa0771;claim_graph.py=e6c4243ade62;deck_toolkit.py=c14c4686c2b1;handoff.py=d8b5305111f4;literature.py=b99516fb6f9a;release.py=d0fe4b4d184a;test_claim_graph.py=b40e84e1314b;test_handoff.py=7b2a11d55b3a;test_literature.py=ac0646359a75;test_textbook.py=93d75911d86c;test_toolkit.py=2193bcdf541c;test_verify_toolkit.py=a1b46f5e0e74;textbook.py=446049895c66;verify_toolkit.py=529ce4740c17 -->
+<!-- prev-release: v2.83 · CLAIM_GRAPH.md=0410c30e4f71;CODE_PROJECT_README.md=f4c839b0b750;DECK_SPEC.md=9ce13600b06d;GITHUB_README.md=c81d29504e46;HANDOFF_FORMAT.md=92fb4a11e9bb;HISTORY.md=101c443bed2b;LITERATURE.md=73b0b00bd897;PRIVATE_TERMS.txt=6e8c2862cf5e;REVIEW_PROTOCOL.md=8c56bf02ca59;TEXTBOOK.md=4bfff4aa0771;claim_graph.py=e6c4243ade62;deck_toolkit.py=c14c4686c2b1;handoff.py=d8b5305111f4;literature.py=b99516fb6f9a;release.py=d0fe4b4d184a;test_claim_graph.py=b40e84e1314b;test_handoff.py=7b2a11d55b3a;test_literature.py=ac0646359a75;test_textbook.py=93d75911d86c;test_toolkit.py=2193bcdf541c;test_verify_toolkit.py=a1b46f5e0e74;textbook.py=446049895c66;verify_toolkit.py=529ce4740c17 -->
+<!-- release-hashes: v2.84 · CLAIM_GRAPH.md=1858ba70d529;CODE_PROJECT_README.md=f4c839b0b750;DECK_SPEC.md=852650b149a3;GITHUB_README.md=c81d29504e46;HANDOFF_FORMAT.md=92fb4a11e9bb;HISTORY.md=3937ba1210b3;LITERATURE.md=73b0b00bd897;PRIVATE_TERMS.txt=6e8c2862cf5e;REVIEW_PROTOCOL.md=5b4961094b0c;TEXTBOOK.md=4bfff4aa0771;claim_graph.py=078d3171ba96;deck_toolkit.py=fd63018fe975;handoff.py=d8b5305111f4;literature.py=b99516fb6f9a;release.py=d0fe4b4d184a;test_claim_graph.py=696f603a61b8;test_handoff.py=7b2a11d55b3a;test_literature.py=ac0646359a75;test_textbook.py=93d75911d86c;test_toolkit.py=3bef3c5c6f90;test_verify_toolkit.py=fe6c80d1abad;textbook.py=446049895c66;verify_toolkit.py=c88c2b37d1ce -->

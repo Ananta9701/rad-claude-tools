@@ -48,7 +48,7 @@ import sys
 import unicodedata
 import zipfile
 
-__version__ = '16.23'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.24'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -3185,7 +3185,7 @@ def main():
     lk.add_argument('--claims', required=True); lk.add_argument('frm', metavar='FROM'); lk.add_argument('to', metavar='TO')
     lk.add_argument('--type', choices=EDGE_TYPES, default='premise'); lk.add_argument('-o', required=True)
     sc = sub.add_parser('selfcheck', help='세트 자가 점검: 3단계 확인 + 파일 분류 + 회신용 표 (v15.6)')
-    sc.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='세트가 있는 폴더 (기본: 이 파일의 폴더, 프로젝트에서는 /mnt/project)')
+    sc.add_argument('--dir', default=os.path.dirname(os.path.abspath(__file__)), help='세트가 있는 폴더 (기본: 이 파일의 폴더 — GitHub 세트면 /tmp/rct)')
     sc.add_argument('--tests', action='store_true', help='그 프로젝트의 test_*.py 도 돌린다')
     sc.add_argument('--role', default=None, help='저자 / 발표 / 리뷰어 / 코드 — GitHub 에서 받은 전체 세트에서 쓸 역할 (v15.7)')
     sc.add_argument('--compare', default=None, help='예비 폴더(예: /mnt/project)와 판·해시 대조 (v15.7)')

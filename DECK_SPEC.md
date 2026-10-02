@@ -1,4 +1,6 @@
-# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.51)
+# 영상의학 발표자료 제작 규격 (DECK_SPEC v16.52)
+
+> v16.52 (문서만): 첫머리 "프로젝트 지식에 넣어두고" → 세션 시작 때 GitHub 세트에서 받는다(§ 세션 시작). 동작 변경 없음.
 
 > v16.51 (발표 도구회신 09-30 keys_missing 확인): `mapfreeze --oral`·`mapstale --oral` 의 [!] 줄과 `mapcheck` 의 `— note:` 앞 빈칸을 한 칸으로(모양만). claim_graph 16.17 의 탐색적 표지(`exploratory`)는 덱 그래프의 `mapgraph`·`mapcheck` 에도 그대로 걸린다(CLAIM_GRAPH §3-7).
 
@@ -20,7 +22,7 @@
 
 영상의학과 발표자 — quiz / case review / journal review 공용
 
-이 문서와 `deck_toolkit.py` 를 프로젝트 지식에 넣어두고, 매 세션 시작 시 참조한다.
+이 문서와 `deck_toolkit.py` 는 매 세션 시작 때 GitHub 세트(`/tmp/rct`)에서 받아 참조한다(아래 "세션 시작 — 도구는 GitHub 에서 받는다").
 목적은 **기계적 작업을 코드로 넘기고, 토큰을 영상 판독과 문헌 검증에 집중**하는 것이다.
 
 ---

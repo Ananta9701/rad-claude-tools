@@ -8,9 +8,8 @@ verify_toolkit.py — 논문 원고 기계적 검증 툴킷
 
 사용법
 ------
-프로젝트 지식(project knowledge)에 이 파일을 업로드해 두면, 이후 대화에서
-Claude가 /mnt/project/verify_toolkit.py 를 view로 읽고, 그 내용을
-/home/claude/에 복사한 뒤 bash_tool로 바로 실행할 수 있습니다.
+세션 시작 때 GitHub 공개 세트를 /tmp/rct 에 받아(README.md 의 한 줄 명령,
+selfcheck --role 저자) 그 폴더에서 바로 실행합니다(v1.3.9).
 
     python3 verify_toolkit.py all <파일.docx>          # 전체 검사
     python3 verify_toolkit.py trackchanges <파일.docx>  # 추적변경만
@@ -39,7 +38,7 @@ import zipfile
 import os
 import shutil
 
-__version__ = '1.3.8'   # TOOLS_MANIFEST 와 대조. 판이 오르면 test_verify_toolkit.EXPECT_VERSION 도 함께
+__version__ = '1.3.9'   # TOOLS_MANIFEST 와 대조. 판이 오르면 test_verify_toolkit.EXPECT_VERSION 도 함께
 
 # ══════════════════════════════════════════════════════════════
 # PAPER-SPECIFIC CONFIG — 논문·학술지가 바뀌면 여기만 수정
