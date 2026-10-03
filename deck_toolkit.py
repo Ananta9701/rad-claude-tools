@@ -40,7 +40,7 @@ import subprocess
 import sys
 import zipfile
 
-__version__ = '16.52'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.53'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_toolkit.EXPECT_VERSION 을 함께 올린다
 
 # ----------------------------------------------------------------------------
 # 색 규칙 — 프로젝트 전체 공통. 의미가 정해져 있으므로 임의로 늘리지 않는다.
@@ -470,6 +470,44 @@ NOTES_RELS = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" Target="../slides/slide__S__.xml"/><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesMaster" Target="../notesMasters/notesMaster1.xml"/></Relationships>'''
 
 
+# v16.53 (사용자 10-03, HN2 덱 점검): 위치·크기 정규식 30여 곳이 <a:off x= y=>·<a:ext cx= cy=> 순서를 가정한다.
+# 덱을 풀 때 순서가 다른 태그만 x,y / cx,cy 순서로 다시 쓴다(뜻은 같다). 순서가 맞는 파일은 손대지 않는다(바이트 그대로).
+_XFRM_TAG = re.compile(r'<(a:off|a:chOff|a:ext|a:chExt)\b([^<>]*?)(\s*/?)>')
+
+def _canon_xfrm_attrs(xml):
+    """반환: (고친 글, 고친 태그 수). <a:ext uri=…> 처럼 x,y·cx,cy 가 다 있지 않은 태그는 그대로."""
+    n = [0]
+    def fix(m):
+        tag, attrs, end = m.groups()
+        keys = ('x', 'y') if tag in ('a:off', 'a:chOff') else ('cx', 'cy')
+        pairs = re.findall(r'([\w:]+)="([^"]*)"', attrs)
+        names = [k for k, _ in pairs]
+        if not all(k in names for k in keys) or tuple(names[:2]) == keys:
+            return m.group(0)
+        n[0] += 1
+        val = dict(pairs)
+        rest = ''.join(' %s="%s"' % kv for kv in pairs if kv[0] not in keys)
+        return '<%s %s="%s" %s="%s"%s%s>' % (tag, keys[0], val[keys[0]], keys[1], val[keys[1]], rest, end.strip())
+    return _XFRM_TAG.sub(fix, xml), n[0]
+
+def _canon_xfrm_dir(root):
+    """푼 덱 폴더의 ppt/ 아래 XML 에서 속성 순서가 다른 위치·크기 태그를 바로잡는다. 반환: 고친 태그 수."""
+    total = 0
+    for dp, _, fs in os.walk(os.path.join(root, 'ppt')):
+        for f in fs:
+            if not f.endswith('.xml'):
+                continue
+            p = os.path.join(dp, f)
+            x = open(p, encoding='utf8').read()
+            if '<a:off' not in x and '<a:ext' not in x and '<a:ch' not in x:
+                continue
+            y, k = _canon_xfrm_attrs(x)
+            if k:
+                open(p, 'w', encoding='utf8').write(y)
+                total += k
+    return total
+
+
 # ----------------------------------------------------------------------------
 # Deck
 # ----------------------------------------------------------------------------
@@ -479,6 +517,7 @@ class Deck:
         self.dir = workdir
         self.theme = theme
         self.import_warnings = []   # v16.9: import_slide 의 테마·레이아웃 불일치 알림
+        self.attr_order_fixed = 0   # v16.53: 열 때 속성 순서를 바로잡은 위치·크기 태그 수
 
     # ---- open / save ----
     @classmethod
@@ -490,7 +529,9 @@ class Deck:
             shutil.rmtree(workdir)
         with zipfile.ZipFile(pptx) as z:
             z.extractall(workdir)
-        return cls(workdir, theme)
+        d = cls(workdir, theme)
+        d.attr_order_fixed = _canon_xfrm_dir(workdir)
+        return d
 
     def save(self, out):
         if os.path.isdir(out):
@@ -607,9 +648,14 @@ class Deck:
         return 'tx1' if self.white(slide_no) == 'bg1' else 'bg1'
 
     def slide_size(self):
+        # v16.53 (사용자 10-03, HN2 덱): 속성 순서와 상관없이 — Google Slides 를 거친 덱은 <p:sldSz cy=… cx=…> 로 저장된다
         d = open(os.path.join(self.dir, 'ppt/presentation.xml'), encoding='utf8').read()
-        m = re.search(r'<p:sldSz cx="(\d+)" cy="(\d+)"', d)
-        return int(m.group(1)), int(m.group(2))
+        tag = re.search(r'<p:sldSz\b[^>]*>', d)
+        cx = tag and re.search(r'\bcx="(\d+)"', tag.group(0))
+        cy = tag and re.search(r'\bcy="(\d+)"', tag.group(0))
+        if not (cx and cy):
+            raise ValueError('presentation.xml 의 <p:sldSz> 에 cx·cy 가 없다: %s' % (tag.group(0) if tag else '태그 없음'))
+        return int(cx.group(1)), int(cy.group(1))
 
     # ---- read ----
     def texts(self, slide_no):
@@ -2017,6 +2063,9 @@ class Deck:
         print('슬라이드 크기: %d x %d EMU (%s)' % (
             w, h, '4:3' if abs(w / h - 4 / 3) < 0.02 else '16:9'), file=stream)
         print('총 %d장\n' % len(order), file=stream)
+        if self.attr_order_fixed:
+            print('[참고] 위치·크기 태그 %d곳의 속성 순서를 x,y / cx,cy 로 맞춰 읽었다(뜻은 같다 — 이 도구로 저장하면 이 순서로 저장된다)\n'
+                  % self.attr_order_fixed, file=stream)
 
         seen_notes, seen_imgs = {}, {}
         problems = []

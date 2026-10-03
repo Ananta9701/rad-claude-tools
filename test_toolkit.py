@@ -30,7 +30,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.52'
+EXPECT_VERSION = '16.53'
 
 def t_deck_version_matches_manifest():
     assert getattr(T, '__version__', None) == EXPECT_VERSION, (getattr(T, '__version__', None), EXPECT_VERSION)
@@ -2657,6 +2657,64 @@ def t_v1647_cli_model_font_note():
     fam, reg, _ = _real_font()
     r = cli('overflow', o, '--font-path', reg)                  # 글꼴 파일을 주면 알림 없음
     assert r.returncode == 0 and '[참고] 덱 테마 글꼴' not in r.stdout, r.stdout[-500:]
+
+# ---------------------------------------------------------------- v16.53 XML 속성 순서 (사용자 10-03, HN2 덱 점검)
+def _rezip(src, dst, edits):
+    """zip 안 part 를 글자 그대로 고친 사본(edits: {part: fn(xml) -> xml}) — Deck.open 을 거치지 않는다."""
+    with zipfile.ZipFile(src) as zi, zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED) as zo:
+        for it in zi.infolist():
+            b = zi.read(it.filename)
+            if it.filename in edits:
+                b = edits[it.filename](b.decode('utf8')).encode('utf8')
+            zo.writestr(it, b)
+    return dst
+
+def t_sldsz_attr_order_cy_first():
+    # 실물(HN2 v15, Google Slides 를 거친 덱): <p:sldSz cy=… cx=…> — 전에는 slide_size() 가 AttributeError 로 audit·lint·overflow·titles 가 멈췄다
+    o = _rezip(SRC, out('sz_rev.pptx'), {'ppt/presentation.xml': lambda x: re.sub(r'<p:sldSz cx="(\d+)" cy="(\d+)"', r'<p:sldSz cy="\2" cx="\1"', x, 1)})
+    assert '<p:sldSz cy=' in zipfile.ZipFile(o).read('ppt/presentation.xml').decode('utf8')    # 시험 덱이 정말 뒤집혔는지
+    assert T.Deck.open(o, wd('szr')).slide_size() == T.Deck.open(SRC, wd('szs')).slide_size()
+    for cmd in ('audit', 'lint', 'overflow', 'titles'):
+        r, s = cli(cmd, o), cli(cmd, SRC)
+        assert 'Traceback' not in r.stderr and r.returncode == s.returncode, (cmd, r.returncode, r.stderr[-400:])
+    assert [l for l in cli('audit', o).stdout.splitlines() if l.startswith('슬라이드 크기')] == \
+           [l for l in cli('audit', SRC).stdout.splitlines() if l.startswith('슬라이드 크기')]
+
+def t_sldsz_without_size_clear_error():
+    # 실패 쪽: 크기 속성이 없으면 AttributeError 가 아니라 무엇이 없는지 말하는 ValueError
+    o = _rezip(SRC, out('sz_none.pptx'), {'ppt/presentation.xml': lambda x: re.sub(r'<p:sldSz\b[^>]*/>', '<p:sldSz type="screen4x3"/>', x, 1)})
+    try:
+        T.Deck.open(o, wd('szn')).slide_size()
+    except ValueError as e:
+        assert 'sldSz' in str(e), e
+    else:
+        raise AssertionError('크기 없는 sldSz 를 통과시킴')
+
+def t_xfrm_attr_order_normalized_on_open():
+    # <a:off y= x=>·<a:ext cy= cx=> 를 열 때 x,y / cx,cy 순서로 — 위치·크기 정규식 30여 곳이 이 순서를 가정한다
+    rev = lambda x: re.sub(r'<a:(off|chOff) x="(-?\d+)" y="(-?\d+)"', r'<a:\1 y="\3" x="\2"',
+                           re.sub(r'<a:(ext|chExt) cx="(\d+)" cy="(\d+)"', r'<a:\1 cy="\3" cx="\2"', x))
+    parts = [n for n in zipfile.ZipFile(SRC).namelist() if re.fullmatch(r'ppt/slides/slide\d+\.xml', n)]
+    o = _rezip(SRC, out('xf_rev.pptx'), {p: rev for p in parts})
+    k = sum(len(re.findall(r'<a:(?:off|chOff) y=|<a:(?:ext|chExt) cy=', zipfile.ZipFile(o).read(p).decode('utf8'))) for p in parts)
+    assert k > 0, '시험 덱에 뒤집힌 태그가 없다'
+    d, s = T.Deck.open(o, wd('xfr')), T.Deck.open(SRC, wd('xfs'))
+    assert d.attr_order_fixed == k, (d.attr_order_fixed, k)
+    for p in parts:   # 바로잡은 글이 원래 덱과 글자 그대로 같다
+        assert open(os.path.join(d.dir, p), encoding='utf8').read() == open(os.path.join(s.dir, p), encoding='utf8').read(), p
+    assert '[참고] 위치·크기 태그 %d곳' % k in cli('audit', o).stdout
+
+def t_xfrm_attr_order_canonical_untouched():
+    # 실패 쪽(바꾸면 안 되는 것): 순서가 맞는 덱·<a:ext uri=…> 는 한 바이트도 바꾸지 않는다
+    ext = '<p:extLst><p:ext uri="{X}"><a:ext uri="{Y}" cx="1"/></p:ext></p:extLst>'
+    o = _rezip(SRC, out('xf_ok.pptx'), {'ppt/slides/slide1.xml': lambda x: x.replace('</p:cSld>', '</p:cSld>' + ext, 1) if '</p:cSld>' in x else x})
+    d = T.Deck.open(o, wd('xfo'))
+    assert d.attr_order_fixed == 0, d.attr_order_fixed
+    with zipfile.ZipFile(o) as z:
+        for n in z.namelist():
+            if n.endswith('.xml'):
+                assert open(os.path.join(d.dir, n), 'rb').read() == z.read(n), n
+    assert '위치·크기 태그' not in cli('audit', o).stdout
 
 # ---------------------------------------------------------------- 실행 (한 번만)
 tests = [(n[2:], f) for n, f in list(globals().items()) if n.startswith('t_')]
