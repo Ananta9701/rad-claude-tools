@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import textbook as TB          # noqa: E402
 
-EXPECT_VERSION = '0.8'
+EXPECT_VERSION = '0.8.1'
 TMP = tempfile.mkdtemp(prefix='ttb_')
 
 
@@ -623,6 +623,44 @@ def t_v08_ocr_heads_and_lone_opener():
             40: ({4},) + ((), ''), 42: ({4},) + ((), '')}
     chs, _ = TB.resolve_chapters(_marks(spec, 60))
     assert [(c['num'], c['first'] + 1) for c in chs] == [(3, 1), (4, 40)], chs
+
+
+def t_v081_dropped_plan_rows():
+    # v0.8.1 (대기열 10-04 — Gore 100–127장이 조용히 사라진 일): 장 표 모양인데 읽지 못한 줄은 버리되 경고한다
+    d, pdir = _split_setup('dr')
+    pf = os.path.join(pdir, 'pl_01.md')
+    s = open(pf, encoding='utf8').read()
+    assert s.count('| 02 |') == 1, s
+    open(pf, 'w', encoding='utf8').write(s.replace('| 02 |', '| 2 |'))                     # 사람이 손으로 고치다 한 자리로
+    dr = TB.plan_dropped(pf)
+    assert len(dr) == 1 and dr[0][1].startswith('| 2 | Kidney |'), dr
+    buf = io.StringIO(); out = os.path.join(TMP, 'dr_out')
+    TB.split(d, pdir, 'pl', out, stream=buf)
+    assert '[경고] 장 표 줄 1개를 읽지 못해 버림' in buf.getvalue(), buf.getvalue()
+    ix = open(os.path.join(out, '01_h book', 'INDEX.md'), encoding='utf8').read()
+    assert '[경고] 장 표에서 읽지 못해 버린 줄 1개' in ix and '| 2 | Kidney |' in ix, ix
+    assert '02_Kidney.md' not in os.listdir(os.path.join(out, '01_h book'))               # 버린 장은 여전히 안 나뉨(경고만)
+    # 성공 쪽: 고치지 않은 장 표는 경고 없음 · 머리줄·구분줄·다른 표는 버린 줄로 세지 않음
+    d2, pdir2 = _split_setup('dr2')
+    assert TB.plan_dropped(os.path.join(pdir2, 'pl_01.md')) == []
+    buf2 = io.StringIO(); out2 = os.path.join(TMP, 'dr2_out')
+    TB.split(d2, pdir2, 'pl', out2, stream=buf2)
+    assert '[경고]' not in buf2.getvalue()
+    assert '[경고]' not in open(os.path.join(out2, '01_h book', 'INDEX.md'), encoding='utf8').read()
+    assert TB.plan_dropped(os.path.join(TMP, '없는_파일.md')) == []
+
+
+def t_v081_plan_empty_title_row():
+    # v0.8.1 (10-04 인터벤션 11장): 쪽 머리 제목이 비면 plan 이 '| 11 |  | 143 |' 줄을 썼고 split 이 그 줄을 조용히 버렸다
+    ch = lambda num, title, a, b: {'num': num, 'title': title, 'start': a - 1, 'end': b - 1, 'pages_n': b - a + 1, 'printed': '—', 'why': '쪽 머리만'}
+    r = {'method': '쪽 머리', 'chapters': [ch(10, 'Balloon', 1, 14), ch(11, '', 15, 18), ch(12, '  ', 19, 30)], 'checks': [], 'pages': 30,
+         'seconds': 1, 'error': None, 'depths': {}, 'labels': None}
+    fp = os.path.join(TMP, 'empty_title.md')
+    open(fp, 'w', encoding='utf8').write(TB.plan_md(1, 'x.pdf', r, 'pl'))
+    rows = TB.read_plan_rows(fp)
+    assert [x[0] for x in rows] == [10, 11, 12], rows                                       # 빈 제목 장도 읽힌다
+    assert rows[1][1] == rows[2][1] == '(제목 못 읽음)' and rows[0][1] == 'Balloon', rows
+    assert TB.plan_dropped(fp) == []
 
 if __name__ == '__main__':
     tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith('t_') and callable(v)]

@@ -27,7 +27,7 @@ import time
 import unicodedata
 from collections import Counter
 
-__version__ = '0.8'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.8.1'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
 
 TOC_WORDS = re.compile(r'차\s*[례려레]|목\s*차|c\s*o\s*n\s*t\s*e\s*n\s*t\s*s', re.I)   # v0.2: OCR '차려'·'C O N T E N T S'
 NUM_LINE = re.compile(r'^\s*[-–—]?\s*(\d{1,4})\s*[-–—]?\s*$')
@@ -552,7 +552,8 @@ def plan_md(k, f, r, name):
     if chs and chs[0]['start'] > 0:
         L.append('| 앞 | (앞붙이) | 1 | %d | %d | — | — |' % (chs[0]['start'], chs[0]['start']))
     for ch in chs:
-        L.append('| %02d | %s | %d | %d | %d | %s | %s |' % (ch['num'], _cell(ch['title'])[:60], ch['start'] + 1, ch['end'] + 1,
+        # v0.8.1: 제목이 비면 '(제목 못 읽음)' — 빈 칸 줄은 ROW 가 못 읽어 split 이 그 장을 버렸다(인터벤션 11장, 10-04)
+        L.append('| %02d | %s | %d | %d | %d | %s | %s |' % (ch['num'], _cell(ch['title'])[:60].strip() or '(제목 못 읽음)', ch['start'] + 1, ch['end'] + 1,
                                                           ch['pages_n'], ch['printed'], ch['why']))
     if chs and chs[-1]['end'] < r['pages'] - 1:
         L.append('| 뒤 | (뒤붙이) | %d | %d | %d | — | — |' % (chs[-1]['end'] + 2, r['pages'], r['pages'] - chs[-1]['end'] - 1))
@@ -672,6 +673,27 @@ def read_plan_rows(fp):
     return rows
 
 
+def plan_dropped(fp):
+    """v0.8.1: 장 표 모양(칸 7개)인데 ROW 로 읽지 못한 줄 [(줄 번호, 줄)] — read_plan_rows 는 이 줄들을 버린다.
+    전에는 아무 말 없이 버려 Gore 100–127장(세 자리)이 분할에서 사라졌다(10-04). 사람이 고친 '| 7 |'(한 자리) 같은 줄도 여기 잡힌다."""
+    out = []
+    try:
+        lines = open(fp, encoding='utf8').read().splitlines()
+    except OSError:
+        return out
+    for i, l in enumerate(lines, 1):
+        if not (l.startswith('| ') and l.endswith(' |')) or ROW.match(l):
+            continue
+        cells = [c.strip() for c in re.split(r'(?<!\\)\|', l)[1:-1]]
+        if len(cells) == 7 and cells[0] != '장':
+            out.append((i, l))
+    return out
+
+
+def _dropped_text(dropped, n=5):
+    return ' · '.join('줄 %d `%s`' % (i, l[:70]) for i, l in dropped[:n]) + (' 외 %d' % (len(dropped) - n) if len(dropped) > n else '')
+
+
 def plan_named(plan_fp):
     """v0.8: plan 첫 줄 method 가 '쪽 머리'(쪽 머리로 자동으로 만든 장 표)가 아니면 True — 책갈피·사람이 만든/고친 장 표는 긴 장도 장 이름으로."""
     try:
@@ -762,11 +784,14 @@ def split_book(pdf_path, plan_fp, book_dir, label, part=PART, overlap=OVERLAP):
         open(os.path.join(book_dir, nm), 'w', encoding='utf8').write('\n'.join(L))
         pr = ('%s–%s' % (labels[lo - 1], labels[hi - 1])) if labels else (('%d–%d' % (lo - off, hi - off)) if off is not None else '—')
         idx.append('| `%s` | %s | %s | %s | %d–%d | %d |' % (nm, k, _cell(title)[:50], pr, lo, hi, hi - lo + 1))
+    dropped = plan_dropped(plan_fp)
     I = ['<!-- index: book=%s files=%d pages=%d -->' % (os.path.basename(pdf_path), len(units), n),
          '# INDEX — %s' % label, '',
          '> textbook.py v%s split · 원본 `%s`(%d쪽) · 장 표 `%s`. 장 파일마다 앞뒤 %d쪽 겹침, %d쪽 넘는 장은 나눔.' % (
              __version__, os.path.basename(pdf_path), n, os.path.basename(plan_fp), overlap, part),
-         '> 쪽 표지 `[p.인쇄쪽 · PDF 쪽]`. 인쇄 쪽을 모르면 `p.—`. 그림은 `textbook.py page --book … --printed N`.', '',
+         '> 쪽 표지 `[p.인쇄쪽 · PDF 쪽]`. 인쇄 쪽을 모르면 `p.—`. 그림은 `textbook.py page --book … --printed N`.'] + ([
+         '> **[경고] 장 표에서 읽지 못해 버린 줄 %d개** — %s. 그 장은 나뉘지 않았다(앞 장·뒤붙이에 들어갔거나 빠졌다). '
+         '장 번호는 두·세 자리(`07`)로 고친 뒤 이 책 폴더를 지우고 다시 나눈다.' % (len(dropped), _dropped_text(dropped))] if dropped else []) + ['',
          '| 파일 | 장 | 제목 | 인쇄 쪽 | PDF 쪽 | 쪽 수 |', '|---|---|---|---|---|---|'] + idx
     open(os.path.join(book_dir, 'INDEX.md'), 'w', encoding='utf8').write('\n'.join(I) + '\n')
     return len(units)
@@ -799,6 +824,9 @@ def split(folder, plan_dir, plan_name, out, only=None, skip=(), recursive=False,
             if time.time() - t0 + est > budget:
                 left.append(b); continue
         print('[%02d] %s' % (k, b), file=stream, flush=True)
+        dropped = plan_dropped(pf)      # v0.8.1: 버린 장 표 줄은 여기서도 알린다(책 INDEX 에도 적힘)
+        if dropped:
+            print('  [경고] 장 표 줄 %d개를 읽지 못해 버림 — %s' % (len(dropped), _dropped_text(dropped)), file=stream, flush=True)
         t1 = time.time()
         cp = subprocess.run([sys.executable, os.path.abspath(__file__), '_split_one', path, pf, bdir(k, b), short_name(b), '--part', str(part)],
                             capture_output=True, text=True, env=dict(os.environ, PYTHONDONTWRITEBYTECODE='1'))
