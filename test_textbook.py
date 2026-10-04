@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import textbook as TB          # noqa: E402
 
-EXPECT_VERSION = '0.7.2'
+EXPECT_VERSION = '0.8'
 TMP = tempfile.mkdtemp(prefix='ttb_')
 
 
@@ -576,6 +576,53 @@ def t_v072_split_noplan_and_budget():
     top = open(os.path.join(out, 'INDEX.md'), encoding='utf8').read()
     assert done == 0 and '| 02 | k book | (장 표 없음) |' in top and '실패 0권 · 남은 책 0권' in top, top
 
+
+
+def t_v08_three_digit_rows():
+    # v0.8 (10-04 Gore 100–127장): 장 표의 세 자리 장 번호도 읽는다 — 전에는 정규식 \d\d 가 100장 이상 28줄을 조용히 버렸다
+    fp = os.path.join(TMP, 'pl3.md')
+    open(fp, 'w', encoding='utf8').write('\n'.join([
+        '| 장 | 제목 | PDF 시작 | PDF 끝 | 쪽 수 | 인쇄 쪽 | 근거 |', '|---|---|---|---|---|---|---|',
+        '| 99 | Ninety | 10 | 19 | 10 | 8–17 | 책갈피 |',
+        '| 100 | Pancreas | 20 | 29 | 10 | 18–27 | 책갈피 |',
+        '| 127 | Monitoring | 30 | 39 | 10 | 28–37 | 책갈피 |',
+        '| 1000 | Noise | 40 | 41 | 2 | — | 잡음 |', '| 1 | Noise | 42 | 43 | 2 | — | 잡음 |', '']))
+    rows = TB.read_plan_rows(fp)
+    assert [r[0] for r in rows] == [99, 100, 127], rows                                     # 네 자리·한 자리는 여전히 안 읽음
+    assert rows[1] == (100, 'Pancreas', 20, 29, 2), rows
+    assert [x[0] for x in TB.split_units(rows, 50)] == ['99_Ninety.md', '100_Pancreas.md', '127_Monitoring.md']
+
+
+def t_v08_named_long_chapter():
+    # v0.8 (10-04 신경영상의학 11장 150쪽): 책갈피·사람이 만든 장 표는 긴 장도 장 이름으로 — 쪽 머리로 만든 장 표만 '미확인'
+    rows = [(k, 'T%d' % k, 1 + (k - 1) * 10, k * 10, 0) for k in range(1, 6)] + [(6, 'Long', 51, 200, 0)]
+    named = [x[0] for x in TB.split_units(rows, 200, named=True)]
+    assert named[5:] == ['06_Long_1.md', '06_Long_2.md', '06_Long_3.md', '06_Long_4.md', '06_Long_5.md'], named
+    auto = [x[0] for x in TB.split_units(rows, 200)]
+    assert '06_Long_1.md' in auto and '06_미확인_p81-110.md' in auto and '06_Long_2.md' not in auto, auto
+    for head, want in [('method=책갈피 (깊이 1) chapters=6', True), ('method=쪽 머리 chapters=6', False),
+                       ('method=사람 확인 chapters=6', True)]:
+        fp = os.path.join(TMP, 'pm.md')
+        open(fp, 'w', encoding='utf8').write('<!-- plan: %s check=0 pages=200 seconds=1 error=no -->\n# x\n' % head)
+        assert TB.plan_named(fp) is want, head
+
+
+def t_v08_ocr_heads_and_lone_opener():
+    # v0.8 (10-04 신경영상의학 — 10장부터 끝까지 못 찾음): '제'→'세' OCR · 쪽 머리가 한 번만 잡힌 짧은 장
+    assert 11 in TB.page_marks('I세111 장 증강 I 295 ////')['head']
+    assert TB.page_marks('저129 잠  동정맥루의혈관내치료')['head'] == {29}
+    assert TB.page_marks('저12 8 장  동맥류의혈관내치료')['head'] == {28}
+    assert TB.page_marks('세 장의 사진을 비교한다')['head'] == set()
+    # 9장 쪽 머리 여럿 → 10장은 여는 쪽 한 번뿐(13쪽 장) → 11장 여는 쪽, 다음 쪽 머리는 44쪽 뒤 → 12장
+    spec = {1: ({9},) + ((), ''), 3: ({9},) + ((), ''), 5: ({9},) + ((), ''), 10: ({10},) + ((), ''),
+            23: ({11},) + ((), ''), 67: ({11},) + ((), ''), 100: ({12},) + ((), ''), 104: ({12},) + ((), '')}
+    chs, _ = TB.resolve_chapters(_marks(spec, 120))
+    assert [(c['num'], c['first'] + 1) for c in chs] == [(9, 1), (10, 10), (11, 23), (12, 100)], chs
+    # 실패 쪽: 장 안의 잡음 한 번(c+1)은 다음 쪽 머리가 다시 c 면 받지 않는다
+    spec = {1: ({3},) + ((), ''), 3: ({3},) + ((), ''), 5: ({3},) + ((), ''), 8: ({4},) + ((), ''), 30: ({3},) + ((), ''),
+            40: ({4},) + ((), ''), 42: ({4},) + ((), '')}
+    chs, _ = TB.resolve_chapters(_marks(spec, 60))
+    assert [(c['num'], c['first'] + 1) for c in chs] == [(3, 1), (4, 40)], chs
 
 if __name__ == '__main__':
     tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith('t_') and callable(v)]

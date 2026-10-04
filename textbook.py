@@ -27,7 +27,7 @@ import time
 import unicodedata
 from collections import Counter
 
-__version__ = '0.7.2'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.8'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
 
 TOC_WORDS = re.compile(r'차\s*[례려레]|목\s*차|c\s*o\s*n\s*t\s*e\s*n\s*t\s*s', re.I)   # v0.2: OCR '차려'·'C O N T E N T S'
 NUM_LINE = re.compile(r'^\s*[-–—]?\s*(\d{1,4})\s*[-–—]?\s*$')
@@ -294,7 +294,7 @@ def probe(folder, out, name, only=None, front=40, samples=20, stream=sys.stdout,
 # 스캔 교과서는 책갈피가 없다. 홀수 쪽 머리의 "제 N 장 제목 쪽" 을 따라 장을 정한다. OCR 은 '제'→'저1'·'저|', '장'→'잠·징'
 # 으로 읽는다(09-27 조사: '저15 징' = 5장, '저1 9 장' = 9장, '제 1 0 장' = 10장). 그래서 쪽마다 후보 번호를 여럿 두고,
 # 장 번호가 쪽을 따라 c → c 또는 c+1(드물게 c+2) 로만 가며, 새 번호는 뒤 12쪽 안에서 한 번 더 나와야 받아들인다.
-HEAD_KO = re.compile(r'(제|저)\s*([\]|lI!]?)\s*(\d(?:\s?\d){0,2})\s*[장잠징쟁]')
+HEAD_KO = re.compile(r'(제|저|세)\s*([\]|lI!]?)\s*(\d(?:\s?\d){0,2})\s*[장잠징쟁]')   # v0.8: '세'(신경영상의학 'I세111 장')
 HEAD_EN = re.compile(r'\bchapter\s*(\d{1,3})\b', re.I)
 OPENER = re.compile(r'(?:C\s*H\s*A\s*P\s*T\s*E\s*R|A\s*P\s*T?\s*E\s*R|T\s*E\s*R|(?<![A-Za-z])E\s*R)\s*(\d{1,2})(?!\d)')
 LEAD_NUM = re.compile(r'^\s*(\d{1,4})\s')
@@ -306,7 +306,7 @@ def head_candidates(prefix, mark, digits):
     raw = digits
     d = raw.replace(' ', '')
     out = {int(d)}
-    if len(d) >= 2 and d[0] == '1' and (prefix == '저' or raw.startswith('1 ')):
+    if len(d) >= 2 and d[0] == '1' and (prefix in ('저', '세') or raw.startswith('1 ')):
         out.add(int(d[1:]))
     return {x for x in out if 0 < x < 100}
 
@@ -367,8 +367,11 @@ def resolve_chapters(marks, lookahead=12):
                 c = k
                 hits[k] = [i]
             continue
+        # v0.8 (신경영상의학 10-04): 짧은 장은 쪽 머리가 여는 쪽 한 번만 잡히기도 한다(10장 13쪽) — 뒤 lookahead 쪽 안에 다시 안 나와도
+        # 다음 쪽 머리(쪽 수 상관없이 처음 잡힌 것)가 같은 번호나 그다음 번호면 받는다. 전에는 거기서 멈춰 뒤 장을 모두 놓쳤다
+        nxt = next((marks[j]['head'] for j in range(i + 1, n) if marks[j]['head']), set())
         for k in (c + 1, c + 2):
-            if k in cand and any(k in marks[j]['head'] for j in range(i + 1, min(n, i + 1 + lookahead))):
+            if k in cand and (any(k in marks[j]['head'] for j in range(i + 1, min(n, i + 1 + lookahead))) or nxt & {k, k + 1}):
                 if k == c + 2:
                     skipped.append(c + 1)
                 c = k
@@ -636,7 +639,7 @@ def plan(folder, out, name, only=None, skip=(), recursive=False, level=None, bud
 # ───────────────────────── 3단계: split · page · search ─────────────────────────
 PART = 30          # 장 md 한 파일의 쪽 수 한도 — 대화창이 한 번에 읽을 만큼(어림)
 OVERLAP = 2        # 사용자 09-27: 장 파일마다 앞뒤 2쪽 겹침
-ROW = re.compile(r'^\| (\d\d|앞|뒤) \| (.+?) \| (\d+) \| (\d+) \| (\d+) \| (.*?) \| (.*?) \|$')
+ROW = re.compile(r'^\| (\d{2,3}|앞|뒤) \| (.+?) \| (\d+) \| (\d+) \| (\d+) \| (.*?) \| (.*?) \|$')   # v0.8: 세 자리 장(Gore 100–127)
 INDEX_HEAD = re.compile(r'<!-- index: book=(.*?) files=(\d+) pages=(\d+) -->')
 
 
@@ -669,10 +672,21 @@ def read_plan_rows(fp):
     return rows
 
 
-def split_units(rows, n, part=PART, overlap=OVERLAP):
+def plan_named(plan_fp):
+    """v0.8: plan 첫 줄 method 가 '쪽 머리'(쪽 머리로 자동으로 만든 장 표)가 아니면 True — 책갈피·사람이 만든/고친 장 표는 긴 장도 장 이름으로."""
+    try:
+        head = open(plan_fp, encoding='utf8').readline()
+    except OSError:
+        return False
+    m = re.search(r'method=(.*?) chapters=', head)
+    return bool(m) and not m.group(1).strip().startswith('쪽 머리')
+
+
+def split_units(rows, n, part=PART, overlap=OVERLAP, named=False):
     """장 표 → 쓸 파일들 [(파일 이름, 장, 제목, 핵심 쪽 lo, hi, 겹침 포함 lo2, hi2, 인쇄 차이)].
     v0.4: 앞붙이·뒤붙이도 part 쪽씩 나눈다(뒤붙이 509쪽 한 파일이 될 뻔했다). 장 길이가 max(60, 중앙값×3)쪽을 넘으면 첫 part 만 그 장
-    이름, 나머지는 '미확인'(쪽 머리를 못 잡은 뒤 장들일 수 있다 — 사용자 결정 09-27: 이름 없이 30쪽 묶음)."""
+    이름, 나머지는 '미확인'(쪽 머리를 못 잡은 뒤 장들일 수 있다 — 사용자 결정 09-27: 이름 없이 30쪽 묶음).
+    v0.8: named=True(책갈피·사람이 확인한 장 표 — plan_named)면 긴 장도 모두 장 이름(신경영상의학 11장 150쪽 → 11_종양_1–5)."""
     lens = sorted(b - a + 1 for k, _, a, b, _ in rows if isinstance(k, int))
     med = lens[len(lens) // 2] if lens else 0
     out = []
@@ -687,7 +701,7 @@ def split_units(rows, n, part=PART, overlap=OVERLAP):
                     (' — 장 미확인일 수 있음' if b - a + 1 > 40 else '')
                 out.append(('%s%s.md' % (base, ('_%d' % (j + 1)) if many else ''), k, t, lo, hi, lo, hi, None))
                 continue
-            if j > 0 and b - a + 1 > max(60, 3 * med):
+            if not named and j > 0 and b - a + 1 > max(60, 3 * med):
                 out.append(('%02d_미확인_p%d-%d.md' % (k, lo, hi), k, '(장 미확인 — %d장 뒤일 수 있음) PDF %d–%d' % (k, lo, hi),
                             lo, hi, max(1, lo - overlap), min(n, hi + overlap), off))
                 continue
@@ -725,7 +739,7 @@ def split_book(pdf_path, plan_fp, book_dir, label, part=PART, overlap=OVERLAP):
     reader = pypdf.PdfReader(pdf_path, strict=False)
     n = len(reader.pages)
     labels = _labels(reader)
-    units = split_units(_fill_titles(read_plan_rows(plan_fp), _outline(reader)), n, part, overlap)
+    units = split_units(_fill_titles(read_plan_rows(plan_fp), _outline(reader)), n, part, overlap, named=plan_named(plan_fp))
     if not units:
         raise ValueError('장 표가 비었다: %s' % os.path.basename(plan_fp))
     os.makedirs(book_dir, exist_ok=True)
