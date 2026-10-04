@@ -27,7 +27,7 @@ import time
 import unicodedata
 from collections import Counter
 
-__version__ = '0.8.1'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.8.2'   # TEXTBOOK.md 첫 줄·test_textbook.EXPECT_VERSION 과 함께 올린다
 
 TOC_WORDS = re.compile(r'차\s*[례려레]|목\s*차|c\s*o\s*n\s*t\s*e\s*n\s*t\s*s', re.I)   # v0.2: OCR '차려'·'C O N T E N T S'
 NUM_LINE = re.compile(r'^\s*[-–—]?\s*(\d{1,4})\s*[-–—]?\s*$')
@@ -350,7 +350,7 @@ def page_marks(text):
 
 def resolve_chapters(marks, lookahead=12):
     """marks: 쪽마다 page_marks 결과(0 = PDF p.1). → 장 목록 [{num, first, last, pages}] (쪽은 0부터)."""
-    n, c, hits, skipped = len(marks), 0, {}, []
+    n, c, hits, skipped, lone = len(marks), 0, {}, [], {}
     for i in range(n):
         cand = marks[i]['head']
         if not cand:
@@ -369,15 +369,22 @@ def resolve_chapters(marks, lookahead=12):
             continue
         # v0.8 (신경영상의학 10-04): 짧은 장은 쪽 머리가 여는 쪽 한 번만 잡히기도 한다(10장 13쪽) — 뒤 lookahead 쪽 안에 다시 안 나와도
         # 다음 쪽 머리(쪽 수 상관없이 처음 잡힌 것)가 같은 번호나 그다음 번호면 받는다. 전에는 거기서 멈춰 뒤 장을 모두 놓쳤다
-        nxt = next((marks[j]['head'] for j in range(i + 1, n) if marks[j]['head']), set())
+        nj = next((j for j in range(i + 1, n) if marks[j]['head']), None)
+        nxt = marks[nj]['head'] if nj is not None else set()
         for k in (c + 1, c + 2):
-            if k in cand and (any(k in marks[j]['head'] for j in range(i + 1, min(n, i + 1 + lookahead))) or nxt & {k, k + 1}):
+            near = k in cand and any(k in marks[j]['head'] for j in range(i + 1, min(n, i + 1 + lookahead)))
+            if k in cand and (near or nxt & {k, k + 1}):
                 if k == c + 2:
                     skipped.append(c + 1)
+                # v0.8.2 (v2.88 검수 참고 A · 사용자 10-05 안 다): 쪽 머리 한 번으로 받았는데 다음 쪽 머리가 같은 번호이고 멀면(장을 닫는 k+1 이 아님)
+                # 장 안의 잡음일 수 있다 — 규칙은 그대로 두고 거리를 남겨 plan '확인할 것' 에 올린다
+                if not near and k in nxt and k + 1 not in nxt:
+                    lone[k] = nj - i
                 c = k
                 hits[k] = [i]
                 break
-    return [{'num': k, 'first': v[0], 'last': v[-1], 'pages': v} for k, v in sorted(hits.items())], skipped
+    return [dict({'num': k, 'first': v[0], 'last': v[-1], 'pages': v}, **({'lone_gap': lone[k]} if k in lone else {}))
+            for k, v in sorted(hits.items())], skipped
 
 
 def _clean_title(t):
@@ -427,6 +434,10 @@ def chapters_from_heads(marks):
             out[-1]['end'] = last
             if last < len(marks) - 1:
                 checks.append('마지막 장의 끝을 마지막 쪽 머리 p.%d 로 두었다(찾아보기·Index 쪽을 못 찾음) — 뒤 경계를 확인' % (last + 1))
+    for c0 in chs:
+        if c0.get('lone_gap'):
+            checks.append('%d장 시작 PDF p.%d 은 쪽 머리 한 번만 보고 받았다 — 같은 번호 다음 쪽 머리까지 %d쪽(장 안의 잡음일 수 있음) — 여는 쪽인지 확인'
+                          % (c0['num'], c0['first'] + 1, c0['lone_gap']))
     for ch, c0 in zip(out, chs):
         tail = ch['end'] - c0['last']
         if tail > 60:   # v0.4: 쪽 머리 없는 꼬리가 길면 뒤 장들을 못 잡은 것 — 소아영상의학 12장 508쪽이 경고 없이 지나갔다

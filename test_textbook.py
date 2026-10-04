@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import textbook as TB          # noqa: E402
 
-EXPECT_VERSION = '0.8.1'
+EXPECT_VERSION = '0.8.2'
 TMP = tempfile.mkdtemp(prefix='ttb_')
 
 
@@ -661,6 +661,27 @@ def t_v081_plan_empty_title_row():
     assert [x[0] for x in rows] == [10, 11, 12], rows                                       # 빈 제목 장도 읽힌다
     assert rows[1][1] == rows[2][1] == '(제목 못 읽음)' and rows[0][1] == 'Balloon', rows
     assert TB.plan_dropped(fp) == []
+
+
+def t_v082_lone_noise_far_next():
+    # v0.8.2 (v2.88 검수 참고 A · 사용자 10-05 안 다): 쪽 머리가 듬성한 장 안의 잡음 한 번(c+1) 뒤 같은 번호 쪽 머리가 멀리 있으면
+    # 규칙은 그대로(받음) 두고 plan '확인할 것' 에 한 줄 — 거리 한도는 실제 책(신경 12장 34쪽)을 늦추고, 여는 쪽 표지 동반은 새 장을 거의 다 잃었다
+    # 합성(검수 그대로) — 3장 쪽 머리 1·3·5쪽, 8쪽 잡음 '4', 진짜 4장 40·42쪽
+    spec = {1: ({3},) + ((), ''), 3: ({3},) + ((), ''), 5: ({3},) + ((), ''), 8: ({4},) + ((), ''), 40: ({4},) + ((), ''), 42: ({4},) + ((), '')}
+    chs, _ = TB.resolve_chapters(_marks(spec, 60))
+    assert [(c['num'], c['first'] + 1) for c in chs] == [(3, 1), (4, 8)], chs
+    assert chs[1].get('lone_gap') == 32 and not chs[0].get('lone_gap'), chs
+    _, checks = TB.chapters_from_heads(_marks(spec, 60))
+    lone = [c for c in checks if '쪽 머리 한 번' in c]
+    assert len(lone) == 1 and '4장' in lone[0] and 'p.8' in lone[0] and '32쪽' in lone[0], checks
+    # 실패 쪽: 짧은 장(다음 쪽 머리가 c+1 — 신경 10장 꼴)과 12쪽 안에서 다시 잡힌 장(12장)은 한 줄 없음 · 11장(다음 11 이 44쪽 뒤)만 한 줄
+    spec2 = {1: ({9},) + ((), ''), 3: ({9},) + ((), ''), 5: ({9},) + ((), ''), 10: ({10},) + ((), ''),
+             23: ({11},) + ((), ''), 67: ({11},) + ((), ''), 70: ({12},) + ((), ''), 75: ({12},) + ((), '')}
+    chs2, _ = TB.resolve_chapters(_marks(spec2, 90))
+    assert [(c['num'], c['first'] + 1) for c in chs2] == [(9, 1), (10, 10), (11, 23), (12, 70)], chs2
+    assert {c['num']: c.get('lone_gap') for c in chs2} == {9: None, 10: None, 11: 44, 12: None}, chs2
+    lone2 = [c for c in TB.chapters_from_heads(_marks(spec2, 90))[1] if '쪽 머리 한 번' in c]
+    assert len(lone2) == 1 and lone2[0].startswith('11장'), lone2
 
 if __name__ == '__main__':
     tests = [(k, v) for k, v in sorted(globals().items()) if k.startswith('t_') and callable(v)]

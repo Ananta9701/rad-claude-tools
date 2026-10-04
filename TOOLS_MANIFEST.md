@@ -1,6 +1,6 @@
 # TOOLS_MANIFEST — 도구 릴리스 목록 (코드 프로젝트 진본)
 
-**manifest 판: v109 · 릴리스 v2.89 · 2026-10-04**
+**manifest 판: v110 · 릴리스 v2.90 · 2026-10-05**
 
 > **이 파일이 진본 판정 기준이다.** 파일명은 고정(`TOOLS_MANIFEST.md`), 판은 이 줄에만 있다.
 > 세트는 전부 삭제 → 전부 재업로드이므로 파일명에 판이 있을 이유가 없고, 파일명 판이 "어느 manifest 가 최신인가"
@@ -21,9 +21,9 @@
 | `handoff.py` | v2.2 | `d8b5305111f4` | `test_handoff.py` 27/27 | 87549 |
 | `test_handoff.py` | v2.2 동반 | `7b2a11d55b3a` | — | 45806 |
 | `HANDOFF_FORMAT.md` | v2.2 | `92fb4a11e9bb` | — | 15351 |
-| `textbook.py` | v0.8.1 | `7c7209da8ae6` | `test_textbook.py` 37/37 | 63928 |
-| `test_textbook.py` | v0.8.1 동반 | `c74411fafc92` | — | 43907 |
-| `TEXTBOOK.md` | v0.8.1 | `c6da3ec0c3fa` | — | 15201 |
+| `textbook.py` | v0.8.2 | `aee9c78eb534` | `test_textbook.py` 38/38 | 64838 |
+| `test_textbook.py` | v0.8.2 동반 | `2d8efa6d0cb5` | — | 45800 |
+| `TEXTBOOK.md` | v0.8.2 | `01e49ab0c032` | — | 15803 |
 | `literature.py` | v0.8.6 | `b99516fb6f9a` | `test_literature.py` 17/17 | 48678 |
 | `test_literature.py` | v0.8.6 동반 | `ac0646359a75` | — | 39279 |
 | `LITERATURE.md` | v0.8.6 | `73b0b00bd897` | — | 18917 |
@@ -87,5 +87,5 @@ GitHub 에서 읽는다(넘김 문서를 쓰는 쪽). 발표에서 claim_graph 3
 **코드 수정** — 코드 프로젝트에서만. 다른 프로젝트는 `{YYMMDD}_도구회신_{주제}_v{M}.md` 로 보낸다. 덱 전용 스크립트
 (`build_*.py`)는 발표 프로젝트가 직접 쓰되 툴킷 함수를 고치거나 새 툴킷 함수를 만들면 회신으로 보낸다.
 
-<!-- prev-release: v2.88 · CLAIM_GRAPH.md=1858ba70d529;CODE_PROJECT_README.md=f4c839b0b750;DECK_SPEC.md=724b3edaa739;GITHUB_README.md=c81d29504e46;HANDOFF_FORMAT.md=92fb4a11e9bb;HISTORY.md=cc1aae3bd0f9;LITERATURE.md=73b0b00bd897;PRIVATE_TERMS.txt=6e8c2862cf5e;REVIEW_PROTOCOL.md=79c3201b3693;TEXTBOOK.md=f6803d176f4a;claim_graph.py=078d3171ba96;deck_toolkit.py=71b8a1bfa924;handoff.py=d8b5305111f4;literature.py=b99516fb6f9a;release.py=d0fe4b4d184a;test_claim_graph.py=696f603a61b8;test_handoff.py=7b2a11d55b3a;test_literature.py=ac0646359a75;test_textbook.py=30f706224461;test_toolkit.py=217fa50a4cc6;test_verify_toolkit.py=fe6c80d1abad;textbook.py=7abf23141257;verify_toolkit.py=c88c2b37d1ce -->
-<!-- release-hashes: v2.89 · CLAIM_GRAPH.md=1858ba70d529;CODE_PROJECT_README.md=f4c839b0b750;DECK_SPEC.md=724b3edaa739;GITHUB_README.md=c81d29504e46;HANDOFF_FORMAT.md=92fb4a11e9bb;HISTORY.md=b81e7ab2d60d;LITERATURE.md=73b0b00bd897;PRIVATE_TERMS.txt=5902bac98881;REVIEW_PROTOCOL.md=79c3201b3693;TEXTBOOK.md=c6da3ec0c3fa;claim_graph.py=078d3171ba96;deck_toolkit.py=71b8a1bfa924;handoff.py=d8b5305111f4;literature.py=b99516fb6f9a;release.py=d0fe4b4d184a;test_claim_graph.py=696f603a61b8;test_handoff.py=7b2a11d55b3a;test_literature.py=ac0646359a75;test_textbook.py=c74411fafc92;test_toolkit.py=217fa50a4cc6;test_verify_toolkit.py=fe6c80d1abad;textbook.py=7c7209da8ae6;verify_toolkit.py=c88c2b37d1ce -->
+<!-- prev-release: v2.89 · CLAIM_GRAPH.md=1858ba70d529;CODE_PROJECT_README.md=f4c839b0b750;DECK_SPEC.md=724b3edaa739;GITHUB_README.md=c81d29504e46;HANDOFF_FORMAT.md=92fb4a11e9bb;HISTORY.md=b81e7ab2d60d;LITERATURE.md=73b0b00bd897;PRIVATE_TERMS.txt=5902bac98881;REVIEW_PROTOCOL.md=79c3201b3693;TEXTBOOK.md=c6da3ec0c3fa;claim_graph.py=078d3171ba96;deck_toolkit.py=71b8a1bfa924;handoff.py=d8b5305111f4;literature.py=b99516fb6f9a;release.py=d0fe4b4d184a;test_claim_graph.py=696f603a61b8;test_handoff.py=7b2a11d55b3a;test_literature.py=ac0646359a75;test_textbook.py=c74411fafc92;test_toolkit.py=217fa50a4cc6;test_verify_toolkit.py=fe6c80d1abad;textbook.py=7c7209da8ae6;verify_toolkit.py=c88c2b37d1ce -->
+<!-- release-hashes: v2.90 · CLAIM_GRAPH.md=1858ba70d529;CODE_PROJECT_README.md=f4c839b0b750;DECK_SPEC.md=724b3edaa739;GITHUB_README.md=c81d29504e46;HANDOFF_FORMAT.md=92fb4a11e9bb;HISTORY.md=100aa90336b7;LITERATURE.md=73b0b00bd897;PRIVATE_TERMS.txt=5902bac98881;REVIEW_PROTOCOL.md=79c3201b3693;TEXTBOOK.md=01e49ab0c032;claim_graph.py=078d3171ba96;deck_toolkit.py=71b8a1bfa924;handoff.py=d8b5305111f4;literature.py=b99516fb6f9a;release.py=144c0e39f14a;test_claim_graph.py=696f603a61b8;test_handoff.py=7b2a11d55b3a;test_literature.py=ac0646359a75;test_textbook.py=2d8efa6d0cb5;test_toolkit.py=217fa50a4cc6;test_verify_toolkit.py=fe6c80d1abad;textbook.py=aee9c78eb534;verify_toolkit.py=c88c2b37d1ce -->
