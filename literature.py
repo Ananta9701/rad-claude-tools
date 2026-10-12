@@ -857,6 +857,11 @@ if __name__ == '__main__':
     o_ = sub.add_parser('oa'); o_.add_argument('instr'); o_.add_argument('--email', default=os.environ.get('LIT_EMAIL'))
     o_.add_argument('--store', required=True); o_.add_argument('--out', required=True); o_.add_argument('--fetch', action='store_true')
     a = ap.parse_args()
+    try:
+        from pass_a_guard import refuse_argv   # 로컬 거부 목록(~/.config/rad-guard/deny_paths.txt)이 있을 때만 막음
+        refuse_argv(sys.argv[1:])
+    except ImportError:
+        pass
     if a.cmd == 'plan':
         plan(a.instr, a.out, a.store)
     elif a.cmd == 'ingest':
