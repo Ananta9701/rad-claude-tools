@@ -1,4 +1,4 @@
-# RELEASE v2.91 — manifest v111 — 2026-10-11
+# RELEASE v2.92 — manifest v112 — 2026-10-15
 
 > **v2.92** — `DECK_SPEC.md` 16.56(문서만): 전평 풀이 덱 대본 꼴(§0 A-4). `literature.py` 0.8.7: 맥 로컬 거부 검사 파일을 `RAD_GUARD_DIR`(기본 `~/.config/rad-guard`)에서 찾음 · 거부 검사 파일은 공개 세트에서 뺌(없으면 전과 같음). `deck_toolkit.py` 는 판 번호만.
 
@@ -29,8 +29,8 @@
 | `CLAIM_GRAPH.md` | v16.24 | `1858ba70d529` | — |
 | `verify_toolkit.py` | v1.3.9 | `c88c2b37d1ce` | — |
 | `test_verify_toolkit.py` | v1.3.9 | `fe6c80d1abad` | — |
-| `TOOLS_MANIFEST.md` | v111 | `406747d2ae22` | ○ |
-| `RELEASE.md` | v2.91 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v112 | `cdf750e690d8` | ○ |
+| `RELEASE.md` | v2.92 | — | 이 문서 |
 
 ### 발표 (11)
 | 파일 | 판 | 해시 | 변경 |
@@ -38,14 +38,14 @@
 | `claim_graph.py` | v16.24 | `078d3171ba96` | — |
 | `test_claim_graph.py` | v16.24 | `696f603a61b8` | — |
 | `CLAIM_GRAPH.md` | v16.24 | `1858ba70d529` | — |
-| `deck_toolkit.py` | v16.55 | `afba564c68b1` | ○ |
-| `test_toolkit.py` | v16.55 | `2178ab7dcc1f` | ○ |
-| `DECK_SPEC.md` | v16.55 | `2f0e47912c9d` | ○ |
+| `deck_toolkit.py` | v16.56 | `01d68835a20a` | ○ |
+| `test_toolkit.py` | v16.56 | `19b70ed1cd63` | ○ |
+| `DECK_SPEC.md` | v16.56 | `47899e71958c` | ○ |
 | `handoff.py` | v2.2 | `d8b5305111f4` | — |
 | `test_handoff.py` | v2.2 | `7b2a11d55b3a` | — |
 | `HANDOFF_FORMAT.md` | v2.2 | `92fb4a11e9bb` | — |
-| `TOOLS_MANIFEST.md` | v111 | `406747d2ae22` | ○ |
-| `RELEASE.md` | v2.91 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v112 | `cdf750e690d8` | ○ |
+| `RELEASE.md` | v2.92 | — | 이 문서 |
 
 ### 리뷰어 (6)
 | 파일 | 판 | 해시 | 변경 |
@@ -54,8 +54,8 @@
 | `test_claim_graph.py` | v16.24 | `696f603a61b8` | — |
 | `CLAIM_GRAPH.md` | v16.24 | `1858ba70d529` | — |
 | `REVIEW_PROTOCOL.md` | v7.6 | `79c3201b3693` | — |
-| `TOOLS_MANIFEST.md` | v111 | `406747d2ae22` | ○ |
-| `RELEASE.md` | v2.91 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v112 | `cdf750e690d8` | ○ |
+| `RELEASE.md` | v2.92 | — | 이 문서 |
 
 ### 교과서 (5)
 | 파일 | 판 | 해시 | 변경 |
@@ -63,17 +63,17 @@
 | `textbook.py` | v0.8.2 | `aee9c78eb534` | — |
 | `test_textbook.py` | v0.8.2 | `2d8efa6d0cb5` | — |
 | `TEXTBOOK.md` | v0.8.2 | `01e49ab0c032` | — |
-| `TOOLS_MANIFEST.md` | v111 | `406747d2ae22` | ○ |
-| `RELEASE.md` | v2.91 | — | 이 문서 |
+| `TOOLS_MANIFEST.md` | v112 | `cdf750e690d8` | ○ |
+| `RELEASE.md` | v2.92 | — | 이 문서 |
 
 ### 문헌 (5)
 | 파일 | 판 | 해시 | 변경 |
 |---|---|---|---|
-| `literature.py` | v0.8.6 | `b99516fb6f9a` | — |
-| `test_literature.py` | v0.8.6 | `ac0646359a75` | — |
-| `LITERATURE.md` | v0.8.6 | `73b0b00bd897` | — |
-| `TOOLS_MANIFEST.md` | v111 | `406747d2ae22` | ○ |
-| `RELEASE.md` | v2.91 | — | 이 문서 |
+| `literature.py` | v0.8.7 | `e2b37c4419db` | ○ |
+| `test_literature.py` | v0.8.7 | `7b5df6c4f42e` | ○ |
+| `LITERATURE.md` | v0.8.7 | `14fbd3d2b676` | ○ |
+| `TOOLS_MANIFEST.md` | v112 | `cdf750e690d8` | ○ |
+| `RELEASE.md` | v2.92 | — | 이 문서 |
 
 ### 코드 (25)
 | 파일 | 판 | 해시 | 변경 |
@@ -81,9 +81,9 @@
 | `claim_graph.py` | v16.24 | `078d3171ba96` | — |
 | `test_claim_graph.py` | v16.24 | `696f603a61b8` | — |
 | `CLAIM_GRAPH.md` | v16.24 | `1858ba70d529` | — |
-| `deck_toolkit.py` | v16.55 | `afba564c68b1` | ○ |
-| `test_toolkit.py` | v16.55 | `2178ab7dcc1f` | ○ |
-| `DECK_SPEC.md` | v16.55 | `2f0e47912c9d` | ○ |
+| `deck_toolkit.py` | v16.56 | `01d68835a20a` | ○ |
+| `test_toolkit.py` | v16.56 | `19b70ed1cd63` | ○ |
+| `DECK_SPEC.md` | v16.56 | `47899e71958c` | ○ |
 | `verify_toolkit.py` | v1.3.9 | `c88c2b37d1ce` | — |
 | `test_verify_toolkit.py` | v1.3.9 | `fe6c80d1abad` | — |
 | `handoff.py` | v2.2 | `d8b5305111f4` | — |
@@ -92,17 +92,17 @@
 | `textbook.py` | v0.8.2 | `aee9c78eb534` | — |
 | `test_textbook.py` | v0.8.2 | `2d8efa6d0cb5` | — |
 | `TEXTBOOK.md` | v0.8.2 | `01e49ab0c032` | — |
-| `literature.py` | v0.8.6 | `b99516fb6f9a` | — |
-| `test_literature.py` | v0.8.6 | `ac0646359a75` | — |
-| `LITERATURE.md` | v0.8.6 | `73b0b00bd897` | — |
+| `literature.py` | v0.8.7 | `e2b37c4419db` | ○ |
+| `test_literature.py` | v0.8.7 | `7b5df6c4f42e` | ○ |
+| `LITERATURE.md` | v0.8.7 | `14fbd3d2b676` | ○ |
 | `REVIEW_PROTOCOL.md` | v7.6 | `79c3201b3693` | — |
-| `TOOLS_MANIFEST.md` | v111 | `406747d2ae22` | ○ |
+| `TOOLS_MANIFEST.md` | v112 | `cdf750e690d8` | ○ |
 | `CODE_PROJECT_README.md` | v5 | `f4c839b0b750` | — |
-| `HISTORY.md` | — | `daeb1970a19a` | ○ |
-| `release.py` | — | `144c0e39f14a` | — |
+| `HISTORY.md` | — | `1ccbc3d21077` | ○ |
+| `release.py` | — | `ec7c75121b22` | ○ |
 | `GITHUB_README.md` | — | `c81d29504e46` | — |
 | `PRIVATE_TERMS.txt` | — | `5902bac98881` | — |
-| `RELEASE.md` | v2.91 | — | 이 문서 |
+| `RELEASE.md` | v2.92 | — | 이 문서 |
 <!-- sets:end -->
 
 ## 4. 각 프로젝트 대화창이 첫 세션에서 할 일
