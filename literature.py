@@ -20,7 +20,7 @@ import shutil
 import sys
 import unicodedata
 
-__version__ = '0.8.6'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
+__version__ = '0.8.7'   # LITERATURE.md 첫 줄·test_literature.EXPECT_VERSION 과 함께 올린다
 
 DOI_RE = re.compile(r'\b(10\.\d{4,9}/[^\s"<>]+)', re.I)
 PMID_RE = re.compile(r'\bPMID:?\s*(\d{5,9})\b', re.I)
@@ -857,8 +857,9 @@ if __name__ == '__main__':
     o_ = sub.add_parser('oa'); o_.add_argument('instr'); o_.add_argument('--email', default=os.environ.get('LIT_EMAIL'))
     o_.add_argument('--store', required=True); o_.add_argument('--out', required=True); o_.add_argument('--fetch', action='store_true')
     a = ap.parse_args()
-    try:
-        from pass_a_guard import refuse_argv   # 로컬 거부 목록(~/.config/rad-guard/deny_paths.txt)이 있을 때만 막음
+    try:   # v0.8.7: 거부 검사(pass_a_guard)는 공개 세트 밖 — 맥 로컬 RAD_GUARD_DIR(기본 ~/.config/rad-guard)에 있을 때만 · 없으면(Cowork) 그냥 지나감
+        sys.path.append(os.path.expanduser(os.environ.get('RAD_GUARD_DIR', '~/.config/rad-guard')))
+        from pass_a_guard import refuse_argv   # 로컬 거부 목록이 있을 때만 막음(종료 3)
         refuse_argv(sys.argv[1:])
     except ImportError:
         pass

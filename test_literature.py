@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import literature as LT          # noqa: E402
 
-EXPECT_VERSION = '0.8.6'
+EXPECT_VERSION = '0.8.7'
 TMP = tempfile.mkdtemp(prefix='tlt_')
 
 
@@ -525,6 +525,22 @@ def t_v084_oa_unpaywall_404_is_not_lookup_failure():
         buf = io.StringIO()
         res = dict(LT.oa(instr, 'me@example.invalid', store, out, getter=g(code), sleep=0, stream=buf)); t = buf.getvalue()
         assert res[1] == 'err' and 'Unpaywall HTTPError %d' % code in t and '조회 못 함 2편' in t and LT.NOT_IN_UNPAYWALL not in t, (code, t)
+
+
+
+def t_v087_guard_from_local_dir():
+    """v0.8.7: 거부 검사는 RAD_GUARD_DIR 의 pass_a_guard 로만 — 있으면 막힌 인자에서 종료 3(성공 길 · 막음), 없으면 그냥 지나감"""
+    d = tempfile.mkdtemp(dir=TMP); g = os.path.join(d, 'g'); os.makedirs(g)
+    instr = os.path.join(d, 'instr_BLOCKED.md'); open(instr, 'w', encoding='utf8').write('# x\n')
+    open(os.path.join(g, 'pass_a_guard.py'), 'w').write(
+        'import sys\ndef refuse_argv(a):\n    if any("BLOCKED" in x for x in a):\n        print("거부"); sys.exit(3)\n')
+    cmd = [sys.executable, os.path.join(HERE, 'literature.py'), 'plan', instr, '--out', os.path.join(d, 'o')]
+    r = subprocess.run(cmd, capture_output=True, text=True, env=dict(os.environ, RAD_GUARD_DIR=g))
+    assert r.returncode == 3 and '거부' in r.stdout, (r.returncode, r.stdout, r.stderr)
+    empty = os.path.join(d, 'empty'); os.makedirs(empty)
+    r = subprocess.run(cmd, capture_output=True, text=True, env=dict(os.environ, RAD_GUARD_DIR=empty))
+    assert r.returncode != 3 and '거부' not in r.stdout, (r.returncode, r.stdout, r.stderr)   # 검사 파일 없음 = 막지 않음
+    assert not os.path.exists(os.path.join(HERE, 'pass_a_guard.py'))   # 공개 세트에 검사 파일 없음
 
 
 if __name__ == '__main__':
