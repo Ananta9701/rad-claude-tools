@@ -1,4 +1,4 @@
-# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.24
+# 주장 의존 그래프 규약 (claim_graph.py) — 발표·저자·리뷰어 공용 v16.25
 
 문서(슬라이드·원고·심사 회신)를 **주장 단위의 그래프**로 먼저 적고, 문서는 그 그래프의
 표현으로 다룬다. 그래프가 원본(source)이고 문서는 뷰(view)다. 고칠 때는 그래프부터 고친다.
@@ -129,7 +129,7 @@
 
 **반박** — `depends_on` 의 `type: "rebuttal"`(0.5). **caveat 과 같은 방향**: 반박당하는 주장이 반박하는 쪽(리뷰어 rebuttal 노드, 반대 결과를 낸
 문헌 노드)을 자기 depends_on 에 적는다. caveat = "이 한계 아래에서 성립", rebuttal = "이것과 반대 증거가 있다". `impact` 는 caveat 과 같은 무게로
-전파한다. mapgraph [참고]: caveat 간선이 role=rebuttal 주장을 가리키면(반대 증거를 한계로 적었는지), sources 에 `반대 방향` 판정이 있는데
+전파한다. mapgraph [참고]: caveat 간선이 role=rebuttal 주장을 가리키면(반대 증거를 한계로 적었는지 — v16.25 부터 간선 수와 짝을 한 줄로), sources 에 `반대 방향` 판정이 있는데
 rebuttal 간선이 없으면.
 
 **같은 뜻** — 새 관계를 만들지 않는다. 다른 그래프와의 짝은 `mapdiff … --pairs … --save-pairs` 로 a 그래프 맨 위 칸
@@ -231,7 +231,7 @@ mapgraph: `kind: 증례` 라 논문용 [참고]는 나오지 않고, 배제된 �
   무대 밖 상류의 글이 바뀌면 [참고]. **쓴 id 가 새 판에 없으면 [필수] — 스냅숏 해시(원고 자리·keys)로 후보를 점수와 함께 보이고 `--pairs 옛=새`(1:N 은
   같은 옛을 반복)·`--drop 옛` 전까지 덧붙임을 쓰지 않는다.** 새 판에서 철회된 쓴 주장도 [필수].
   **v16.19 (발표 S1)**: 스냅숏에 간선(대상 id:종류)도 적어, 쓴 주장·그 무대 밖 상류의 간선이 늘거나 줄면 [참고] 한 줄 —
-  `쓴 주장 X 에 caveat Y 가 새로 걸림 — 화면에 없음`(또는 `화면 slide@…`) · `… 에서 support Y 가 빠짐`. 16.19 전 스냅숏이면 "옛 스냅숏이라 간선 변화는 보지 않았다" 한 줄(그 sync 부터 적는다). 옮긴 주장은 확인 기록 없이(새 주장이다), 발표 주장
+  `쓴 주장 X 에 caveat Y 가 새로 걸림 — 화면에 없음`(또는 `화면 slide@…`) · `… 에서 support Y 가 빠짐`. 16.19 전 스냅숏이면 "옛 스냅숏이라 간선 변화는 보지 않았다" 한 줄(그 sync 부터 적는다) — v16.25: [필수] 에서 멈출 때도 맨 앞에 같은 뜻 한 줄. 옮긴 주장은 확인 기록 없이(새 주장이다), 발표 주장
   `p-` 의 기댐도 따라간다. `synced` 에 판 이력(옛·새 sha·날짜·옮김·뺌)을 쌓는다.
 - **화면 확인 기록(v16.13)** — `deck_toolkit mapfreeze 덱.pptx --oral 덧붙임.json --author 저자.json -o 덧붙임.json` 은 확인 기록을 **덧붙임에** 쓴다
   (쓴 주장 `use[id].verified`, 발표 주장은 그 칸, 무대 밖 상류는 `offstage_verified[id]` — 글 지문). `mapstale … --oral … --author …` 은 그것과 비교한다:
@@ -416,8 +416,9 @@ cd /tmp && npm install mermaid@11 && python3 ~/rct/claim_graph.py focus <id> --c
 | 참고 (v16.1) | 간선이 하나도 없는 주장(외톨이) — 한 줄에 이름 목록. 주장이 하나뿐이면 알리지 않는다. **그래프 전체에 간선이 없으면 이름 대신 "간선이 하나도 없는 그래프(주장 N개)" 한 줄**(v16.2) — 이때 주장별 간선 [참고](role=main/claim 인데 premise 없음 · evidence 인데 caveat 없음)도 줄마다 내지 않고 이 줄에 개수로 합친다(v16.3) |
 | 필수 (v16.17) | **탐색적 주장(`exploratory: true`)이 main 의 전제 사슬**(main 에서 premise 만 따라 닿는 주장, main 자신 포함)에 있음 — `exploratory_reason` 을 적으면 [참고] + 사유. `exploratory` 가 true/false 가 아님 |
 | 참고 (v16.17) | 탐색적 주장이 support 가 섞인 경로로 main 을 받침 · `exploratory_reason` 만 있고 표지가 없음 |
-| 참고 (v16) | sources 에 at 이 없음 / 덱 근거가 `slide:N`(파일 번호) / `반대 방향` 판정인데 rebuttal 간선 없음 / caveat 간선이 role=rebuttal 을 가리킴 |
+| 참고 (v16) | sources 에 at 이 없음 / 덱 근거가 `slide:N`(파일 번호) / `반대 방향` 판정인데 rebuttal 간선 없음 / caveat 간선이 role=rebuttal 을 가리킴(v16.25: 한 줄로 묶음 — `caveat 간선이 role=rebuttal 주장을 가리킴 N개(a -> b, …)` · 짝은 10개까지 · REVIEW_PROTOCOL §3-1 용법(저자가 안 쓴 한계)이면 그대로 둔다) |
 | 참고 (`mapcheck --nums`) | evidence 의 수치 토큰이 sites 어디에도 없음. 소수·%·4자리 이상은 항상, 1~3자리 정수는 n=·±·vs·/ 문맥일 때만(참고문헌 번호 제외). 표기 차이(0.541 vs 0.54)는 잡고 반올림 판단은 사람. **`--nums` 는 "evidence 에 적은 수치가 원고 자리에 실제로 있는가"만 본다** — 리뷰어 그래프처럼 evidence 에 재현값·외부 수치를 함께 적는 용법에서는 참고 건수가 높게 나오는 것이 정상이며 결함이 아니다(v15.4.3; 리뷰어 56 주장 중 35건 실례). 원고 인용 수치만 검증하려면 그 수치만 evidence 에 두고 재현값은 note 등 다른 필드에 둔다. **v16.9 (저자 09-29)**: evidence 에 보충자료 표지 `Suppl S{n}`(`Supplementary Table S4` 도)이 있으면 그 evidence 의 **못 찾은** 수치는 주장마다 적지 않고 `[참고] 보충자료 표지(Suppl S…)가 든 evidence N개(id…)의 수치 M개가 sites 에 없음` 한 줄로 모은다 — sites 는 본문만 본다. 찾은 수치는 전처럼 조용하다 |
+| 참고 (v16.25, `mapcheck`) | evidence 글 속 표·그림 번호(`Table N` · `Table SN` · `Supplementary Table SN` · `Figure N` · `Fig. SN` · `Suppl SN`)가 원고(`mapcheck` 의 doc) 글에 나온 그 종류의 **가장 큰 번호**를 넘음 — 옛 번호(보충 표를 하나 지운 뒤 등)이거나 다른 문서의 번호. 주장마다 한 줄. 원고에 그 종류 번호가 하나도 없으면 `원고에 보충 표 번호가 없어 evidence N개(id…)의 보충 표 번호를 맞대지 못함` 한 줄. **수만 본다** — 범위 안에서 밀린 번호(S13 → S12)와 빈 번호는 못 잡는다(번호를 고칠 때는 `remap-refs --suppl`). `Tables S1–S15` · `Figs. 2 and 3` 처럼 이어진 것은 펼친다(복수 낱말이거나 S 번호일 때만) · 소수(`Table 2, 0.54`)와 `eTable` 은 번호로 읽지 않는다 · superseded 주장은 안 본다 · `--nums-sep` 을 주면 앞쪽만. 덱(`deck_toolkit mapcheck`)은 원고 글이 없어 안 본다. 종료 코드는 그대로(저자 회신 10-16 — evidence 의 옛 보충 번호가 mapcheck 에 안 걸렸다) |
 
 ## 4. 명령
 
@@ -430,9 +431,9 @@ pptx 는 `deck_toolkit.py <명령> deck.pptx --claims ...`, docx/md 는 `claim_g
 | `extract doc -o draft.json` | 새 문서, 관계도 없음 | 수치·인용·방향어·대조어 문장을 후보로. status=proposed, origin=extract |
 | `mapgraph --claims` | 관계도를 쓰거나 고친 직후 | 없는 id, 순환(anchor), superseded 잔여 자리, 검토 순서 |
 | `scaffold --claims` | 문서를 쓰기 전 | 자리 순으로 "여기에 실릴 주장" 목록 — 이 순서로 쓴다 |
-| `selfcheck [--dir /tmp/rct] [--role 역할] [--tests]` | **세션 시작** | 세트 3단계 확인(manifest 판·파일별 판·해시) + 테스트 + 프로젝트 파일 분류 (a)(b)(c). 출력 표를 도구회신 §1 에 그대로 붙인다(v15.6). `②′` 행은 세트 해시를 RELEASE §3 표와도 대조한다(v15.6.1). `환경` 행에 Python·pypdf·Pillow·python-pptx·python-docx 판(v16.9, 발표 09-29 — "통과" 는 그 환경에서의 판정). 세 프로젝트 모두 이 파일이 있어서 여기에 둔다. **GitHub 에서 받은 전체 세트는 `--role 발표|저자|리뷰어` 로**(v15.7) — 추정하지 않고 그 역할의 파일만 보며, 안 쓰는 도구는 삭제 후보로 올리지 않는다. `--compare /mnt/project` 는 예비로 둔 프로젝트 파일과 판·해시를 대조한다. `git clone` 으로 받은 폴더면 받은 커밋 해시를 표에 적는다(v15.8) |
+| `selfcheck [--dir /tmp/rct] [--role 역할] [--tests]` | **세션 시작** | 세트 3단계 확인(manifest 판·파일별 판·해시) + 테스트 + 프로젝트 파일 분류 (a)(b)(c). 출력 표를 도구회신 §1 에 그대로 붙인다(v15.6). `②′` 행은 세트 해시를 RELEASE §3 표와도 대조한다(v15.6.1). `환경` 행에 Python·pypdf·Pillow·python-pptx·python-docx 판(v16.9, 발표 09-29 — "통과" 는 그 환경에서의 판정). 세 프로젝트 모두 이 파일이 있어서 여기에 둔다. **GitHub 에서 받은 전체 세트는 `--role 발표|저자|리뷰어` 로**(v15.7) — 추정하지 않고 그 역할의 파일만 보며, 안 쓰는 도구는 삭제 후보로 올리지 않는다. `--compare /mnt/project` 는 예비로 둔 프로젝트 파일과 판·해시를 대조한다. `git clone` 으로 받은 폴더면 받은 커밋 해시를 표에 적는다(v15.8). 시험이 stdout 없이 죽으면(import 실패 등) 결과 칸에 `stderr: …` 끝 줄을 보인다(v16.25 — 전에는 "(출력 없음)") |
 | `impact --claims <id> [--sites]` | 주장을 뒤집기로 결정 | 다시 볼 하류 주장과 자리. `--sites` 면 [필수] 자리만 한 줄에 하나(v15.5, 목록 대조용) |
-| `mapcheck doc --claims [--nums] [--nums-sep "|"]` | 자리를 다 고친 뒤 | keys/forbidden 대조 + 그래프 검사. `--nums` 면 evidence 수치가 자리에 있는지도. `--nums-sep` 은 evidence 에서 그 구분자 **앞쪽만** 검사(v15.5) — "원고 값 | 재현 값" 용법용, 구분자는 사용자가 선언한다 (교정용, 심사 형식 지적의 대부분이 이 유형). 문제가 없을 때 문구는 **`모든 주장의 자리에 찾는 표현이 있음 — 주장·evidence 가 최신인지는 보지 않는다`**(v16.9, 저자 09-29 — 전에는 "반영됨") |
+| `mapcheck doc --claims [--nums] [--nums-sep "|"]` | 자리를 다 고친 뒤 | keys/forbidden 대조 + 그래프 검사. `--nums` 면 evidence 수치가 자리에 있는지도. `--nums-sep` 은 evidence 에서 그 구분자 **앞쪽만** 검사(v15.5) — "원고 값 | 재현 값" 용법용, 구분자는 사용자가 선언한다 (교정용, 심사 형식 지적의 대부분이 이 유형). 문제가 없을 때 문구는 **`모든 주장의 자리에 찾는 표현이 있음 — 주장·evidence 가 최신인지는 보지 않는다`**(v16.9, 저자 09-29 — 전에는 "반영됨"). v16.25: evidence 글 속 표·그림 번호도 원고의 가장 큰 번호와 맞댄다(늘 · [참고] — §3-1 표) |
 | `mapfreeze doc --claims -o [--sources 폴더]` | 검증을 **실제로** 마친 뒤 | 해시 기록 = "확인했다" 선언. `--sources` 면 근거 원문도(§3-2) — 보관소에 없는 DOI 가 있으면 [필수]로 멈춤(v16.10). 폴더 없이 다시 freeze 하면 전 근거 기록은 그대로 |
 | `mapstale doc --claims [--sources 폴더]` | 그 뒤 어떤 편집이든 한 뒤 | v16: `--sources` 면 근거 원문 `[같음]`·`[변환]`·`[변경]`(§3-2). [변경] 주장, [필수]/[참고] 하류, 기록 없는 새 주장. v15.5: freeze 가 `verified.keys` 해시를 함께 적어 **keys 만 바꾼 그래프도 [변경]**(구판 freeze 는 그 해시가 없어 검사 안 함). 출력 끝에 "실제로 바뀐 주장의 자리(직접)"를 하류 전파와 구분해 낸다 |
 | `suggest --claims [-o 후보.md] [--min-shared 2] [--min-caveat 3]` | 관계도를 다 그린 뒤 | 새 주장 후보 [참고] — 안 이어진 이웃 · 안 쓰인 근거 · 공통 한계(§3-7, v16.17). claims 는 바꾸지 않는다 |
@@ -526,7 +527,7 @@ statement 를 고쳐야 한다. 줄어드는 것은 "전체 재독"이지 "재�
 
 ## 8. 테스트
 
-`test_claim_graph.py` 가 claim_graph.py 단독 테스트(개수는 manifest §1, `python3 test_claim_graph.py` 로 pytest 없이 돈다 — 표준 라이브러리 + python-docx 만). 저자·리뷰어 프로젝트에도 넣는다.
+`test_claim_graph.py` 가 claim_graph.py 단독 테스트(개수는 manifest §1, `python3 test_claim_graph.py` 로 pytest 없이 돈다 — 표준 라이브러리 + python-docx 만). 저자·리뷰어 프로젝트에도 넣는다. 임시 파일은 `tempfile` 폴더에만 쓴다(v16.25 — `/tmp` 에 바로 쓰면 맥 Code 샌드박스에서 멈춘다).
 발표 프로젝트의 `test_toolkit.py` 는 이것을 import 해 함께 돈다(개수는 manifest §1). `claim_graph.py` 는 코드 프로젝트에서만 고치고, 세 프로젝트 사본은 릴리스로 교체한다.
 
 변경 이력은 코드 프로젝트 `HISTORY.md`. v15.6.1 (2026-09-23): selfcheck 가 테스트를 `PYTHONDONTWRITEBYTECODE=1` 로 띄우고 RELEASE §3 과 교차 대조(②′). 테스트 수는 manifest §1 이 진본(release.py 가 센다). v15.6 (2026-09-23): `selfcheck` 신설 — 세션 시작 확인을 한 명령으로. 테스트 33개. v15.5.2 (2026-09-22): mapgraph 가 keys∩forbidden 을 경고(발표 T2 — 자리 통과·금지 실패가 동시에 나면 statement 가 낡은 것). 테스트 32개. v15.5.1: 덱 사이트 `slide@ID` 문법 문서화(코드는 deck_toolkit 16.7). v15.5 (2026-09-13): `--nums-sep`, 1:N `--pairs`, `verified.keys` 해시, mapstale 직접/하류 구분, `impact --sites`, `doc:tbl` 1-based·rebuttal 의도 명시.

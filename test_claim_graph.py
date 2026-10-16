@@ -4,7 +4,7 @@
     python test_claim_graph.py      # 실패 0 이어야 함
 test_toolkit.py(발표 프로젝트)는 이 파일을 import 해 같은 테스트를 함께 돌린다.
 """
-import copy, io, os, re, subprocess, sys, traceback
+import copy, io, os, re, subprocess, sys, tempfile, traceback
 sys.dont_write_bytecode = True   # /mnt/project 는 대화창 안에서 쓰기 가능 — __pycache__ 를 남기지 않는다 (v2.3.1)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import claim_graph as CGm
@@ -19,7 +19,7 @@ def _manifest_version(fname):
     m = re.search(r'\| `%s` \| v([0-9.]+)' % re.escape(fname), open(p, encoding='utf8').read())
     return m.group(1) if m else None
 
-EXPECT_VERSION = '16.24'
+EXPECT_VERSION = '16.25'
 
 def t_version_matches_manifest():
     assert getattr(CGm, '__version__', None) == EXPECT_VERSION, (getattr(CGm, '__version__', None), EXPECT_VERSION)
@@ -35,7 +35,8 @@ GRAPH = [
      'depends_on': [{'id': 'b', 'type': 'context', 'weight': 0.2}]},
 ]
 
-MD = '/tmp/cg_doc.md'
+TMP = tempfile.mkdtemp(prefix='cg_t_')   # v16.25 (저자 10-14 ①): /tmp 에 쓰면 맥 Code 샌드박스에서 멈춘다
+MD = os.path.join(TMP, 'cg_doc.md')
 open(MD, 'w', encoding='utf8').write('''# Results
 FA decreased in the lesion group (0.36 vs 0.44, P = 0.014). Therefore marker A loss precedes marker B change.
 However, the sample was small (n = 24).
@@ -121,7 +122,7 @@ def t_freeze_stale_with_dict_resolver():
     assert CGm.mapstale(_resolve_dict(d), g, io.StringIO())['unverified'] == ['new']
 
 def t_save_load_claims_roundtrip():
-    p = '/tmp/claims_rt.json'
+    p = os.path.join(TMP, 'claims_rt.json')
     CGm.save_claims(p, copy.deepcopy(GRAPH), deck_name='X', note='n')
     dn, note, cl = CGm.load_claims_meta(p)
     assert dn == 'X' and [c['id'] for c in cl] == ['a', 'b', 'c']
@@ -187,7 +188,7 @@ def _mk_docx(path):
     d.save(path)
 
 def t_docx_heuristic_headings_and_table():
-    p = '/tmp/cg_test.docx'; _mk_docx(p)
+    p = os.path.join(TMP, 'cg_test.docx'); _mk_docx(p)
     src = CGm.DocSource(p)
     heads = [src.paras[i] for i in sorted(src.headings)]
     assert heads == ['Abstract', 'RESULTS', 'Limitations'], heads
@@ -211,7 +212,7 @@ def t_mapdiff_pairs_by_sites_and_keys():
 def t_save_claims_preserves_meta_and_doc_wins():
     # v15.4 (#14): 상위 키 보존, doc 이 stale deck 을 이김
     import json
-    p = '/tmp/cg_meta.json'
+    p = os.path.join(TMP, 'cg_meta.json')
     json.dump({'deck': 'old_v44', 'doc': 'X_v45.docx', 'version': 'v5', 'protocol': 'v15', 'claims': copy.deepcopy(GRAPH)},
               open(p, 'w', encoding='utf8'))
     meta, cl = CGm.load_claims_full(p)
@@ -456,41 +457,41 @@ def t_v1584_unreadable_sites_not_unchanged():
 
 
 def t_claim_graph_cli():
-    p = '/tmp/cg_cli.json'
+    p = os.path.join(TMP, 'cg_cli.json')
     CGm.save_claims(p, copy.deepcopy(GRAPH))
     import json
-    json.dump({'map': {'1': 1}}, open('/tmp/cg_refmap.json', 'w'))
-    r = subprocess.run([sys.executable, CGm.__file__, 'remap-refs', '--claims', p, '--map', '/tmp/cg_refmap.json', '-o', '/tmp/cg_cli2.json'], capture_output=True, text=True)
-    assert r.returncode == 0 and os.path.exists('/tmp/cg_cli2.json'), r.stderr[-300:]
+    json.dump({'map': {'1': 1}}, open(os.path.join(TMP, 'cg_refmap.json'), 'w'))
+    r = subprocess.run([sys.executable, CGm.__file__, 'remap-refs', '--claims', p, '--map', os.path.join(TMP, 'cg_refmap.json'), '-o', os.path.join(TMP, 'cg_cli2.json')], capture_output=True, text=True)
+    assert r.returncode == 0 and os.path.exists(os.path.join(TMP, 'cg_cli2.json')), r.stderr[-300:]
     r = subprocess.run([sys.executable, CGm.__file__, 'mapdiff', p, p, '--pairs', 'a=a'], capture_output=True, text=True)
     assert r.returncode == 0 and '(a) 양쪽이 잡은 주장 3개' in r.stdout, r.stdout[-300:] + r.stderr[-300:]
     r = subprocess.run([sys.executable, CGm.__file__, 'impact', '--claims', p, 'a', '--sites'], capture_output=True, text=True)
     assert r.returncode == 0 and r.stdout.strip() and '===' not in r.stdout, r.stdout
     # v15.4.1: 두 번 적용 중단, --force 로 통과
-    r = subprocess.run([sys.executable, CGm.__file__, 'remap-refs', '--claims', '/tmp/cg_cli2.json', '--map', '/tmp/cg_refmap.json', '-o', '/tmp/cg_cli3.json'], capture_output=True, text=True)
+    r = subprocess.run([sys.executable, CGm.__file__, 'remap-refs', '--claims', os.path.join(TMP, 'cg_cli2.json'), '--map', os.path.join(TMP, 'cg_refmap.json'), '-o', os.path.join(TMP, 'cg_cli3.json')], capture_output=True, text=True)
     assert r.returncode == 2 and '이미 적용' in r.stdout, r.stdout
-    r = subprocess.run([sys.executable, CGm.__file__, 'remap-refs', '--claims', '/tmp/cg_cli2.json', '--map', '/tmp/cg_refmap.json', '-o', '/tmp/cg_cli3.json', '--force'], capture_output=True, text=True)
-    assert r.returncode == 0 and len(json.load(open('/tmp/cg_cli3.json'))['refs_maps_applied']) == 2
+    r = subprocess.run([sys.executable, CGm.__file__, 'remap-refs', '--claims', os.path.join(TMP, 'cg_cli2.json'), '--map', os.path.join(TMP, 'cg_refmap.json'), '-o', os.path.join(TMP, 'cg_cli3.json'), '--force'], capture_output=True, text=True)
+    assert r.returncode == 0 and len(json.load(open(os.path.join(TMP, 'cg_cli3.json')))['refs_maps_applied']) == 2
     # v15.4.1: --pairs 텍스트 파일·잘못된 형식
-    open('/tmp/cg_pairs.txt', 'w').write('# 주석\na=a\nb=b\n')
-    r = subprocess.run([sys.executable, CGm.__file__, 'mapdiff', p, p, '--pairs', '/tmp/cg_pairs.txt'], capture_output=True, text=True)
+    open(os.path.join(TMP, 'cg_pairs.txt'), 'w').write('# 주석\na=a\nb=b\n')
+    r = subprocess.run([sys.executable, CGm.__file__, 'mapdiff', p, p, '--pairs', os.path.join(TMP, 'cg_pairs.txt')], capture_output=True, text=True)
     assert r.returncode == 0 and '(a) 양쪽이 잡은 주장 3개' in r.stdout, r.stderr[-300:]
-    open('/tmp/cg_pairs_bad.txt', 'w').write('nonsense\n')
-    r = subprocess.run([sys.executable, CGm.__file__, 'mapdiff', p, p, '--pairs', '/tmp/cg_pairs_bad.txt'], capture_output=True, text=True)
+    open(os.path.join(TMP, 'cg_pairs_bad.txt'), 'w').write('nonsense\n')
+    r = subprocess.run([sys.executable, CGm.__file__, 'mapdiff', p, p, '--pairs', os.path.join(TMP, 'cg_pairs_bad.txt')], capture_output=True, text=True)
     assert r.returncode != 0 and '--pairs 파일 형식' in (r.stderr + r.stdout), r.stderr
     here = os.path.dirname(os.path.abspath(__file__))
     for args in (['mapgraph', '--claims', p], ['scaffold', '--claims', p], ['mapreport', '--claims', p],
-                 ['extract', MD, '-o', '/tmp/cg_ex.json'], ['mapdiff', p, p], ['mapcheck', MD, '--claims', p, '--nums'] if False else ['mapdiff', p, p],
+                 ['extract', MD, '-o', os.path.join(TMP, 'cg_ex.json')], ['mapdiff', p, p], ['mapcheck', MD, '--claims', p, '--nums'] if False else ['mapdiff', p, p],
                  ['mapcheck', MD, '--claims', p] if False else ['impact', '--claims', p, 'a'],
-                 ['mapfreeze', MD, '--claims', '/tmp/cg_docg.json', '-o', '/tmp/cg_fz.json'],
-                 ['mapstale', MD, '--claims', '/tmp/cg_fz.json']):
+                 ['mapfreeze', MD, '--claims', os.path.join(TMP, 'cg_docg.json'), '-o', os.path.join(TMP, 'cg_fz.json')],
+                 ['mapstale', MD, '--claims', os.path.join(TMP, 'cg_fz.json')]):
         if args[0] == 'mapfreeze':   # v15.8.4: 원고(md)에서 읽히는 자리로 — 덱 자리(slide:7) 그래프는 이제 멈춘다(아래)
             json.dump({'doc': 'cg_doc', 'claims': [{'id': 'a', 'statement': 'A', 'evidence': 'e', 'sites': ['doc:sec:Results']}]},
-                      open('/tmp/cg_docg.json', 'w', encoding='utf8'))
+                      open(os.path.join(TMP, 'cg_docg.json'), 'w', encoding='utf8'))
         r = subprocess.run([sys.executable, os.path.join(here, 'claim_graph.py')] + args,
                            capture_output=True, text=True)
         assert r.returncode == 0, (args, r.stderr[-400:])
-    r = subprocess.run([sys.executable, os.path.join(here, 'claim_graph.py'), 'mapfreeze', MD, '--claims', p, '-o', '/tmp/cg_fz2.json'],
+    r = subprocess.run([sys.executable, os.path.join(here, 'claim_graph.py'), 'mapfreeze', MD, '--claims', p, '-o', os.path.join(TMP, 'cg_fz2.json')],
                        capture_output=True, text=True)
     assert r.returncode != 0 and 'slide:7' in (r.stdout + r.stderr), (r.returncode, r.stderr[-300:])   # 읽지 못하는 자리 → 멈춤
 
@@ -1425,46 +1426,46 @@ def t_v169_remap_refs_suppl():
     assert cl[2]['evidence'] == 'Supplementary Table S5 and S2', cl[2]
     assert len(ch) == 2
     import json, subprocess
-    p = '/tmp/cg_suppl.json'; CGm.save_claims(p, [dict(c) for c in cl], meta={'doc': 'm.docx'})
-    json.dump({'map': {'4': 7}}, open('/tmp/cg_smap.json', 'w'))
+    p = os.path.join(TMP, 'cg_suppl.json'); CGm.save_claims(p, [dict(c) for c in cl], meta={'doc': 'm.docx'})
+    json.dump({'map': {'4': 7}}, open(os.path.join(TMP, 'cg_smap.json'), 'w'))
     run = lambda *a: subprocess.run([sys.executable, CGm.__file__, 'remap-refs', '--claims'] + list(a), capture_output=True, text=True)
-    r = run(p, '--suppl', '/tmp/cg_smap.json', '-o', '/tmp/cg_suppl2.json')
-    assert r.returncode == 0 and json.load(open('/tmp/cg_suppl2.json'))['claims'][0]['evidence'] == 'Suppl S7; r = 0.6', r.stdout + r.stderr
-    r = run('/tmp/cg_suppl2.json', '--suppl', '/tmp/cg_smap.json', '-o', '/tmp/cg_suppl3.json')
+    r = run(p, '--suppl', os.path.join(TMP, 'cg_smap.json'), '-o', os.path.join(TMP, 'cg_suppl2.json'))
+    assert r.returncode == 0 and json.load(open(os.path.join(TMP, 'cg_suppl2.json')))['claims'][0]['evidence'] == 'Suppl S7; r = 0.6', r.stdout + r.stderr
+    r = run(os.path.join(TMP, 'cg_suppl2.json'), '--suppl', os.path.join(TMP, 'cg_smap.json'), '-o', os.path.join(TMP, 'cg_suppl3.json'))
     assert r.returncode == 2 and '이미 적용' in r.stdout, r.stdout                                  # 두 번 적용 거부
-    r = run(p, '-o', '/tmp/cg_suppl4.json')
+    r = run(p, '-o', os.path.join(TMP, 'cg_suppl4.json'))
     assert r.returncode == 2 and '--map' in r.stdout and '--suppl' in r.stdout, r.stdout + r.stderr  # 둘 다 없으면 멈춤
 
 
 def t_v169_add_and_link_cli():
     """저자 3c: add/link 가 간선 weight 를 type 기본값으로 넣는다. 없는 id·겹친 간선·순환은 멈춘다."""
     import json, subprocess
-    p = '/tmp/cg_add.json'; CGm.save_claims(p, copy.deepcopy(GRAPH), meta={'doc': 'm.docx', 'note': 'n'})
+    p = os.path.join(TMP, 'cg_add.json'); CGm.save_claims(p, copy.deepcopy(GRAPH), meta={'doc': 'm.docx', 'note': 'n'})
     run = lambda *a: subprocess.run([sys.executable, CGm.__file__] + list(a), capture_output=True, text=True)
     r = run('add', '--claims', p, '--id', 'd', '--statement', 'D', '--role', 'claim', '--dep', 'b:support', '--dep', 'a',
-            '--site', 'notes:9', '--key', 'dee', '-o', '/tmp/cg_add2.json')
+            '--site', 'notes:9', '--key', 'dee', '-o', os.path.join(TMP, 'cg_add2.json'))
     assert r.returncode == 0, r.stdout + r.stderr
-    d = json.load(open('/tmp/cg_add2.json'))
+    d = json.load(open(os.path.join(TMP, 'cg_add2.json')))
     assert d['doc'] == 'm.docx' and d['note'] == 'n'                                                 # 맨 위 칸 보존
     new = [c for c in d['claims'] if c['id'] == 'd'][0]
     assert new['depends_on'] == [{'id': 'b', 'type': 'support', 'weight': 0.7}, {'id': 'a', 'type': 'premise', 'weight': 1.0}], new
     assert new['sites'] == ['notes:9'] and new['keys'] == ['dee'] and new['role'] == 'claim'
-    r = run('link', '--claims', '/tmp/cg_add2.json', 'c', 'a', '--type', 'caveat', '-o', '/tmp/cg_add3.json')
+    r = run('link', '--claims', os.path.join(TMP, 'cg_add2.json'), 'c', 'a', '--type', 'caveat', '-o', os.path.join(TMP, 'cg_add3.json'))
     assert r.returncode == 0, r.stdout + r.stderr
-    c = [x for x in json.load(open('/tmp/cg_add3.json'))['claims'] if x['id'] == 'c'][0]
+    c = [x for x in json.load(open(os.path.join(TMP, 'cg_add3.json')))['claims'] if x['id'] == 'c'][0]
     assert {'id': 'a', 'type': 'caveat', 'weight': 0.5} in c['depends_on'], c
-    for args, why in ((['add', '--claims', p, '--id', 'a', '--statement', 'x', '-o', '/tmp/x.json'], '이미 있다'),
-                      (['add', '--claims', p, '--id', 'e', '--statement', 'x', '--dep', 'zz', '-o', '/tmp/x.json'], '없는 주장'),
-                      (['link', '--claims', p, 'b', 'a', '-o', '/tmp/x.json'], '이미 있다'),
-                      (['link', '--claims', p, 'a', 'c', '-o', '/tmp/x.json'], '순환'),
-                      (['link', '--claims', p, 'a', 'b', '--type', 'bogus', '-o', '/tmp/x.json'], 'invalid choice')):
+    for args, why in ((['add', '--claims', p, '--id', 'a', '--statement', 'x', '-o', os.path.join(TMP, 'x.json')], '이미 있다'),
+                      (['add', '--claims', p, '--id', 'e', '--statement', 'x', '--dep', 'zz', '-o', os.path.join(TMP, 'x.json')], '없는 주장'),
+                      (['link', '--claims', p, 'b', 'a', '-o', os.path.join(TMP, 'x.json')], '이미 있다'),
+                      (['link', '--claims', p, 'a', 'c', '-o', os.path.join(TMP, 'x.json')], '순환'),
+                      (['link', '--claims', p, 'a', 'b', '--type', 'bogus', '-o', os.path.join(TMP, 'x.json')], 'invalid choice')):
         r = run(*args)
         assert r.returncode != 0 and why in (r.stdout + r.stderr), (args, r.stdout, r.stderr)
 
 
 def t_v169_doc_index_zero_or_out_of_range():
     """리뷰어 3: doc:tbl:N·doc:p:N 은 1부터 — 0 은 파이썬 음수 번호로 **마지막 표·문단**을 돌려줬다(조용한 오답). 이제 알린다."""
-    p = '/tmp/cg_test.docx'; _mk_docx(p)
+    p = os.path.join(TMP, 'cg_test.docx'); _mk_docx(p)
     src = CGm.DocSource(p)
     for site in ('doc:tbl:0', 'doc:tbl:2', 'doc:p:0', 'doc:p:999'):
         try:
@@ -1477,7 +1478,7 @@ def t_v169_doc_index_zero_or_out_of_range():
 def t_v169_positional_claims_hint():
     """발표 3: mapgraph claims.json 처럼 파일 이름만 주면 '--claims' 를 알려 준다."""
     import subprocess
-    p = '/tmp/cg_pos.json'; CGm.save_claims(p, copy.deepcopy(GRAPH))
+    p = os.path.join(TMP, 'cg_pos.json'); CGm.save_claims(p, copy.deepcopy(GRAPH))
     for cmd in ('mapgraph', 'mapreport', 'scaffold', 'gaps'):
         r = subprocess.run([sys.executable, CGm.__file__, cmd, p], capture_output=True, text=True)
         assert r.returncode == 2 and ('%s --claims %s' % (cmd, p)) in (r.stdout + r.stderr), (cmd, r.stdout, r.stderr)
@@ -2285,6 +2286,89 @@ def t_v1622_gaps_counts_judged_lit_links():
     meta, cl = CGm.load_claims_full(_ours(d, [_link()], src_doi=None))
     assert '문헌으로 셌다' in CGm.gaps_table(cl, 'F', lit_links=meta['lit_links'])
     assert '문헌으로 셌다' not in CGm.gaps_table(cl, 'F')
+
+
+def t_v1625_mapcheck_label_numbers():
+    """저자 회신 분석근거매임셈(10-16): evidence 글 속 표·그림 번호가 원고의 가장 큰 번호를 넘으면 [참고](옛 번호).
+    성공 길: 원고 안 번호 · 소수 · eTable · 원고 글을 안 주면(덱) 조용. 실패 길: S16 > S15 · Table 3 > 2 · 이어진 목록 · 원고에 그 종류가 없음."""
+    import json, tempfile
+    doc = ('# Results\nBaseline data are in Table 1 and Table 2 (Supplementary Tables S1–S15).\n'
+           'Distance bands are shown in Fig. 3B and Figure S2.\n')
+    ok = 'Table 2, 0.54 vs 0.61 · Supplementary Table S15 · Suppl S13 · Fig. 3B · Figure S2 · eTable 9'
+    def notes(ev, text=doc, sep=None):
+        cl = [{'id': 'x', 'statement': 's', 'evidence': ev, 'sites': ['doc:find:p'], 'keys': ['baseline'], 'depends_on': []}]
+        probs, _ = CGm.mapcheck(_resolve_dict({'doc:find:p': 'baseline'}), cl, io.StringIO(), nums_sep=sep, doc_text=text)
+        return [p for p in probs if '번호' in p]
+    assert notes(ok) == [], notes(ok)
+    n = notes('E절 v25 §27.7 · Suppl Table S16 · Tables 2 and 4 · Fig. 5')
+    assert len(n) == 1 and n[0].startswith('[참고] x:'), n
+    assert 'Table S16' in n[0] and 'S15 까지' in n[0] and 'Table 4' in n[0] and 'Figure 5' in n[0] and 'Table 2' not in n[0], n
+    assert any('Suppl S16' in p for p in notes('거리띠 Suppl S16'))                          # 표 · 그림 낱말 없는 보충 번호
+    assert notes('Tables S14–S16')[0].count('S16') == 1 and 'S14' not in notes('Tables S14–S16')[0]   # 범위는 펼쳐 넘는 것만
+    assert notes('원고 Table 2 | 재현 Table 7', sep='|') == [] and notes('원고 Table 2 | 재현 Table 7')   # --nums-sep 앞쪽만
+    u = notes('Suppl Table S3', text='# Results\nTable 1 only.\n')
+    assert len(u) == 1 and '맞대지 못함' in u[0] and '(x)' in u[0], u                            # 원고에 보충 표가 없음
+    cl = [{'id': 'x', 'statement': 's', 'evidence': 'Suppl Table S16', 'sites': ['doc:find:p'], 'keys': ['baseline'], 'depends_on': []}]
+    assert CGm.mapcheck(_resolve_dict({'doc:find:p': 'baseline'}), cl, io.StringIO())[0] == []   # 원고 글 없음(덱) — 안 본다
+    d = tempfile.mkdtemp(prefix='cg25_')
+    md, cj = os.path.join(d, 'm.md'), os.path.join(d, 'c.json')
+    open(md, 'w', encoding='utf8').write(doc)
+    json.dump({'claims': [dict(cl[0], sites=['doc:find:Baseline data'])]}, open(cj, 'w', encoding='utf8'))
+    r = subprocess.run([sys.executable, CGm.__file__, 'mapcheck', md, '--claims', cj], capture_output=True, text=True)
+    assert r.returncode == 0 and 'Table S16' in r.stdout and 'S15 까지' in r.stdout, (r.returncode, r.stdout, r.stderr)   # [참고] 라 종료 0
+
+
+
+def t_v1625_mapgraph_caveat_rebuttal_one_line():
+    """리뷰어 규약3-1과mapgraph참고(10-05) (가): REVIEW_PROTOCOL §3-1 대로 caveat → role=rebuttal 로 쓴 그래프에서 [참고] 가 간선마다(30 중 27).
+    한 줄로 묶는다 — 간선 수와 짝은 그대로 보인다. 실패 길: 그런 간선이 없으면 줄 없음."""
+    g = [{'id': 'mn', 'role': 'main', 'statement': 'M', 'depends_on': [{'id': 'r1', 'type': 'caveat'}, {'id': 'r2', 'type': 'caveat'}]},
+         {'id': 'c1', 'role': 'claim', 'statement': 'C', 'depends_on': [{'id': 'mn', 'type': 'premise'}, {'id': 'r1', 'type': 'caveat'}]},
+         {'id': 'r1', 'role': 'rebuttal', 'statement': 'R1', 'depends_on': []},
+         {'id': 'r2', 'role': 'rebuttal', 'statement': 'R2', 'depends_on': []}]
+    probs, _ = CGm.mapgraph(copy.deepcopy(g), io.StringIO())
+    rb = [p for p in probs if 'role=rebuttal' in p]
+    assert len(rb) == 1 and rb[0].startswith('[참고]') and '3개' in rb[0], rb
+    assert 'mn -> r1' in rb[0] and 'mn -> r2' in rb[0] and 'c1 -> r1' in rb[0], rb
+    for c in g:
+        c['depends_on'] = [dict(e, type='rebuttal') if e['type'] == 'caveat' else e for e in c['depends_on']]
+    probs, _ = CGm.mapgraph(g, io.StringIO())
+    assert not [p for p in probs if 'role=rebuttal' in p], probs
+
+
+def t_v1625_oral_sync_hard_says_old_snapshot_first():
+    """발표 oralsync첫실물(10-05) 참고: [필수] 에서 멈출 때도 "옛 스냅숏이라 간선 변화는 이번에 보지 않는다" 를 먼저 한 줄.
+    실패 길: 새 스냅숏(간선 있음)이면 [필수] 여도 그 줄 없음."""
+    import json, tempfile
+    for old in (True, False):
+        A, O, A2 = _s1_files(tempfile.mkdtemp(prefix='cg25s_'), {'mn': [{'id': 'ev1', 'type': 'premise'}]}, old_snap=old)
+        am, ac = CGm.load_claims_full(A2)
+        ac = [c for c in ac if c['id'] != 'cav-a']                                                 # 쓴 주장이 새 판에 없음 → [필수]
+        new, lines, hard = CGm.oral_sync(json.load(open(O)), am, ac, 'f' * 16, 'a2.json')
+        assert new is None and hard, (lines, hard)
+        has = [l for l in lines if '옛 스냅숏' in l]
+        assert (len(has) == 1 and lines[0] == has[0] and has[0].startswith('[참고]')) if old else not has, (old, lines)
+
+
+def t_v1625_tests_write_only_tempdir():
+    """저자 도구회신 selfcheck테스트와validate자리(10-14) ①: 이 시험 파일이 /tmp 에 바로 써서 맥 Code 샌드박스에서 첫 줄부터 멈췄다.
+    임시 파일은 tempfile 폴더(TMP)에만 — 글 안에 /tmp 경로가 다시 생기면 실패."""
+    src = open(os.path.abspath(__file__), encoding='utf8').read()
+    needle = '/' + 'tmp' + '/'
+    bad = [i + 1 for i, l in enumerate(src.splitlines()) if ("'" + needle) in l or ('"' + needle) in l]
+    assert not bad, bad
+    assert os.path.isdir(TMP) and os.path.dirname(MD) == TMP
+
+
+def t_v1625_run_test_shows_stderr_when_stdout_empty():
+    """저자 ③: 시험이 import 에서 죽어 stdout 이 비면 selfcheck 표가 "(출력 없음)" 이었다 — stderr 끝 줄을 보인다. 성공 길: stdout 이 있으면 그 끝 줄."""
+    d = tempfile.mkdtemp(prefix='cg25r_')
+    open(os.path.join(d, 'test_a.py'), 'w', encoding='utf8').write("import sys\nsys.stderr.write('Traceback\\nModuleNotFoundError: No module named docx\\n')\nsys.exit(1)\n")
+    open(os.path.join(d, 'test_b.py'), 'w', encoding='utf8').write("print('x')\nprint('통과 1 / 실패 0  (전체 1)')\n")
+    rc, last, out = CGm._run_test(d, 'test_a.py')
+    assert rc == 1 and 'ModuleNotFoundError' in last and last.startswith('stderr:') and out == '', (rc, last, out)
+    rc, last, _ = CGm._run_test(d, 'test_b.py')
+    assert rc == 0 and last == '통과 1 / 실패 0  (전체 1)', last
 
 
 if __name__ == '__main__':

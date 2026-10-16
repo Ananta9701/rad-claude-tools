@@ -48,7 +48,7 @@ import sys
 import unicodedata
 import zipfile
 
-__version__ = '16.24'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
+__version__ = '16.25'   # TOOLS_MANIFEST 와 대조. 판이 오르면 여기와 test_claim_graph.EXPECT_VERSION 을 함께 올린다
 # 코드 프로젝트 전용 파일(v15.8.2, 코드 v2.43) — 비공개 저장소에 있고 릴리스 사이에도 바뀐다. selfcheck ②′ RELEASE 대조에서 뺀다
 CODE_ONLY = ('HISTORY.md', 'PRIVATE_TERMS.txt', 'CODE_PROJECT_README.md', 'release.py', 'GITHUB_README.md')
 
@@ -731,7 +731,7 @@ def mapgraph(claims, stream=sys.stdout, sources=None, kind=None):
     by_id = {c['id']: c for c in claims}
     noedge = len(claims) > 1 and not any(edges.values())   # v16.3: 간선 0 그래프 — 주장별 간선 [참고] 는 요약 한 줄로 합친다
     folded = {'premise': 0, 'caveat': 0}
-    seen = set()
+    seen, cav_rb = set(), []
     for c in claims:
         if c['id'] in seen:
             problems.append('%s: id 중복' % c['id'])
@@ -790,7 +790,10 @@ def mapgraph(claims, stream=sys.stdout, sources=None, kind=None):
             if not (0.0 <= w <= 1.0):
                 problems.append('%s -> %s: weight %.2f 는 0~1 이어야 함' % (c['id'], up, w))
             if typ == 'caveat' and by_id.get(up, {}).get('role') == 'rebuttal':
-                problems.append('[참고] %s -> %s: caveat 간선이 role=rebuttal 주장을 가리킴 — 한계가 아니라 반대 증거면 type rebuttal' % (c['id'], up))
+                cav_rb.append('%s -> %s' % (c['id'], up))
+    if cav_rb:                                    # v16.25 (리뷰어 10-05 (가)): REVIEW_PROTOCOL §3-1 용법이면 간선마다 떠서 한 줄로
+        problems.append('[참고] caveat 간선이 role=rebuttal 주장을 가리킴 %d개(%s) — 한계가 아니라 반대 증거면 type rebuttal · '
+                        '저자가 안 쓴 한계(REVIEW_PROTOCOL §3-1)면 그대로' % (len(cav_rb), ', '.join(cav_rb[:10]) + (' …' if len(cav_rb) > 10 else '')))
 
     for c in claims:
         if c.get('role') == 'evidence' and (case or lit):
@@ -1380,6 +1383,78 @@ _NUMTOK = re.compile(r'(?<![\w.])[-−]?\d+(?:[.,]\d+)?(?:\s*%)?(?![\w])')
 _SUPPL_TAG = re.compile(r'\bSuppl(?:ementary)?\.?\s+(?:(?:Table|Fig(?:ure)?\.?|Tab\.?)\s+)?S\d+', re.I)
 _SUPPL_NUMS = re.compile(r'(\bSuppl(?:ementary)?\.?\s+(?:(?:Table|Fig(?:ure)?\.?|Tab\.?)\s+)?)(S\d+(?:(?:\s*,\s*|\s*[\-\u2013]\s*|\s+and\s+)S\d+)*)', re.I)
 
+# v16.25 (저자 회신 분석근거매임셈 10-16): 표·그림 번호 표지. T 표 · ST 보충 표 · F 그림 · SF 보충 그림 · S 보충(표·그림 낱말 없음)
+_LABEL_HEAD = re.compile(r'(?<![A-Za-z])(?:(?P<sup>Suppl(?:ementary)?)\.?\s+)?(?P<kw>Tables(?=\s)|Table|Tab\.|Figures(?=\s)|Figure|Figs\.|Figs(?=\s)|Fig\.?)?\s*'
+                         r'(?P<s>S)?(?P<n>\d+)(?!\d|\.\d)', re.I)
+_LABEL_NEXT = re.compile(r'(?P<sep>\s*(?:,|and|&|to|[\-\u2013])\s*)(?P<s>S)?(?P<n>\d+)(?!\d|\.\d)', re.I)
+_LABEL_NAME = {'T': '표', 'ST': '보충 표', 'F': '그림', 'SF': '보충 그림', 'S': '보충 표·그림'}
+
+
+def _labels(text):
+    """글 속 표·그림 번호 [(종류, 번호)]. `Tables S1–S15` 처럼 이어진 것은 펼친다(복수 낱말이거나 S 번호일 때만 —
+    `Table 2, 45 명` 의 45 를 표로 읽지 않게). 소수(`Table 2, 0.54`)는 번호가 아니다. eTable 등 붙은 낱말은 보지 않는다."""
+    out, pos = [], 0
+    while True:
+        m = _LABEL_HEAD.search(text, pos)
+        if not m:
+            return out
+        pos = m.end()
+        kw, sup = (m.group('kw') or '').lower(), bool(m.group('sup'))
+        if not kw and not (sup and m.group('s')):
+            continue
+        base = 'T' if kw.startswith('tab') else 'F' if kw else 'S'
+        kind = lambda s: base if base == 'S' else ('S' + base) if (sup or s) else base
+        plural = kw.rstrip('.') in ('tables', 'figures', 'figs')
+        prev = (kind(m.group('s')), int(m.group('n')))
+        out.append(prev)
+        while True:
+            x = _LABEL_NEXT.match(text, pos)
+            if not x or not (plural or x.group('s')):
+                break
+            k, n = kind(x.group('s')), int(x.group('n'))
+            if re.search(r'[\-\u2013]|to', x.group('sep'), re.I) and k == prev[0] and prev[1] < n <= prev[1] + 200:
+                out.extend((k, i) for i in range(prev[1] + 1, n + 1))
+            else:
+                out.append((k, n))
+            prev, pos = (k, n), x.end()
+
+
+def _label_str(k, n):
+    return {'T': 'Table %d', 'ST': 'Table S%d', 'F': 'Figure %d', 'SF': 'Figure S%d', 'S': 'Suppl S%d'}[k] % n
+
+
+def _label_notes(claims, doc_text, nums_sep=None):
+    """evidence 의 표·그림 번호가 원고 글(doc_text)의 그 종류 가장 큰 번호를 넘으면 [참고] — 옛 번호(보충 표 하나 지운 뒤 등).
+    빈 번호(S7 만 안 나옴)는 보지 않는다(원고가 다 부르지 않을 수 있다). 원고에 그 종류가 하나도 없으면 한 줄로 모은다.
+    nums_sep 를 주면 --nums 처럼 그 앞쪽만 본다(뒤쪽은 재현 표일 수 있다)."""
+    top = {}
+    for k, n in _labels(doc_text):
+        top[k] = max(top.get(k, 0), n)
+    def most(*ks):
+        v = [top[k] for k in ks if k in top]
+        return max(v) if v else None
+    bound = {'T': most('T'), 'F': most('F'), 'ST': most('ST', 'S'), 'SF': most('SF', 'S'), 'S': most('ST', 'SF', 'S')}
+    out, blind = [], {}
+    for c in claims:
+        ev = c.get('evidence') or ''
+        if c.get('status') == 'superseded':           # 바뀐 주장의 evidence 는 옛 기록이다
+            continue
+        if nums_sep:
+            ev = ev.split(nums_sep, 1)[0]
+        over = []
+        for k, n in dict.fromkeys(_labels(ev)):
+            if bound[k] is None:
+                blind.setdefault(k, []).append(c['id'])
+            elif n > bound[k]:
+                over.append('%s(원고 %s %s 까지)' % (_label_str(k, n), _LABEL_NAME[k], ('S%d' if k in ('ST', 'SF', 'S') else '%d') % bound[k]))
+        if over:
+            out.append('[참고] %s: evidence 의 표·그림 번호가 원고보다 큼 — %s · 옛 번호이거나 다른 문서의 번호(보충은 remap-refs --suppl)'
+                       % (c['id'], ' · '.join(over)))
+    for k, ids in blind.items():
+        ids = list(dict.fromkeys(ids))
+        out.append('[참고] 원고에 %s 번호가 없어 evidence %d개(%s)의 %s 번호를 맞대지 못함' % (_LABEL_NAME[k], len(ids), ', '.join(ids), _LABEL_NAME[k]))
+    return out
+
 
 def _numtokens(text):
     """evidence 문자열의 수치 토큰.
@@ -1426,11 +1501,13 @@ def _key_hit(key, txt):
     return key in txt
 
 
-def mapcheck(resolve, claims, stream=sys.stdout, nums=False, nums_sep=None):
+def mapcheck(resolve, claims, stream=sys.stdout, nums=False, nums_sep=None, doc_text=None):
     """nums=True 면 evidence 의 수치 토큰이 sites 자리 중 한 곳에는 있어야 한다 ([참고]).
     nums_sep (v15.5, 리뷰어 요청): 사용자가 명시한 구분자 **앞쪽**만 검사한다. evidence 를
     "원고 값 | 재현 값" 으로 쓰는 리뷰어 용법에서 `--nums-sep "|"` 로 재현값을 뺀다. 구분자는 도구가
-    가정하지 않고 사용자가 선언하는 것이므로 서식 의존이 아니다. 지정하지 않으면 종전대로 전체."""
+    가정하지 않고 사용자가 선언하는 것이므로 서식 의존이 아니다. 지정하지 않으면 종전대로 전체.
+    doc_text (v16.25, 저자 10-16): 원고 전체 글을 주면 evidence 의 표·그림 번호가 원고의 가장 큰 번호를 넘는지 본다([참고]).
+    명령줄(docx · md)은 늘 준다. 덱 resolver 는 원고 글이 없어 주지 않는다."""
     notes = {c['id']: c['oral_note'] for c in claims if c.get('oral_note')}   # v16.14 (발표 O2)
     problems, matrix, suppl = [], {}, []
     for c in claims:
@@ -1467,6 +1544,8 @@ def mapcheck(resolve, claims, stream=sys.stdout, nums=False, nums_sep=None):
     if suppl:
         problems.append('[참고] 보충자료 표지(Suppl S…)가 든 evidence %d개(%s)의 수치 %d개가 sites 에 없음 — sites 는 본문만 보므로 따로 적지 않는다'
                         % (len(suppl), ', '.join(c for c, _ in suppl), sum(n for _, n in suppl)))
+    if doc_text is not None:
+        problems.extend(_label_notes(claims, doc_text, nums_sep))
     gp, _ = mapgraph(claims, stream=open(os.devnull, 'w'))
     problems.extend(p for p in gp if not p.startswith('[참고]'))
     print('=== 주장 관계도 대조 ===', file=stream)
@@ -2283,7 +2362,8 @@ def _run_test(folder, t, python=None, env=None):
     """테스트 파일 하나를 folder 에서 돌린다 → (종료 코드, 마지막 줄, stdout). 판정은 부르는 쪽이 한다. release.py 도 쓴다(v16.8.1)."""
     import subprocess
     r = subprocess.run([python or sys.executable, t], capture_output=True, text=True, cwd=folder, env=dict(os.environ, **(env or {})))
-    return r.returncode, (r.stdout.strip().splitlines() or [''])[-1], r.stdout
+    err = r.stderr.strip().splitlines()           # v16.25 (저자 10-14 ③): import 에서 죽어 stdout 이 비면 "(출력 없음)" 대신 stderr 끝 줄
+    return r.returncode, (r.stdout.strip().splitlines() or (['stderr: ' + err[-1]] if err else ['']))[-1], r.stdout
 
 
 def _file_version(path):
@@ -2712,6 +2792,8 @@ def oral_sync(overlay, new_meta, new_claims, new_sha, new_file, pairs=None, drop
         if (old_snap.get(cid) or {}).get('text') and old_snap[cid]['text'] != new_snap[cid]['text']:
             lines.append('[변경] 쓴 주장 %s 의 글이 바뀜 — 화면 %s 를 다시 본다(mapstale 이 [변경] 으로 잡는다)' % (cid, where(cid)))
     if hard:
+        if old_snap and not any('deps' in v for v in old_snap.values()):   # v16.25 (발표 10-05): 멈출 때도 먼저 알린다
+            lines.insert(0, '[참고] 옛 스냅숏(claim_graph 16.19 전)이라 간선 변화는 이번 sync 에서 보지 않는다 — [필수] 를 풀고 sync 가 끝나면 그다음부터 적는다')
         return None, lines, hard
     for cid, tg in moved.items():
         u = use.pop(cid, None)
@@ -3422,7 +3504,7 @@ def main():
     else:
         src = DocSource(a.doc)
         if a.cmd == 'mapcheck':
-            probs, _ = mapcheck(src.resolve, load_claims(a.claims), nums=a.nums, nums_sep=a.nums_sep)
+            probs, _ = mapcheck(src.resolve, load_claims(a.claims), nums=a.nums, nums_sep=a.nums_sep, doc_text='\n'.join(src.paras))
             sys.exit(1 if any(not p.startswith('[참고]') for p in probs) else 0)
         elif a.cmd == 'mapfreeze':
             meta, cl = load_claims_full(a.claims)
